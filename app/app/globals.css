@@ -1,0 +1,29 @@
+/* Design tokens from the approved mockup — keep consistent (see CLAUDE.md). */
+:root {
+  --paper: #edf0f1;
+  --card: #fbfcfc;
+  --ink: #1c2b33;
+  --ink-soft: #5a6b74;
+  --line: #d8dee1;
+
+  --edge-extends: #33628c;
+  --edge-contests: #a34a3a;
+  --edge-narrows: #6b5b95;
+  --edge-renames: #8a7433;
+  --edge-migrates: #3e7257;
+
+  --font-display: "Spectral", Georgia, serif;
+  --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+}

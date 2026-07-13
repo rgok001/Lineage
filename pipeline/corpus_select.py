@@ -1,0 +1,221 @@
+"""Stage A (part 1): corpus selection via OpenAlex. Metadata only — no downloads.
+
+Two ways to pick seeds:
+  --search (default for concepts with no clean OpenAlex tag, e.g. "attention"):
+      relevance search over arXiv+CS work title/abstract/fulltext.
+  concept mode (--concept-id, or auto-resolve): works tagged with an OpenAlex
+      concept. Note OpenAlex's (deprecated) concept taxonomy has no ML "attention"
+      node — the bare word resolves to the ADHD sense — so search mode is the
+      reliable path for the showcase concept.
+
+Then, either way:
+  - Expand one hop: works frequently referenced BY the seeds, fetched by ID in batches.
+  - Rank the merged pool and print a table capped at --limit.
+
+The embedding relevance filter (rest of Stage A) comes later; ranking here is
+citation count + how often the corpus itself references the paper.
+
+Usage:
+  python pipeline/corpus_select.py "attention"                     # search mode
+  python pipeline/corpus_select.py "attention" --limit 150 --json corpus.json
+  python pipeline/corpus_select.py "graph neural network" --concept-id C1234
+"""
+
+import argparse
+import json
+import math
+import re
+import sys
+import time
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common import get_json, mailto  # noqa: E402
+
+OPENALEX = "https://api.openalex.org"
+CS_CONCEPT_ID = "C41008148"  # "Computer science" — keeps e.g. psychology's "attention" out
+WORK_FIELDS = "id,display_name,publication_year,cited_by_count,referenced_works,doi,locations"
+REQUEST_PAUSE_S = 0.15  # stay well under polite-pool limits
+
+ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf)/([a-z\-]+/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?", re.I)
+ARXIV_DOI_RE = re.compile(r"10\.48550/arxiv\.(.+)$", re.I)
+
+
+def polite(params: dict | None = None) -> dict:
+    return {**(params or {}), "mailto": mailto()}
+
+
+def arxiv_id_of(work: dict) -> str | None:
+    doi = work.get("doi") or ""
+    m = ARXIV_DOI_RE.search(doi)
+    if m:
+        return m.group(1)
+    for loc in work.get("locations") or []:
+        for url in (loc.get("landing_page_url"), loc.get("pdf_url")):
+            m = ARXIV_URL_RE.search(url or "")
+            if m:
+                return m.group(1)
+    return None
+
+
+def resolve_concept(query: str) -> str:
+    data = get_json(f"{OPENALEX}/concepts", polite({"search": query, "per-page": 5}))
+    results = data.get("results", [])
+    if not results:
+        sys.exit(f'No OpenAlex concept matches "{query}".')
+    print(f'Concept matches for "{query}":')
+    for i, c in enumerate(results):
+        marker = "→" if i == 0 else " "
+        print(f'  {marker} {c["id"].rsplit("/", 1)[-1]}  {c["display_name"]}'
+              f'  (level {c["level"]}, {c["works_count"]:,} works)')
+    chosen = results[0]
+    print(f'Using {chosen["display_name"]} — pass --concept-id to override.\n')
+    return chosen["id"].rsplit("/", 1)[-1]
+
+
+def _paginate_seeds(params: dict, max_seeds: int, label: str) -> list[dict]:
+    params = polite({**params, "per-page": 200, "select": WORK_FIELDS, "cursor": "*"})
+    seeds: list[dict] = []
+    while len(seeds) < max_seeds:
+        data = get_json(f"{OPENALEX}/works", params)
+        batch = data.get("results", [])
+        if not batch:
+            break
+        seeds.extend(batch)
+        print(f"  {label}: {len(seeds)} fetched…")
+        cursor = data.get("meta", {}).get("next_cursor")
+        if not cursor:
+            break
+        params["cursor"] = cursor
+        time.sleep(REQUEST_PAUSE_S)
+    return seeds[:max_seeds]
+
+
+def fetch_seeds_by_concept(concept_id: str, max_seeds: int, cs_filter: bool) -> list[dict]:
+    filters = [f"concepts.id:{concept_id}", "indexed_in:arxiv"]
+    if cs_filter:
+        filters.append(f"concepts.id:{CS_CONCEPT_ID}")
+    return _paginate_seeds(
+        {"filter": ",".join(filters), "sort": "cited_by_count:desc"},
+        max_seeds, "seeds")
+
+
+def fetch_seeds_by_search(query: str, max_seeds: int, cs_filter: bool) -> list[dict]:
+    # Relevance search over title/abstract/fulltext. Cursor paging can't sort by
+    # relevance_score, so we page by citations within the matched set — good enough
+    # for seeding; the embedding filter refines relevance later.
+    filters = ["indexed_in:arxiv"]
+    if cs_filter:
+        filters.append(f"concepts.id:{CS_CONCEPT_ID}")
+    return _paginate_seeds(
+        {"search": query, "filter": ",".join(filters), "sort": "cited_by_count:desc"},
+        max_seeds, "seeds")
+
+
+def expand_one_hop(seeds: list[dict], max_new: int) -> tuple[list[dict], Counter]:
+    """Count references across seeds; fetch the most-referenced non-seed works."""
+    ref_freq: Counter = Counter()
+    for w in seeds:
+        ref_freq.update(w.get("referenced_works") or [])
+    seed_ids = {w["id"] for w in seeds}
+    # Referenced ≥2 times by the seed corpus = plausibly part of the lineage.
+    candidates = [wid for wid, n in ref_freq.most_common()
+                  if wid not in seed_ids and n >= 2][:max_new]
+    expanded: list[dict] = []
+    for i in range(0, len(candidates), 50):  # OpenAlex OR-filter cap is 50 values
+        batch = candidates[i:i + 50]
+        short_ids = "|".join(wid.rsplit("/", 1)[-1] for wid in batch)
+        data = get_json(f"{OPENALEX}/works", polite({
+            "filter": f"openalex:{short_ids}",
+            "per-page": 50,
+            "select": WORK_FIELDS,
+        }))
+        expanded.extend(data.get("results", []))
+        print(f"  expansion: {len(expanded)}/{len(candidates)} fetched…")
+        time.sleep(REQUEST_PAUSE_S)
+    return expanded, ref_freq
+
+
+def score(work: dict, ref_freq: Counter) -> float:
+    # In-corpus reference frequency is worth more than raw global citations:
+    # we want the papers THIS lineage talks about, not just famous ones.
+    return (2.0 * math.log1p(ref_freq.get(work["id"], 0))
+            + math.log1p(work.get("cited_by_count") or 0))
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Select a ranked candidate corpus (metadata only).")
+    ap.add_argument("concept", help='e.g. "attention"')
+    ap.add_argument("--limit", type=int, default=150, help="corpus cap (default 150)")
+    ap.add_argument("--max-seeds", type=int, default=400)
+    ap.add_argument("--max-expand", type=int, default=300)
+    ap.add_argument("--concept-id", help="OpenAlex concept ID; enables concept mode (e.g. C66322947)")
+    ap.add_argument("--concept-mode", action="store_true",
+                    help="resolve the concept string to an OpenAlex tag instead of searching")
+    ap.add_argument("--no-cs-filter", action="store_true",
+                    help="drop the Computer science concept filter")
+    ap.add_argument("--json", metavar="PATH", help="also write the ranked corpus as JSON")
+    args = ap.parse_args()
+
+    cs_filter = not args.no_cs_filter
+    if args.concept_id or args.concept_mode:
+        concept_id = args.concept_id or resolve_concept(args.concept)
+        print("Fetching concept-tagged arXiv seeds from OpenAlex…")
+        seeds = fetch_seeds_by_concept(concept_id, args.max_seeds, cs_filter)
+    else:
+        print(f'Searching arXiv+CS works for "{args.concept}" (relevance seed mode)…')
+        seeds = fetch_seeds_by_search(args.concept, args.max_seeds, cs_filter)
+    if not seeds:
+        sys.exit("No seed papers found — try --no-cs-filter, --concept-mode, or a different query.")
+
+    print("Expanding one hop through the citation graph…")
+    expanded, ref_freq = expand_one_hop(seeds, args.max_expand)
+
+    seed_ids = {w["id"] for w in seeds}
+    # Dedup on arXiv ID (the natural key): OpenAlex keeps separate preprint/published
+    # records for the same paper. Keep the better record — prefer a seed, then the
+    # one with more in-corpus references, then more citations.
+    def better(a: dict, b: dict) -> dict:
+        key = lambda w: (w["_seed"], ref_freq.get(w["id"], 0), w.get("cited_by_count") or 0)
+        return a if key(a) >= key(b) else b
+
+    pool: dict[str, dict] = {}
+    for w in seeds + expanded:
+        aid = arxiv_id_of(w)
+        if aid is None:
+            continue  # arXiv-only corpus; expansion hits can be journal-only
+        w["_arxiv_id"] = aid
+        w["_seed"] = w["id"] in seed_ids
+        pool[aid] = better(pool[aid], w) if aid in pool else w
+
+    ranked = sorted(pool.values(), key=lambda w: score(w, ref_freq), reverse=True)
+    ranked = ranked[:args.limit]
+
+    print(f"\nCandidate corpus for \"{args.concept}\" — {len(ranked)} papers "
+          f"({sum(w['_seed'] for w in ranked)} seed, "
+          f"{sum(not w['_seed'] for w in ranked)} expanded)\n")
+    print(f"{'#':>3}  {'arXiv ID':<14} {'Year':<5} {'Cites':>7} {'Refs':>5} {'Src':<4} Title")
+    print("-" * 110)
+    for i, w in enumerate(ranked, 1):
+        title = (w.get("display_name") or "?")[:66]
+        print(f"{i:>3}  {w['_arxiv_id']:<14} {w.get('publication_year') or '?':<5} "
+              f"{w.get('cited_by_count') or 0:>7,} {ref_freq.get(w['id'], 0):>5} "
+              f"{'seed' if w['_seed'] else 'exp':<4} {title}")
+
+    if args.json:
+        out = [{
+            "arxiv_id": w["_arxiv_id"],
+            "openalex_id": w["id"],
+            "title": w.get("display_name"),
+            "year": w.get("publication_year"),
+            "cited_by_count": w.get("cited_by_count"),
+            "in_corpus_refs": ref_freq.get(w["id"], 0),
+            "seed": w["_seed"],
+        } for w in ranked]
+        Path(args.json).write_text(json.dumps(out, indent=2), encoding="utf-8")
+        print(f"\nWrote {len(out)} papers to {args.json}")
+
+
+if __name__ == "__main__":
+    main()
