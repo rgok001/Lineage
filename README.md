@@ -39,4 +39,7 @@ python pipeline/corpus_select.py "attention" --limit 150 --json corpus.json
 # Acquisition: download arXiv source (LaTeX-first) into DATA_DIR + papers table
 python pipeline/fetch_papers.py corpus.json --dry-run   # preview, no downloads
 python pipeline/fetch_papers.py corpus.json --limit 10  # fetch (1 req / 3s)
+
+# Text extraction: LaTeX/PDF source -> clean text (reads papers table)
+python pipeline/extract_text.py
 ```

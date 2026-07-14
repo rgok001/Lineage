@@ -69,7 +69,7 @@ flowchart TD
     UI -- edits --> API --> DB
 
     classDef done fill:#3e7257,stroke:#1c2b33,color:#fff
-    class OA,A,AX,DB done
+    class OA,A,AX,EX,DISK,DB done
 ```
 
 Data flows left-to-right through acquisition → pipeline → storage, then the app
@@ -88,7 +88,7 @@ cheap and polite.
 | Metadata + citation graph | **OpenAlex** (free, no key) | Use the polite pool (`mailto`); paginate via cursor | ✅ |
 | Citation contexts | **Semantic Scholar** (free key) | Respect rate limits; sentences around a citation feed Stage D | ⬜ |
 | Paper source | **arXiv** | LaTeX source preferred, PDF fallback; **1 request / 3 s**, real User-Agent, exponential backoff on 429/5xx | ✅ |
-| Text extraction | local | LaTeX → structured text; PDF fallback via `pymupdf` | ⬜ |
+| Text extraction | local | LaTeX → text (`pylatexenc`, `\input` inlined); PDF fallback via `pymupdf` with de-hyphenation, incl. PDFs embedded in `\includepdf` source stubs | ✅ |
 
 **Why metadata-first matters:** OpenAlex gives us titles, years, citation counts,
 and the reference graph for free. We rank and cap the corpus on that *before*
@@ -297,9 +297,10 @@ Work proceeds in the order set by [CLAUDE.md](../CLAUDE.md) §"Build phases":
 
 1. ✅ Scaffold, env handling, DB migration (live on Neon).
 2. ✅ Stage A part 1 — `corpus_select.py` (ranked corpus, metadata only).
-3. 🟡 arXiv fetcher ✅ (`fetch_papers.py`, LaTeX-first, 1 req/3s, backoff — writes
-   rows into `papers`) + text extraction ⬜.
-4. ⬜ Embedding relevance filter (finishes Stage A).
+3. ✅ arXiv fetcher (`fetch_papers.py`, LaTeX-first, 1 req/3s, backoff) + text
+   extraction (`extract_text.py`, `pylatexenc`/`pymupdf`) — papers land with raw +
+   extracted text.
+4. ⬜ **Next:** embedding relevance filter (finishes Stage A).
 5. ⬜ Pipeline stages B–E end-to-end on *attention* → genealogy JSON.
 6. ⬜ UI: timeline + evidence panel → workbench + export.
 7. ⬜ Trace-build UX: job queue, live progress, save/load.
