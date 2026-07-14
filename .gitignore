@@ -1,5 +1,9 @@
-# secrets
+# secrets — every local env variant (Vercel writes .env*.local); keep .env.example tracked
 .env
+.env*.local
+
+# vercel CLI link metadata
+.vercel/
 
 # python
 __pycache__/
