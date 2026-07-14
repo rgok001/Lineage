@@ -59,3 +59,30 @@ def get_json(url: str, params: dict | None = None, max_retries: int = 5) -> dict
             continue
         resp.raise_for_status()
     raise RuntimeError(f"Gave up after {max_retries} retries: {url}")
+
+
+def get_bytes(url: str, max_retries: int = 5) -> tuple[bytes, str] | None:
+    """Binary GET with backoff. Returns (content, content_type), or None on 404."""
+    delay = 2.0
+    for attempt in range(max_retries):
+        resp = session().get(url, timeout=120)
+        if resp.status_code == 200:
+            return resp.content, resp.headers.get("Content-Type", "")
+        if resp.status_code == 404:
+            return None
+        if resp.status_code in (429, 500, 502, 503, 504):
+            retry_after = resp.headers.get("Retry-After")
+            wait = float(retry_after) if retry_after else delay
+            print(f"  [http {resp.status_code}] retrying in {wait:.0f}s…", file=sys.stderr)
+            time.sleep(wait)
+            delay *= 2
+            continue
+        resp.raise_for_status()
+    raise RuntimeError(f"Gave up after {max_retries} retries: {url}")
+
+
+def data_dir() -> Path:
+    """DATA_DIR from env (default ./data), resolved relative to the repo root."""
+    raw = os.environ.get("DATA_DIR", "./data")
+    p = Path(raw)
+    return p if p.is_absolute() else REPO_ROOT / p
