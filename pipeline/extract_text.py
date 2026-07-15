@@ -118,6 +118,32 @@ def pdf_to_text(source) -> str:
     return normalize(raw)
 
 
+# Title words carrying no signal — ignored when scoring title-vs-text agreement.
+STOPWORDS = {
+    "with", "from", "using", "their", "this", "that", "than", "then", "into",
+    "over", "under", "between", "through", "towards", "toward", "based", "very",
+    "your", "ours", "about", "which", "while", "were", "have", "been", "does",
+}
+TITLE_MATCH_MIN = 0.5  # below this, metadata and text probably describe different papers
+
+
+def title_match(title: str | None, text: str) -> float | None:
+    """Fraction of significant title words that appear in the extracted text.
+
+    A fetch can succeed while returning the *wrong* paper (upstream metadata can
+    pair a title with another paper's arXiv ID). The title almost always appears
+    in a paper's own text, so weak agreement means the two disagree.
+    """
+    if not title:
+        return None
+    toks = {t for t in re.findall(r"[a-z0-9]+", title.lower())
+            if len(t) > 3 and t not in STOPWORDS}
+    if not toks:
+        return None
+    hay = text.lower()
+    return sum(1 for t in toks if t in hay) / len(toks)
+
+
 def normalize(text: str) -> str:
     text = text.replace("\r\n", "\n")
     text = re.sub(r"[ \t]+\n", "\n", text)
@@ -161,7 +187,7 @@ def main() -> None:
     conn = psycopg.connect(env("DATABASE_URL"))
 
     where = "raw_path IS NOT NULL" + ("" if args.force else " AND extracted_text_path IS NULL")
-    sql = f"SELECT arxiv_id, source_format, raw_path FROM papers WHERE {where} ORDER BY arxiv_id"
+    sql = f"SELECT arxiv_id, source_format, raw_path, title FROM papers WHERE {where} ORDER BY arxiv_id"
     rows = conn.execute(sql).fetchall()
     if args.limit:
         rows = rows[:args.limit]
@@ -171,7 +197,8 @@ def main() -> None:
         return
 
     done = failed = 0
-    for i, (aid, fmt, raw_path) in enumerate(rows, 1):
+    flagged: list[tuple[str, float]] = []
+    for i, (aid, fmt, raw_path, title) in enumerate(rows, 1):
         raw = REPO_ROOT / raw_path
         if not raw.exists():
             print(f"[{i}/{len(rows)}] {aid}: raw file missing ({raw_path}), skipping")
@@ -192,13 +219,28 @@ def main() -> None:
         out = text_root / f"{aid.replace('/', '_')}.txt"
         out.write_text(text, encoding="utf-8")
         rel = str(out.relative_to(REPO_ROOT)).replace("\\", "/")
-        conn.execute("UPDATE papers SET extracted_text_path=%s WHERE arxiv_id=%s", (rel, aid))
+        score = title_match(title, text)
+        conn.execute(
+            "UPDATE papers SET extracted_text_path=%s, text_title_match=%s WHERE arxiv_id=%s",
+            (rel, score, aid),
+        )
         conn.commit()
-        print(f"    ✓ {len(text):,} chars -> {rel}")
+        score_str = "title n/a" if score is None else f"title match {score:.0%}"
+        print(f"    ✓ {len(text):,} chars, {score_str} -> {rel}")
+        if score is not None and score < TITLE_MATCH_MIN:
+            print(f"    ⚠ METADATA MISMATCH: text does not look like \"{title}\"")
+            flagged.append((aid, score))
         done += 1
 
     conn.close()
     print(f"\nDone: {done} extracted, {failed} failed.")
+    if flagged:
+        print(f"\n⚠ {len(flagged)} paper(s) below the {TITLE_MATCH_MIN:.0%} title-match "
+              f"threshold — text and metadata likely describe different papers:")
+        for aid, score in flagged:
+            print(f"    {aid}  ({score:.0%})")
+        print("  Downstream stages must filter on text_title_match >= "
+              f"{TITLE_MATCH_MIN}; inspect before trusting these.")
 
 
 if __name__ == "__main__":

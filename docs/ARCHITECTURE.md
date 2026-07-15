@@ -175,6 +175,7 @@ erDiagram
         text source_format "latex|pdf"
         text raw_path "on disk"
         text extracted_text_path "on disk"
+        real text_title_match "0..1 title vs text agreement"
     }
     definitions {
         bigint paper_id FK
@@ -219,6 +220,17 @@ Enforced in the schema itself (not just app code):
   extraction is computed once per paper per prompt version and reused across
   traces. Bump `PROMPT_VERSION` to invalidate.
 
+> **Design note — the metadata mismatch guard (`papers.text_title_match`).**
+> A successful download proves *some* text exists, not that it's the *right*
+> text: OpenAlex sometimes pairs a title with another paper's arXiv ID. Observed
+> live — a work titled *"AI-Assisted Pipeline … Health Supplement Content"*
+> carries BERT's arXiv ID (`1810.04805`) and citation count; fetching it returns
+> BERT's real source. `extract_text.py` therefore scores the fraction of
+> significant title words present in the extracted text (good papers score 100%;
+> that record scores 22%). The row is kept and flagged rather than silently
+> dropped — **downstream stages must require `text_title_match >= 0.5`**, not
+> merely a non-null `extracted_text_path`.
+
 Migrations are plain SQL in [`pipeline/db/migrations/`](../pipeline/db/migrations),
 applied by an idempotent runner ([`migrate.py`](../pipeline/db/migrate.py)) that
 records applied versions in a `schema_migrations` ledger. `001_init.sql` is ✅
@@ -249,6 +261,8 @@ serverless — while the pipeline uses the **direct** endpoint.
 | Dry-run | `--dry-run` estimates cost without calling the LLM | ⬜ |
 | Per-stage token logging | logged as the pipeline runs; `genealogies.spend_usd` accumulates | ⬜ |
 | Grounding check | string-verify every quote vs extracted text before display | ⬜ (schema flags ready: `quote_verified`, `edges.verified`) |
+| Unfetchable papers | fetch failure ⇒ no `papers` row ⇒ never reaches the pipeline | ✅ |
+| Metadata mismatch | `text_title_match` score; flagged, not silently dropped (see §5) | ✅ |
 | Secrets | `.env` only (gitignored); `.env.example` documents the keys | ✅ |
 | Immutability | per-paper extractions and full trace outputs are immutable once built; invalidate only on `PROMPT_VERSION` bump | 🟡 (cache key in schema) |
 
