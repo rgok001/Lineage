@@ -109,7 +109,7 @@ the spend cap.
 
 | Stage | Input | Output | Caching | Status |
 |---|---|---|---|---|
-| **A · Corpus selection** | concept string | ranked ≤150-paper corpus (metadata) | — | 🟡 |
+| **A · Corpus selection** | concept string | ranked ≤150-paper corpus (metadata) | — | ✅ |
 | **B · Definition extraction** | one paper's text | JSON `{definition, verbatim_quote, section, novelty_claims}` | **per paper**, keyed by arXiv ID + `PROMPT_VERSION` | ⬜ |
 | **C · Drift detection** | all definitions | embeddings → clusters → concept-states (nodes) | — | ⬜ |
 | **D · Edge classification** | citation-linked pairs across clusters + citation contexts | one of six edge types + a quote from each paper + confidence 0–1 | — | ⬜ |
@@ -138,9 +138,40 @@ half of Stage A, live against OpenAlex:
 > papers are legitimately tagged CS. Relevance search is therefore the reliable
 > path for the showcase concept.
 
-**Still to do for Stage A (🟡→✅):** the **embedding relevance filter** that trims
-one-hop noise (e.g. generic highly-cited references that aren't about the concept)
-down to the final ranked corpus.
+### The relevance filter applies to seeds only — deliberately
+
+Between (1) and (2) above, seeds are scored against the concept with a **local**
+embedding model (`BAAI/bge-small-en-v1.5` via `fastembed`) and only the **top-K by
+relevance** (default 150) are kept. Three decisions here are load-bearing:
+
+- **Local, not a paid API.** Stage A's principle is that nothing is paid for
+  before the corpus is chosen. These embeddings are ephemeral — unrelated to the
+  stored `vector(1024)` definition embeddings of Stage C.
+- **Top-K, not an absolute cosine cutoff.** Raw similarity shifts with query
+  phrasing and model. Measured on *attention*: junk seeds score ~0.33–0.40,
+  median ~0.46, and *Attention Is All You Need* reaches only **0.567 (rank
+  21/400)** because its abstract barely uses the word. A fixed threshold that
+  looked sane in a probe (0.62) kept 9/400 seeds and **deleted the Transformer**.
+- **The one-hop expansion is never relevance-filtered.** This is the important
+  one, and it follows from the product's premise:
+
+> **Design note — a concept's ancestors predate its name.** Bahdanau et al. 2014,
+> the origin of attention, **never says "attention"** in its abstract — it says
+> "align" and "(soft-)search". It does not even appear in the seed set. Scoring
+> ancestors against today's vocabulary would delete exactly the history this tool
+> exists to map (it is why `renames` is one of the six edge types). Worse, against
+> the "attention" query, *Adam* scores **higher** than Bahdanau — so no threshold
+> exists that drops the noise and keeps the ancestor. Ancestors therefore earn
+> their place via citations from the cleaned seeds: Bahdanau enters the corpus at
+> rank 5 on 9 in-corpus references, unscored.
+
+**Consequence — Stage A optimises recall, not precision.** Cleaning the seeds
+removes search noise (5G, Lattice Boltzmann, "Least angle regression" as an
+*attention* seed), but the unfiltered expansion still admits generically
+well-cited papers (*Adam*, *scikit-learn*, community-detection). That is accepted:
+**Stage B is the semantic gate** — it asks each paper's full text how *it* defines
+the concept, and papers that don't discuss it yield no definition, hence no node.
+Missing an ancestor is unrecoverable; carrying a few irrelevant papers costs cents.
 
 ---
 
@@ -314,8 +345,10 @@ Work proceeds in the order set by [CLAUDE.md](../CLAUDE.md) §"Build phases":
 3. ✅ arXiv fetcher (`fetch_papers.py`, LaTeX-first, 1 req/3s, backoff) + text
    extraction (`extract_text.py`, `pylatexenc`/`pymupdf`) — papers land with raw +
    extracted text.
-4. ⬜ **Next:** embedding relevance filter (finishes Stage A).
-5. ⬜ Pipeline stages B–E end-to-end on *attention* → genealogy JSON.
+4. ✅ Embedding relevance filter on seeds — Stage A complete.
+5. ⬜ **Next:** pipeline stages B–E end-to-end on *attention* → genealogy JSON.
+   Stage B is the first Anthropic-API stage, where the spend cap and `--dry-run`
+   estimator become load-bearing.
 6. ⬜ UI: timeline + evidence panel → workbench + export.
 7. ⬜ Trace-build UX: job queue, live progress, save/load.
 

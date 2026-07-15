@@ -35,8 +35,18 @@ from common import get_json, mailto  # noqa: E402
 
 OPENALEX = "https://api.openalex.org"
 CS_CONCEPT_ID = "C41008148"  # "Computer science" — keeps e.g. psychology's "attention" out
-WORK_FIELDS = "id,display_name,publication_year,cited_by_count,referenced_works,doi,locations"
+WORK_FIELDS = ("id,display_name,publication_year,cited_by_count,referenced_works,doi,"
+               "locations,abstract_inverted_index")
 REQUEST_PAUSE_S = 0.15  # stay well under polite-pool limits
+
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+# Keep the top-K seeds by relevance rather than applying an absolute cosine
+# cutoff: raw similarity shifts with query phrasing and model, so a fixed number
+# is brittle. Measured on "attention": junk seeds ~0.33-0.40, median ~0.46, and
+# even "Attention Is All You Need" only reaches 0.567 (rank 21/400) because its
+# abstract barely uses the word. Top-K is stable under all of that.
+DEFAULT_KEEP_SEEDS = 150
 
 ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf)/([a-z\-]+/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?", re.I)
 ARXIV_DOI_RE = re.compile(r"10\.48550/arxiv\.(.+)$", re.I)
@@ -137,6 +147,34 @@ def expand_one_hop(seeds: list[dict], max_new: int) -> tuple[list[dict], Counter
     return expanded, ref_freq
 
 
+def abstract_of(work: dict) -> str:
+    """Rebuild an abstract from OpenAlex's inverted index ({word: [positions]})."""
+    inv = work.get("abstract_inverted_index")
+    if not inv:
+        return ""
+    pos = [(p, w) for w, ps in inv.items() for p in ps]
+    return " ".join(w for _, w in sorted(pos))
+
+
+def relevance_scores(concept: str, works: list[dict]) -> list[float]:
+    """Cosine similarity of each work's title+abstract to the concept.
+
+    Local model on purpose: Stage A must stay free — nothing is paid for before
+    the corpus is chosen. These embeddings are ephemeral (the stored vector(1024)
+    definition embeddings in Stage C are a separate, higher-quality model).
+    """
+    import numpy as np
+    from fastembed import TextEmbedding
+
+    docs = [f"{w.get('display_name') or ''}. {abstract_of(w)}"[:2000] for w in works]
+    model = TextEmbedding(EMBED_MODEL)
+    vecs = np.array(list(model.embed([BGE_QUERY_PREFIX + concept] + docs)))
+    q, d = vecs[0], vecs[1:]
+    q = q / np.linalg.norm(q)
+    d = d / np.linalg.norm(d, axis=1, keepdims=True)
+    return (d @ q).tolist()
+
+
 def score(work: dict, ref_freq: Counter) -> float:
     # In-corpus reference frequency is worth more than raw global citations:
     # we want the papers THIS lineage talks about, not just famous ones.
@@ -155,6 +193,12 @@ def main() -> None:
                     help="resolve the concept string to an OpenAlex tag instead of searching")
     ap.add_argument("--no-cs-filter", action="store_true",
                     help="drop the Computer science concept filter")
+    ap.add_argument("--keep-seeds", type=int, default=DEFAULT_KEEP_SEEDS,
+                    help=f"keep the top N seeds by relevance (default {DEFAULT_KEEP_SEEDS})")
+    ap.add_argument("--min-relevance", type=float, default=0.0,
+                    help="optional absolute relevance floor (default off)")
+    ap.add_argument("--no-relevance-filter", action="store_true",
+                    help="skip the embedding relevance filter on seeds")
     ap.add_argument("--json", metavar="PATH", help="also write the ranked corpus as JSON")
     args = ap.parse_args()
 
@@ -169,7 +213,34 @@ def main() -> None:
     if not seeds:
         sys.exit("No seed papers found — try --no-cs-filter, --concept-mode, or a different query.")
 
-    print("Expanding one hop through the citation graph…")
+    # Embedding relevance filter — SEEDS ONLY, deliberately.
+    #
+    # Papers that currently discuss the concept do use its current name, so
+    # semantic relevance cleans search noise out of the seeds well. The one-hop
+    # expansion is left unfiltered on purpose: a concept's ancestors predate its
+    # name (Bahdanau 2014, the origin of attention, never says "attention" — it
+    # says "align"), so scoring them against today's vocabulary would delete
+    # exactly the history this tool exists to find. Ancestors earn their place
+    # via citations from the cleaned seeds instead.
+    rel_by_id: dict[str, float] = {}
+    if not args.no_relevance_filter:
+        print(f"Scoring seed relevance to \"{args.concept}\" ({EMBED_MODEL}, local)…")
+        scores = relevance_scores(args.concept, seeds)
+        rel_by_id = {w["id"]: s for w, s in zip(seeds, scores)}
+        by_rel = sorted(seeds, key=lambda w: rel_by_id[w["id"]], reverse=True)
+        kept = [w for w in by_rel[:args.keep_seeds] if rel_by_id[w["id"]] >= args.min_relevance]
+        dropped = [w for w in by_rel if w not in kept]
+        if not kept:
+            sys.exit("Relevance filter removed every seed — lower --min-relevance.")
+        cutoff = rel_by_id[kept[-1]["id"]]
+        print(f"  kept top {len(kept)}/{len(seeds)} seeds (relevance >= {cutoff:.3f})")
+        for w in dropped[-3:]:
+            print(f"    dropped {rel_by_id[w['id']]:.3f}  {(w.get('display_name') or '?')[:62]}")
+        if len(dropped) > 3:
+            print(f"    …and {len(dropped) - 3} more below the cut")
+        seeds = kept
+
+    print("Expanding one hop through the citation graph (unfiltered — protects ancestors)…")
     expanded, ref_freq = expand_one_hop(seeds, args.max_expand)
 
     seed_ids = {w["id"] for w in seeds}
@@ -195,12 +266,14 @@ def main() -> None:
     print(f"\nCandidate corpus for \"{args.concept}\" — {len(ranked)} papers "
           f"({sum(w['_seed'] for w in ranked)} seed, "
           f"{sum(not w['_seed'] for w in ranked)} expanded)\n")
-    print(f"{'#':>3}  {'arXiv ID':<14} {'Year':<5} {'Cites':>7} {'Refs':>5} {'Src':<4} Title")
-    print("-" * 110)
+    print(f"{'#':>3}  {'arXiv ID':<14} {'Year':<5} {'Cites':>7} {'Refs':>5} {'Rel':>5} {'Src':<4} Title")
+    print("-" * 116)
     for i, w in enumerate(ranked, 1):
-        title = (w.get("display_name") or "?")[:66]
+        title = (w.get("display_name") or "?")[:60]
+        rel = rel_by_id.get(w["id"])
+        rel_s = f"{rel:.2f}" if rel is not None else "  -"
         print(f"{i:>3}  {w['_arxiv_id']:<14} {w.get('publication_year') or '?':<5} "
-              f"{w.get('cited_by_count') or 0:>7,} {ref_freq.get(w['id'], 0):>5} "
+              f"{w.get('cited_by_count') or 0:>7,} {ref_freq.get(w['id'], 0):>5} {rel_s:>5} "
               f"{'seed' if w['_seed'] else 'exp':<4} {title}")
 
     if args.json:
@@ -211,6 +284,7 @@ def main() -> None:
             "year": w.get("publication_year"),
             "cited_by_count": w.get("cited_by_count"),
             "in_corpus_refs": ref_freq.get(w["id"], 0),
+            "seed_relevance": rel_by_id.get(w["id"]),
             "seed": w["_seed"],
         } for w in ranked]
         Path(args.json).write_text(json.dumps(out, indent=2), encoding="utf-8")
