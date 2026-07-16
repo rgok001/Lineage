@@ -111,7 +111,7 @@ the spend cap.
 |---|---|---|---|---|
 | **A · Corpus selection** | concept string | ranked ≤150-paper corpus (metadata) | — | ✅ |
 | **B · Definition extraction** | one paper's text | JSON `{defines_concept, definition, verbatim_quote, section, novelty_claims}` | **per paper**, keyed by `(paper, concept, PROMPT_VERSION)`; negatives cached too | ✅ |
-| **C · Drift detection** | all definitions | embeddings → clusters → concept-states (nodes) | — | ⬜ |
+| **C · Drift detection** | all definitions | embeddings → clusters → concept-states (nodes) | embeddings stored on `definitions` | ✅ |
 | **D · Edge classification** | citation-linked pairs across clusters + citation contexts | one of six edge types + a quote from each paper + confidence 0–1 | — | ⬜ |
 | **E · Grounding check + assembly** | candidate edges + extracted text | verified/inferred edges → genealogy JSON | full trace output immutable once built | ⬜ |
 
@@ -218,6 +218,37 @@ both confirmed.
 > scores *title + abstract*, it still cannot see the word — which is why the
 > expansion must stay unfiltered — but full-text extraction finds it. Cheap
 > metadata filtering misses the ancestor; expensive full-text reading catches it.
+
+### Stage C as built (✅)
+
+[`stage_c_cluster.py`](../pipeline/stage_c_cluster.py) embeds each definition and
+clusters them into concept-states (the nodes of the genealogy):
+
+- **Embedding — `bge-large-en-v1.5` (1024-dim), local/free**, chosen to match the
+  `vector(1024)` column so it populates `definitions.embedding` with no migration
+  and swapping to Voyage later is one line. Cached per definition; the vectors also
+  feed Stage D.
+- **Clustering — agglomerative with a cosine-distance cutoff, not k-means.** The
+  number of concept-states is the *output*, not a known input.
+- **Labelling — one cheap LLM call per cluster** names each concept-state (6 nodes,
+  ~$0.006). `--no-label` runs fully offline with heuristic labels.
+- Writes one `genealogies` row per `(concept, prompt_version)` with `nodes` as JSON.
+
+> **Design note — the threshold, and why the draft over-splits on purpose.** All
+> definitions of one concept are semantically close, so the separating structure is
+> fine. On *attention* the soft-alignment core (Bahdanau/Show-Attend-Tell/Google
+> NMT) and the self-attention core (Transformer/ViT) sit ~0.16 apart — but a bridge
+> pair (Show-Attend-Tell ↔ Transformer) is 0.161, so any cutoff ≥ 0.19 merges the
+> two senses the genealogy exists to distinguish. The default **0.16** keeps them
+> apart, at the cost of over-splitting weak singletons (GPT-3 splits from the
+> Transformer node; its label is a near-synonym). That is the safe direction:
+> **merging nodes is a one-click workbench action; un-merging a conflated node is
+> not.** Stage C produces a *draft* for curation — clustering proposes, the human
+> refines — matching the hand-curated-showcase definition of done.
+
+**Verified live** (9 definitions → 6 nodes, labelling $0.006): the two multi-paper
+cores separated correctly (n2 soft-alignment 2014–16; n4 self-attention 2017–20),
+with a readable backbone n1→n2→n4 (proto → alignment → self-attention).
 
 ---
 

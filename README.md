@@ -45,6 +45,11 @@ python pipeline/extract_text.py
 
 # Stage B: per-paper definition extraction (needs ANTHROPIC_API_KEY)
 python pipeline/stage_b_extract.py "attention" --dry-run   # cost estimate, no API call
-python pipeline/stage_b_extract.py "attention" --limit 5   # default model: claude-opus-4-8
+python pipeline/stage_b_extract.py "attention" --limit 5   # model from LLM_MODEL / .env
 python pipeline/stage_b_extract.py "attention" --model claude-haiku-4-5
+
+# Stage C: embed definitions + cluster into concept-states (nodes)
+python pipeline/stage_c_cluster.py "attention"                     # LLM-labelled nodes
+python pipeline/stage_c_cluster.py "attention" --no-label          # offline, free
+python pipeline/stage_c_cluster.py "attention" --distance-threshold 0.19
 ```
