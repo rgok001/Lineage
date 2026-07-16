@@ -11,6 +11,10 @@
   --edge-narrows: #6b5b95;
   --edge-renames: #8a7433;
   --edge-migrates: #3e7257;
+  --edge-merges: #a0522d; /* not in the approved 5; assigned for completeness */
+
+  --verified: #3e7257;
+  --inferred: #a34a3a;
 
   --font-display: "Spectral", Georgia, serif;
   --font-ui: "IBM Plex Sans", system-ui, sans-serif;
