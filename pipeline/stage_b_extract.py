@@ -137,10 +137,10 @@ ORDER BY p.cited_by_count DESC NULLS LAST
 INSERT_DEF = """
 INSERT INTO definitions (paper_id, concept, prompt_version, defines_concept,
                          definition, verbatim_quote, quote_verified, section,
-                         novelty_claims)
+                         novelty_claims, model)
 VALUES (%(paper_id)s, %(concept)s, %(prompt_version)s, %(defines_concept)s,
         %(definition)s, %(verbatim_quote)s, %(quote_verified)s, %(section)s,
-        %(novelty_claims)s)
+        %(novelty_claims)s, %(model)s)
 ON CONFLICT (paper_id, concept, prompt_version) DO NOTHING
 """
 
@@ -248,6 +248,7 @@ def main() -> None:
             "definition": ex.definition or "", "verbatim_quote": ex.verbatim_quote or "",
             "quote_verified": verified, "section": ex.section or None,
             "novelty_claims": psycopg.types.json.Json(ex.novelty_claims),
+            "model": args.model,
         })
         conn.commit()
 

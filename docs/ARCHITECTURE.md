@@ -190,8 +190,12 @@ JSON parsing to get wrong). Load-bearing details:
 - **Only trusted papers are sent** — `text_title_match >= 0.5`, so the
   BERT-mislabelled record never reaches the model (verified: a 4-paper corpus
   dry-runs as 3).
-- **Model is configurable** (`--model` / `LLM_MODEL`), default `claude-opus-4-8`.
-  Cost is the user's decision, surfaced by `--dry-run`, not silently downgraded.
+- **Model is configurable** (`--model` / `LLM_MODEL`); `definitions.model` records
+  which model produced each row (provenance, not cache key — bump `PROMPT_VERSION`
+  to force re-extraction on a different model). On a 5-paper head-to-head,
+  **Sonnet 5 matched Opus 4.8** — identical verdicts, both quotes verified, the
+  same quote span chosen on the Transformer — at ~60% the cost (~$6.65 vs ~$11.08
+  for 150 papers). `LLM_MODEL` now defaults to `claude-sonnet-5`.
 
 > **Design note — a negative verdict is a result, and must be cached.**
 > `defines_concept: false` originally wrote no row, so the cache (which asks
