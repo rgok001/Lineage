@@ -42,4 +42,9 @@ python pipeline/fetch_papers.py corpus.json --limit 10  # fetch (1 req / 3s)
 
 # Text extraction: LaTeX/PDF source -> clean text (reads papers table)
 python pipeline/extract_text.py
+
+# Stage B: per-paper definition extraction (needs ANTHROPIC_API_KEY)
+python pipeline/stage_b_extract.py "attention" --dry-run   # cost estimate, no API call
+python pipeline/stage_b_extract.py "attention" --limit 5   # default model: claude-opus-4-8
+python pipeline/stage_b_extract.py "attention" --model claude-haiku-4-5
 ```

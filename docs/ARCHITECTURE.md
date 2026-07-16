@@ -110,7 +110,7 @@ the spend cap.
 | Stage | Input | Output | Caching | Status |
 |---|---|---|---|---|
 | **A · Corpus selection** | concept string | ranked ≤150-paper corpus (metadata) | — | ✅ |
-| **B · Definition extraction** | one paper's text | JSON `{definition, verbatim_quote, section, novelty_claims}` | **per paper**, keyed by arXiv ID + `PROMPT_VERSION` | ⬜ |
+| **B · Definition extraction** | one paper's text | JSON `{defines_concept, definition, verbatim_quote, section, novelty_claims}` | **per paper**, keyed by `(paper, concept, PROMPT_VERSION)` | 🟡 |
 | **C · Drift detection** | all definitions | embeddings → clusters → concept-states (nodes) | — | ⬜ |
 | **D · Edge classification** | citation-linked pairs across clusters + citation contexts | one of six edge types + a quote from each paper + confidence 0–1 | — | ⬜ |
 | **E · Grounding check + assembly** | candidate edges + extracted text | verified/inferred edges → genealogy JSON | full trace output immutable once built | ⬜ |
@@ -172,6 +172,30 @@ well-cited papers (*Adam*, *scikit-learn*, community-detection). That is accepte
 **Stage B is the semantic gate** — it asks each paper's full text how *it* defines
 the concept, and papers that don't discuss it yield no definition, hence no node.
 Missing an ancestor is unrecoverable; carrying a few irrelevant papers costs cents.
+
+### Stage B as built (🟡)
+
+[`stage_b_extract.py`](../pipeline/stage_b_extract.py) asks Claude, per paper, how
+*that paper* defines the concept, via `messages.parse()` against a Pydantic schema
+(structured outputs — the response is schema-valid by construction, so there is no
+JSON parsing to get wrong). Load-bearing details:
+
+- **`defines_concept` is the gate Stage A defers to.** A `false` answer produces no
+  definition and no node — this is how *Adam* and *scikit-learn* fall out.
+- **The prompt forbids vocabulary matching.** It states that a paper may use the
+  concept under a different name and to judge by meaning — the Bahdanau lesson,
+  carried into the prompt.
+- **Grounding happens at creation.** The returned `verbatim_quote` is string-matched
+  against the extracted text on arrival and stored as `definitions.quote_verified`.
+- **Only trusted papers are sent** — `text_title_match >= 0.5`, so the
+  BERT-mislabelled record never reaches the model (verified: a 4-paper corpus
+  dry-runs as 3).
+- **Model is configurable** (`--model` / `LLM_MODEL`), default `claude-opus-4-8`.
+  Cost is the user's decision, surfaced by `--dry-run`, not silently downgraded.
+
+**Not yet verified live:** the extraction path has never executed against the
+Anthropic API (no `ANTHROPIC_API_KEY` yet). `--dry-run`, the model/cap logic, and
+the SQL are exercised; the `messages.parse()` call and response handling are not.
 
 ---
 
@@ -288,9 +312,9 @@ serverless — while the pipeline uses the **direct** endpoint.
 
 | Control | Mechanism | Status |
 |---|---|---|
-| Per-trace spend cap | `TRACE_SPEND_CAP_USD` (default 10); aborts the job cleanly, recorded as `genealogies.status = aborted_spend_cap` | ⬜ (schema ready) |
-| Dry-run | `--dry-run` estimates cost without calling the LLM | ⬜ |
-| Per-stage token logging | logged as the pipeline runs; `genealogies.spend_usd` accumulates | ⬜ |
+| Per-trace spend cap | `TRACE_SPEND_CAP_USD` (default 10): refuses to start if the estimate exceeds it, and aborts mid-run when actual spend crosses it (cached work is kept) | 🟡 (Stage B; `genealogies.status` wiring pending) |
+| Dry-run | `--dry-run` estimates cost across all models and makes **no billable call**; uses the API's free `count_tokens` when a key exists, a `chars/3.5` heuristic (clearly flagged) when not | ✅ (Stage B) |
+| Per-stage token logging | real `usage.input_tokens`/`output_tokens` per call accumulate into a running spend total | 🟡 (Stage B; `genealogies.spend_usd` wiring pending) |
 | Grounding check | string-verify every quote vs extracted text before display | ⬜ (schema flags ready: `quote_verified`, `edges.verified`) |
 | Unfetchable papers | fetch failure ⇒ no `papers` row ⇒ never reaches the pipeline | ✅ |
 | Metadata mismatch | `text_title_match` score; flagged, not silently dropped (see §5) | ✅ |
