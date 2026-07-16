@@ -109,7 +109,11 @@ def estimate_tokens(client, model: str, system: str, user: str) -> int:
             ).input_tokens
         except Exception:
             pass
-    return int(len(system + user) / 3.5)  # rough fallback; flagged in output
+    # Fallback ratio measured against count_tokens on this corpus: 102,162 chars
+    # -> 39,072 tokens = 2.6 chars/token. Academic text (LaTeX artifacts, math,
+    # citations) tokenizes far worse than the ~3.5 typical of plain prose; the
+    # optimistic constant under-estimated the 150-paper cost by 34%.
+    return int(len(system + user) / 2.6)
 
 
 def cost_usd(model: str, in_tok: int, out_tok: int) -> float:

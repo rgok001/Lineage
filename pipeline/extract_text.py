@@ -166,7 +166,19 @@ def extract_one(raw_path: Path, source_format: str) -> str | None:
     if texs:
         main = find_main_tex(texs)
         if main:
-            latex_text = latex_to_text(inline_inputs(main, texs))
+            merged = inline_inputs(main, texs)
+            latex_text = latex_to_text(merged)
+            # A preamble full of custom \newcommand macros can make pylatexenc
+            # emit nothing at all (observed on Bahdanau 2014: 57k chars -> 37
+            # newlines). Retry on the body alone, which parses fine. Only as a
+            # fallback: the preamble holds \title, and dropping it universally
+            # would sink text_title_match for papers that convert correctly.
+            if len(latex_text.strip()) < MIN_LATEX_CHARS:
+                m = re.search(r"\\begin\{document\}", merged)
+                if m:
+                    body_text = latex_to_text(merged[m.end():])
+                    if len(body_text.strip()) > len(latex_text.strip()):
+                        latex_text = body_text
 
     # Fall back to (or prefer) an embedded PDF when the LaTeX is a thin wrapper.
     if len(latex_text.strip()) < MIN_LATEX_CHARS and pdfs:
