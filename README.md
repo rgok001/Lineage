@@ -51,5 +51,11 @@ python pipeline/stage_b_extract.py "attention" --model claude-haiku-4-5
 # Stage C: embed definitions + cluster into concept-states (nodes)
 python pipeline/stage_c_cluster.py "attention"                     # LLM-labelled nodes
 python pipeline/stage_c_cluster.py "attention" --no-label          # offline, free
-python pipeline/stage_c_cluster.py "attention" --distance-threshold 0.19
+
+# Stage D: classify edges from cross-node citations (Semantic Scholar, no key)
+python pipeline/stage_d_edges.py "attention" --dry-run             # show citation links
+python pipeline/stage_d_edges.py "attention"
+
+# Stage E: grounding check + assemble genealogy JSON
+python pipeline/stage_e_ground.py "attention"
 ```

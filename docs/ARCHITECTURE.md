@@ -112,8 +112,8 @@ the spend cap.
 | **A · Corpus selection** | concept string | ranked ≤150-paper corpus (metadata) | — | ✅ |
 | **B · Definition extraction** | one paper's text | JSON `{defines_concept, definition, verbatim_quote, section, novelty_claims}` | **per paper**, keyed by `(paper, concept, PROMPT_VERSION)`; negatives cached too | ✅ |
 | **C · Drift detection** | all definitions | embeddings → clusters → concept-states (nodes) | embeddings stored on `definitions` | ✅ |
-| **D · Edge classification** | citation-linked pairs across clusters + citation contexts | one of six edge types + a quote from each paper + confidence 0–1 | — | ⬜ |
-| **E · Grounding check + assembly** | candidate edges + extracted text | verified/inferred edges → genealogy JSON | full trace output immutable once built | ⬜ |
+| **D · Edge classification** | citation-linked pairs across clusters + citation contexts | one of six edge types + a quote from each paper + confidence 0–1 | Semantic Scholar responses cached on disk | ✅ |
+| **E · Grounding check + assembly** | candidate edges + extracted text | verified/inferred edges → genealogy JSON | full trace output immutable once built | ✅ |
 
 ### Stage A as built (🟡)
 
@@ -249,6 +249,42 @@ clusters them into concept-states (the nodes of the genealogy):
 **Verified live** (9 definitions → 6 nodes, labelling $0.006): the two multi-paper
 cores separated correctly (n2 soft-alignment 2014–16; n4 self-attention 2017–20),
 with a readable backbone n1→n2→n4 (proto → alignment → self-attention).
+
+### Stages D & E as built (✅) — pipeline complete through Phase 2
+
+[`stage_d_edges.py`](../pipeline/stage_d_edges.py) — for each corpus paper it pulls
+references (with citation contexts) from **Semantic Scholar's public API (no key
+needed** — verified; contexts, `intents`, and `isInfluential` all return
+unauthenticated), finds citations that cross concept-state boundaries, and asks the
+LLM to classify each into one of the six edge types + confidence. The LLM
+**classifies only**; evidence quotes are the two papers' Stage-B-verified definition
+quotes, so nothing is hallucinated. Direction is chronological (cited = ancestor =
+source; citing = descendant = target). S2 responses are disk-cached — the shared
+unauthenticated pool throttles hard on repeat runs.
+
+> **Design note — why the edge quotes are the definition quotes, not the citation
+> context.** The citation-context sentence is the most *relationship-specific*
+> evidence, but it comes from Semantic Scholar's PDF extraction and will not
+> string-match our LaTeX-extracted text, so it cannot pass the grounding check.
+> The grounding rule requires quotes verified against *our* text, so each edge
+> carries the two papers' definition quotes (already string-verified in Stage B),
+> and the citation context is used only as the classification signal. A future
+> `edges.citation_context` column could store the S2 sentence as displayed-but-
+> unverifiable colour.
+
+[`stage_e_ground.py`](../pipeline/stage_e_ground.py) runs the mandatory grounding
+check — each edge is verified only if **both** quotes are found verbatim in the
+extracted source text — sets `edges.verified` (solid vs dotted), marks the
+genealogy `complete`, and writes the assembled `nodes + edges` JSON the UI renders.
+
+**Verified live** (7 edges, classification $0.033): **6 solid, 1 dotted.** The
+dotted edge is precisely the one whose source is Google NMT — the single paper
+whose Stage-B quote never verified — so the "inferred" status propagated end-to-end
+exactly as the product rule requires; nothing unverified renders as verified. The
+assembled backbone: Graves (proto) **extends→** Bahdanau (soft-alignment)
+**extends→** Transformer (self-attention), with **migrates** edges into vision
+(Show-Attend-Tell, ViT). This is the Phase 2 definition of done: a machine-generated,
+evidence-grounded genealogy JSON.
 
 ---
 
@@ -423,10 +459,12 @@ Work proceeds in the order set by [CLAUDE.md](../CLAUDE.md) §"Build phases":
    extraction (`extract_text.py`, `pylatexenc`/`pymupdf`) — papers land with raw +
    extracted text.
 4. ✅ Embedding relevance filter on seeds — Stage A complete.
-5. ⬜ **Next:** pipeline stages B–E end-to-end on *attention* → genealogy JSON.
-   Stage B is the first Anthropic-API stage, where the spend cap and `--dry-run`
-   estimator become load-bearing.
-6. ⬜ UI: timeline + evidence panel → workbench + export.
+5. ✅ Pipeline stages B–E end-to-end on *attention* → genealogy JSON. **Phase 2
+   complete:** a 6-node, 7-edge evidence-grounded genealogy, built for a few
+   dollars total, with the grounding check producing solid/dotted edges live.
+6. ⬜ **Next:** UI — timeline + evidence panel rendering the genealogy JSON →
+   workbench editing (split/merge/rename, incl. the deliberate n4/n6 over-split) →
+   export (related-work Markdown + BibTeX).
 7. ⬜ Trace-build UX: job queue, live progress, save/load.
 
 ## 11. Explicitly out of scope
