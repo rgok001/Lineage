@@ -135,10 +135,12 @@ ORDER BY p.cited_by_count DESC NULLS LAST
 """
 
 INSERT_DEF = """
-INSERT INTO definitions (paper_id, concept, prompt_version, definition,
-                         verbatim_quote, quote_verified, section, novelty_claims)
-VALUES (%(paper_id)s, %(concept)s, %(prompt_version)s, %(definition)s,
-        %(verbatim_quote)s, %(quote_verified)s, %(section)s, %(novelty_claims)s)
+INSERT INTO definitions (paper_id, concept, prompt_version, defines_concept,
+                         definition, verbatim_quote, quote_verified, section,
+                         novelty_claims)
+VALUES (%(paper_id)s, %(concept)s, %(prompt_version)s, %(defines_concept)s,
+        %(definition)s, %(verbatim_quote)s, %(quote_verified)s, %(section)s,
+        %(novelty_claims)s)
 ON CONFLICT (paper_id, concept, prompt_version) DO NOTHING
 """
 
@@ -230,21 +232,29 @@ def main() -> None:
             print("    ✗ model returned no parseable extraction")
             continue
 
-        if not ex.defines_concept:
-            print(f"    – does not define \"{args.concept}\" — no node (spend ${spend:.2f})")
-            dropped += 1
-        else:
-            # Grounding check at the point of creation: the quote must literally
-            # occur in the text we sent, or it is not evidence.
+        # Grounding check at the point of creation: the quote must literally
+        # occur in the text we sent, or it is not evidence.
+        verified = False
+        if ex.defines_concept and ex.verbatim_quote:
             full = (REPO_ROOT / text_path_by_id[aid]).read_text(encoding="utf-8")
-            verified = bool(ex.verbatim_quote) and ex.verbatim_quote in full
-            conn.execute(INSERT_DEF, {
-                "paper_id": pid, "concept": args.concept, "prompt_version": prompt_version,
-                "definition": ex.definition, "verbatim_quote": ex.verbatim_quote,
-                "quote_verified": verified, "section": ex.section or None,
-                "novelty_claims": psycopg.types.json.Json(ex.novelty_claims),
-            })
-            conn.commit()
+            verified = ex.verbatim_quote in full
+
+        # Always record the verdict — "does not define it" is a finding worth
+        # caching, not an absence of one. Without a row, every re-run re-pays
+        # the LLM for papers already known to be irrelevant.
+        conn.execute(INSERT_DEF, {
+            "paper_id": pid, "concept": args.concept, "prompt_version": prompt_version,
+            "defines_concept": ex.defines_concept,
+            "definition": ex.definition or "", "verbatim_quote": ex.verbatim_quote or "",
+            "quote_verified": verified, "section": ex.section or None,
+            "novelty_claims": psycopg.types.json.Json(ex.novelty_claims),
+        })
+        conn.commit()
+
+        if not ex.defines_concept:
+            dropped += 1
+            print(f"    – does not define \"{args.concept}\" — no node (spend ${spend:.2f})")
+        else:
             kept += 1
             if not verified:
                 unverified += 1

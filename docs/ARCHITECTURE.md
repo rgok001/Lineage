@@ -110,7 +110,7 @@ the spend cap.
 | Stage | Input | Output | Caching | Status |
 |---|---|---|---|---|
 | **A · Corpus selection** | concept string | ranked ≤150-paper corpus (metadata) | — | ✅ |
-| **B · Definition extraction** | one paper's text | JSON `{defines_concept, definition, verbatim_quote, section, novelty_claims}` | **per paper**, keyed by `(paper, concept, PROMPT_VERSION)` | 🟡 |
+| **B · Definition extraction** | one paper's text | JSON `{defines_concept, definition, verbatim_quote, section, novelty_claims}` | **per paper**, keyed by `(paper, concept, PROMPT_VERSION)`; negatives cached too | ✅ |
 | **C · Drift detection** | all definitions | embeddings → clusters → concept-states (nodes) | — | ⬜ |
 | **D · Edge classification** | citation-linked pairs across clusters + citation contexts | one of six edge types + a quote from each paper + confidence 0–1 | — | ⬜ |
 | **E · Grounding check + assembly** | candidate edges + extracted text | verified/inferred edges → genealogy JSON | full trace output immutable once built | ⬜ |
@@ -193,9 +193,27 @@ JSON parsing to get wrong). Load-bearing details:
 - **Model is configurable** (`--model` / `LLM_MODEL`), default `claude-opus-4-8`.
   Cost is the user's decision, surfaced by `--dry-run`, not silently downgraded.
 
-**Not yet verified live:** the extraction path has never executed against the
-Anthropic API (no `ANTHROPIC_API_KEY` yet). `--dry-run`, the model/cap logic, and
-the SQL are exercised; the `messages.parse()` call and response handling are not.
+> **Design note — a negative verdict is a result, and must be cached.**
+> `defines_concept: false` originally wrote no row, so the cache (which asks
+> "does a definitions row exist?") never saw it and every re-run re-paid the LLM
+> for papers already known to be irrelevant. On a 150-paper corpus that is *most*
+> of the corpus and most of the bill (~$7/re-run on Opus). Migration 003 adds
+> `definitions.defines_concept`; Stage B now records both verdicts, and a re-run
+> of a completed concept costs **$0.00**. Downstream stages must filter
+> `defines_concept = true`.
+
+**Verified live** (5 papers, $0.38 on Opus 4.8): Transformer and Bahdanau both
+yielded definitions with string-verified quotes; *Adam*, *VGG*, and a
+complex-networks paper were all correctly dropped — Stage A's recall trade-off
+resolving exactly as designed. Prompt-version invalidation and the $0 re-run are
+both confirmed.
+
+> **Note for the record — the Bahdanau detail is narrower than "never says
+> attention".** Its *abstract* never does (0 occurrences); its *body* says it 3
+> times, in the one sentence that names the mechanism. Since the relevance filter
+> scores *title + abstract*, it still cannot see the word — which is why the
+> expansion must stay unfiltered — but full-text extraction finds it. Cheap
+> metadata filtering misses the ancestor; expensive full-text reading catches it.
 
 ---
 
