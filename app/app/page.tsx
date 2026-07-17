@@ -1,6 +1,3 @@
-"use client";
-
-import { useState } from "react";
 import genealogy from "./genealogy-attention.json";
 
 type Member = { arxiv_id: string; year: number; title: string };
@@ -28,256 +25,194 @@ const EDGE_COLORS: Record<string, string> = {
   contests: "var(--edge-contests)",
   narrows: "var(--edge-narrows)",
   renames: "var(--edge-renames)",
-  migrates: "var(--edge-migrates)",
   merges: "var(--edge-merges)",
+  migrates: "var(--edge-migrates)",
+};
+const EDGE_MEANING: Record<string, string> = {
+  extends: "builds on / generalises",
+  contests: "disputes",
+  narrows: "restricts to a special case",
+  renames: "same idea, new name",
+  merges: "fuses two ideas",
+  migrates: "carries into a new field",
 };
 
-const ROW_H = 168;
-const TOP_PAD = 24;
-const GUTTER = 150;
-const RAIL_X = 44;
-
 export default function Home() {
-  const nodes = (genealogy.nodes as Node[])
-    .slice()
-    .sort((a, b) => a.year_start - b.year_start);
-  const edges = genealogy.edges as Edge[];
-  const rowOf = new Map(nodes.map((n, i) => [n.node_id, i]));
-  const yCenter = (id: string) => TOP_PAD + (rowOf.get(id)! + 0.5) * ROW_H;
-  const height = TOP_PAD * 2 + nodes.length * ROW_H;
-
-  const [selected, setSelected] = useState<number | null>(null);
+  const nodes = (genealogy.nodes as Node[]).slice().sort((a, b) => a.year_start - b.year_start);
+  const edges = (genealogy.edges as Edge[]).slice();
   const nodeById = new Map(nodes.map((n) => [n.node_id, n]));
-
-  // offset multiple edges between the same pair so their curves don't overlap
-  const pairSeen = new Map<string, number>();
-  const edgeGeom = edges.map((e) => {
-    const key = [e.source_node, e.target_node].sort().join("-");
-    const k = pairSeen.get(key) ?? 0;
-    pairSeen.set(key, k + 1);
-    return { bulge: 60 + k * 34 };
-  });
+  const yearOf = (p: string) => {
+    for (const n of nodes) for (const m of n.members) if (m.arxiv_id === p) return m.year;
+    return 0;
+  };
+  const titleOf = (p: string) => {
+    for (const n of nodes) for (const m of n.members) if (m.arxiv_id === p) return m.title;
+    return p;
+  };
+  edges.sort((a, b) => yearOf(a.source_paper) - yearOf(b.source_paper) || yearOf(a.target_paper) - yearOf(b.target_paper));
 
   return (
-    <main style={{ maxWidth: 1180, margin: "0 auto", padding: "2rem 1.5rem 4rem" }}>
-      <header style={{ borderBottom: "1px solid var(--line)", paddingBottom: "1rem", marginBottom: "1.5rem" }}>
-        <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2rem", margin: 0 }}>
-          Lineage — the genealogy of <em>“{genealogy.concept}”</em>
+    <main style={{ maxWidth: 940, margin: "0 auto", padding: "2rem 1.5rem 5rem" }}>
+      <header style={{ borderBottom: "2px solid var(--line)", paddingBottom: "1.1rem", marginBottom: "1.5rem" }}>
+        <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2.1rem", margin: 0, color: "var(--ink)" }}>
+          How “{genealogy.concept}” evolved
         </h1>
-        <p style={{ color: "var(--ink-soft)", margin: ".4rem 0 0", fontSize: ".95rem" }}>
-          {genealogy.stats.nodes} concept-states · {genealogy.stats.edges} relationships ·{" "}
-          <span style={{ color: "var(--verified)" }}>{genealogy.stats.verified_edges} verified</span> ·{" "}
-          <span style={{ color: "var(--inferred)" }}>{genealogy.stats.inferred_edges} inferred</span>
+        <p style={{ color: "var(--ink-soft)", margin: ".5rem 0 0", fontSize: "1rem", lineHeight: 1.5 }}>
+          Tracing one idea across {nodes.reduce((s, n) => s + n.members.length, 0)} papers.
+          The word splits into <strong>{genealogy.stats.nodes} distinct meanings</strong> over time
+          (below), linked by <strong>{genealogy.stats.edges} typed relationships</strong> — each backed
+          by a verbatim quote from both papers.
         </p>
-        <p style={{ color: "var(--ink-soft)", margin: ".5rem 0 0", fontSize: ".8rem", fontStyle: "italic" }}>
-          A workbench, not the last word — clustering and edges are a draft to curate, not “the” history.
+        <p style={{ color: "var(--ink-soft)", margin: ".5rem 0 0", fontSize: ".82rem", fontStyle: "italic" }}>
+          A workbench, not the last word — this is an automatically-built draft to curate, not “the” history.
         </p>
       </header>
 
-      <Legend />
-
-      <div style={{ display: "flex", gap: "1.5rem", alignItems: "flex-start" }}>
-        {/* timeline */}
-        <div style={{ position: "relative", flex: "1 1 auto", minWidth: 0 }}>
-          <svg
-            width="100%"
-            height={height}
-            style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none", overflow: "visible" }}
-          >
-            <defs>
-              {Object.entries(EDGE_COLORS).map(([t, c]) => (
-                <marker key={t} id={`arrow-${t}`} viewBox="0 0 10 10" refX="8" refY="5"
-                  markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                  <path d="M0,0 L10,5 L0,10 z" fill={c} />
-                </marker>
-              ))}
-            </defs>
-            {edges.map((e, i) => {
-              const y1 = yCenter(e.source_node);
-              const y2 = yCenter(e.target_node);
-              const b = edgeGeom[i].bulge;
-              const cx = GUTTER - b;
-              const active = selected === i;
-              const color = EDGE_COLORS[e.edge_type] ?? "var(--ink-soft)";
-              return (
-                <path
-                  key={i}
-                  d={`M ${GUTTER} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${GUTTER} ${y2}`}
-                  fill="none"
-                  stroke={color}
-                  strokeWidth={active ? 3.5 : 2}
-                  strokeDasharray={e.verified ? undefined : "5 5"}
-                  markerEnd={`url(#arrow-${e.edge_type})`}
-                  opacity={selected === null || active ? 1 : 0.22}
-                  style={{ pointerEvents: "stroke", cursor: "pointer" }}
-                  onClick={() => setSelected(i)}
-                />
-              );
-            })}
-          </svg>
-
-          {/* year rail + node cards */}
-          <div style={{ position: "relative" }}>
-            {nodes.map((n) => (
-              <div key={n.node_id} style={{ height: ROW_H, position: "relative", display: "flex", alignItems: "center" }}>
-                <div style={{
-                  position: "absolute", left: 0, width: RAIL_X, textAlign: "right",
-                  fontFamily: "var(--font-mono)", fontSize: ".75rem", color: "var(--ink-soft)",
-                }}>
-                  {n.year_start}{n.year_end !== n.year_start ? `–${String(n.year_end).slice(2)}` : ""}
-                </div>
-                <div style={{ marginLeft: GUTTER + 8, flex: 1 }}>
-                  <NodeCard node={n} />
-                </div>
+      {/* ── SECTION 1: the concept-states ───────────────────────── */}
+      <SectionTitle n="1">The {nodes.length} meanings, earliest to latest</SectionTitle>
+      <div style={{ display: "flex", flexDirection: "column", gap: ".8rem", marginBottom: "2.5rem" }}>
+        {nodes.map((n, i) => (
+          <div key={n.node_id} style={{
+            display: "flex", gap: "1rem", background: "var(--card)",
+            border: "1px solid var(--line)", borderRadius: 8, padding: "0.9rem 1.1rem",
+          }}>
+            <div style={{
+              flex: "0 0 62px", textAlign: "center",
+              fontFamily: "var(--font-mono)", color: "var(--ink-soft)",
+            }}>
+              <div style={{ fontSize: "1.15rem", color: "var(--ink)", fontWeight: 600 }}>#{i + 1}</div>
+              <div style={{ fontSize: ".72rem" }}>
+                {n.year_start}{n.year_end !== n.year_start ? `–${n.year_end}` : ""}
               </div>
-            ))}
-          </div>
-        </div>
-
-        {/* evidence / detail panel */}
-        <aside style={{ flex: "0 0 380px", position: "sticky", top: "1rem" }}>
-          {selected === null ? (
-            <div style={{ ...panelBox, color: "var(--ink-soft)" }}>
-              <p style={{ margin: 0 }}>
-                Click a <strong>relationship line</strong> in the timeline to see the verbatim
-                evidence from both papers, and whether it was string-verified against the source text.
-              </p>
-              <ul style={{ margin: "1rem 0 0", paddingLeft: "1.1rem", fontSize: ".85rem" }}>
-                {edges.map((e, i) => (
-                  <li key={i} style={{ marginBottom: ".35rem" }}>
-                    <button onClick={() => setSelected(i)} style={linkBtn}>
-                      <span style={{ color: EDGE_COLORS[e.edge_type], fontWeight: 600 }}>
-                        {e.edge_type}
-                      </span>{" "}
-                      {nodeById.get(e.source_node)?.year_start} → {nodeById.get(e.target_node)?.year_start}
-                      {!e.verified && <span style={{ color: "var(--inferred)" }}> ◌</span>}
-                    </button>
+            </div>
+            <div style={{ flex: 1, borderLeft: "1px solid var(--line)", paddingLeft: "1rem" }}>
+              <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.15rem", color: "var(--ink)" }}>
+                {n.label}
+              </div>
+              <ul style={{ margin: ".45rem 0 0", padding: 0, listStyle: "none" }}>
+                {n.members.map((m) => (
+                  <li key={m.arxiv_id} style={{ fontSize: ".84rem", color: "var(--ink-soft)", lineHeight: 1.45 }}>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: ".74rem" }}>{m.year}</span>{" · "}
+                    {m.title}
                   </li>
                 ))}
               </ul>
             </div>
-          ) : (
-            <EvidencePanel edge={edges[selected]} nodeById={nodeById} onClose={() => setSelected(null)} />
-          )}
-        </aside>
+          </div>
+        ))}
       </div>
+
+      {/* ── SECTION 2: the relationships ────────────────────────── */}
+      <SectionTitle n="2">The {edges.length} relationships between them</SectionTitle>
+      <p style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 1rem" }}>
+        Each row is a typed link between two papers. Solid dot = quotes verified against the source
+        text; hollow dot = one quote couldn’t be matched, so it’s shown as <em>inferred</em>.
+        Click any row to read the evidence.
+      </p>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
+        {edges.map((e, i) => {
+          const color = EDGE_COLORS[e.edge_type];
+          const src = nodeById.get(e.source_node)!;
+          const dst = nodeById.get(e.target_node)!;
+          return (
+            <details key={i} style={{
+              border: "1px solid var(--line)", borderLeft: `4px solid ${color}`,
+              borderRadius: 8, background: "var(--card)", overflow: "hidden",
+            }}>
+              <summary style={{ listStyle: "none", cursor: "pointer", padding: ".85rem 1.1rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap" }}>
+                  <span style={{
+                    fontFamily: "var(--font-mono)", fontSize: ".68rem", textTransform: "uppercase",
+                    letterSpacing: ".07em", color: "#fff", background: color, padding: ".2rem .55rem",
+                    borderRadius: 4, whiteSpace: "nowrap",
+                  }}>{e.edge_type}</span>
+                  <span style={{ fontSize: ".78rem", color: "var(--ink-soft)" }}>{EDGE_MEANING[e.edge_type]}</span>
+                  <span style={{ marginLeft: "auto", fontSize: ".78rem", fontFamily: "var(--font-mono)",
+                    color: e.verified ? "var(--verified)" : "var(--inferred)", whiteSpace: "nowrap" }}>
+                    {e.verified ? "● verified" : "○ inferred"} · {e.confidence.toFixed(2)}
+                  </span>
+                </div>
+                <div style={{ marginTop: ".55rem", display: "flex", alignItems: "center", gap: ".5rem",
+                  fontSize: ".92rem", color: "var(--ink)", flexWrap: "wrap" }}>
+                  <PaperTag year={yearOf(e.source_paper)} title={titleOf(e.source_paper)} sub={src.label} />
+                  <span style={{ color, fontSize: "1.3rem", fontWeight: 700 }}>→</span>
+                  <PaperTag year={yearOf(e.target_paper)} title={titleOf(e.target_paper)} sub={dst.label} />
+                </div>
+              </summary>
+
+              <div style={{ borderTop: "1px solid var(--line)", padding: "1rem 1.1rem", background: "var(--paper)" }}>
+                <QuoteCard role="Earlier paper says" arxiv={e.source_paper} year={yearOf(e.source_paper)} quote={e.source_quote} />
+                <div style={{ textAlign: "center", color, fontSize: "1.3rem", margin: ".2rem 0" }}>↓ {e.edge_type}</div>
+                <QuoteCard role="Later paper says" arxiv={e.target_paper} year={yearOf(e.target_paper)} quote={e.target_quote} />
+                {!e.verified && (
+                  <p style={{ fontSize: ".78rem", color: "var(--inferred)", margin: ".7rem 0 0" }}>
+                    ○ One of these quotes could not be string-matched against the extracted source text,
+                    so this relationship is shown as <strong>inferred</strong>, never as verified.
+                  </p>
+                )}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+
+      <Legend />
     </main>
   );
 }
 
-function NodeCard({ node }: { node: Node }) {
+function PaperTag({ year, title, sub }: { year: number; title: string; sub: string }) {
   return (
-    <div style={{
-      background: "var(--card)", border: "1px solid var(--line)", borderRadius: 8,
-      padding: ".8rem 1rem", boxShadow: "0 1px 2px rgba(28,43,51,.04)",
-    }}>
-      <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.05rem", color: "var(--ink)" }}>
-        {node.label}
-      </div>
-      <div style={{ marginTop: ".4rem", display: "flex", flexDirection: "column", gap: ".2rem" }}>
-        {node.members.map((m) => (
-          <div key={m.arxiv_id} style={{ fontSize: ".8rem", color: "var(--ink-soft)", lineHeight: 1.35 }}>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem" }}>{m.year}</span>{" "}
-            {m.title.length > 62 ? m.title.slice(0, 62) + "…" : m.title}
-          </div>
-        ))}
-      </div>
-    </div>
+    <span style={{ display: "inline-flex", flexDirection: "column", lineHeight: 1.2 }}>
+      <span style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>{year}</span>{" "}
+        {title.length > 46 ? title.slice(0, 46) + "…" : title}
+      </span>
+      <span style={{ fontSize: ".72rem", color: "var(--ink-soft)", fontStyle: "italic" }}>{sub}</span>
+    </span>
   );
 }
 
-function EvidencePanel({
-  edge, nodeById, onClose,
-}: { edge: Edge; nodeById: Map<string, Node>; onClose: () => void }) {
-  const src = nodeById.get(edge.source_node)!;
-  const dst = nodeById.get(edge.target_node)!;
-  const color = EDGE_COLORS[edge.edge_type];
+function QuoteCard({ role, arxiv, year, quote }: { role: string; arxiv: string; year: number; quote: string }) {
   return (
-    <div style={panelBox}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{
-          fontFamily: "var(--font-mono)", fontSize: ".7rem", textTransform: "uppercase",
-          letterSpacing: ".08em", color: "#fff", background: color, padding: ".2rem .5rem", borderRadius: 4,
-        }}>
-          {edge.edge_type}
-        </span>
-        <button onClick={onClose} style={{ ...linkBtn, color: "var(--ink-soft)" }}>close ✕</button>
+    <div style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 6, padding: ".8rem .9rem" }}>
+      <div style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)", marginBottom: ".4rem" }}>
+        {role} — arXiv:{arxiv} ({year})
       </div>
-
-      <div style={{ margin: ".7rem 0", fontSize: ".85rem", color: "var(--ink)" }}>
-        <strong>{src.label}</strong> <span style={{ color }}>→</span> <strong>{dst.label}</strong>
-      </div>
-
-      <div style={{
-        display: "inline-flex", alignItems: "center", gap: ".4rem", fontSize: ".8rem",
-        fontFamily: "var(--font-mono)",
-        color: edge.verified ? "var(--verified)" : "var(--inferred)",
-      }}>
-        {edge.verified ? "✓ verified" : "◌ inferred"} · confidence {edge.confidence.toFixed(2)}
-      </div>
-
-      <QuoteCard label={`${edge.source_paper}`} quote={edge.source_quote} />
-      <div style={{ textAlign: "center", color, fontSize: "1.2rem" }}>↓</div>
-      <QuoteCard label={`${edge.target_paper}`} quote={edge.target_quote} />
-
-      {!edge.verified && (
-        <p style={{ fontSize: ".75rem", color: "var(--inferred)", marginTop: ".6rem", marginBottom: 0 }}>
-          One quote could not be string-matched against the extracted source text, so this edge is
-          shown as inferred, never as verified.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function QuoteCard({ label, quote }: { label: string; quote: string }) {
-  return (
-    <div style={{
-      background: "var(--paper)", border: "1px solid var(--line)", borderRadius: 6,
-      padding: ".7rem .8rem", marginTop: ".6rem",
-    }}>
-      <div style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)", marginBottom: ".35rem" }}>
-        arXiv:{label}
-      </div>
-      <blockquote style={{
-        margin: 0, fontFamily: "var(--font-display)", fontSize: ".9rem", lineHeight: 1.5,
-        color: "var(--ink)", whiteSpace: "pre-wrap",
-      }}>
-        “{quote.length > 320 ? quote.slice(0, 320) + "…" : quote}”
+      <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: ".95rem",
+        lineHeight: 1.55, color: "var(--ink)", whiteSpace: "pre-wrap" }}>
+        “{quote.length > 360 ? quote.slice(0, 360) + "…" : quote}”
       </blockquote>
     </div>
   );
 }
 
-function Legend() {
-  const items = [
-    ["extends", "extends"], ["contests", "contests"], ["narrows", "narrows"],
-    ["renames", "renames"], ["merges", "merges"], ["migrates", "migrates"],
-  ];
+function SectionTitle({ n, children }: { n: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center", marginBottom: "1.25rem", fontSize: ".78rem" }}>
-      {items.map(([t, l]) => (
-        <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: ".35rem", color: "var(--ink-soft)" }}>
-          <span style={{ width: 22, height: 0, borderTop: `3px solid ${EDGE_COLORS[t]}` }} /> {l}
-        </span>
-      ))}
-      <span style={{ marginLeft: "auto", display: "inline-flex", gap: "1rem", color: "var(--ink-soft)" }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: ".35rem" }}>
-          <span style={{ width: 22, borderTop: "3px solid var(--ink-soft)" }} /> verified
-        </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: ".35rem" }}>
-          <span style={{ width: 22, borderTop: "3px dashed var(--ink-soft)" }} /> inferred
-        </span>
+    <h2 style={{ display: "flex", alignItems: "center", gap: ".6rem", fontFamily: "var(--font-ui)",
+      fontSize: "1.05rem", color: "var(--ink)", margin: "0 0 1rem" }}>
+      <span style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem", background: "var(--ink)", color: "var(--paper)",
+        width: 24, height: 24, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+        {n}
       </span>
-    </div>
+      {children}
+    </h2>
   );
 }
 
-const panelBox: React.CSSProperties = {
-  background: "var(--card)", border: "1px solid var(--line)", borderRadius: 8,
-  padding: "1rem 1.1rem", fontSize: ".9rem", lineHeight: 1.5,
-};
-const linkBtn: React.CSSProperties = {
-  background: "none", border: "none", padding: 0, cursor: "pointer",
-  font: "inherit", color: "var(--ink)", textAlign: "left",
-};
+function Legend() {
+  const items = Object.keys(EDGE_COLORS);
+  return (
+    <div style={{ marginTop: "2.5rem", paddingTop: "1.2rem", borderTop: "1px solid var(--line)",
+      display: "flex", flexWrap: "wrap", gap: ".9rem", fontSize: ".76rem", color: "var(--ink-soft)" }}>
+      <strong style={{ color: "var(--ink)" }}>Edge types:</strong>
+      {items.map((t) => (
+        <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: ".3rem" }}>
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: EDGE_COLORS[t] }} />
+          {t} <span style={{ opacity: 0.7 }}>({EDGE_MEANING[t]})</span>
+        </span>
+      ))}
+    </div>
+  );
+}
