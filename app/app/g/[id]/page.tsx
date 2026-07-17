@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import SignInButton from "../../signin-button";
 import { deleteEdge, deleteNode, mergeNode, reclassifyEdge, renameNode } from "../../../lib/actions";
+import { getViewer, isOwner } from "../../../lib/authz";
 import { EDGE_MEANING, EDGE_TYPES, getGenealogy, type Edge, type Node } from "../../../lib/genealogy";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +20,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
   const { id } = await params;
   const g = await getGenealogy(Number(id));
   if (!g) notFound();
+  const canEdit = isOwner(await getViewer());
 
   const yearOf = (p: string) =>
     g.nodes.flatMap((n) => n.members).find((m) => m.arxiv_id === p)?.year ?? 0;
@@ -31,7 +34,10 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
 
   return (
     <main style={{ maxWidth: 940, margin: "0 auto", padding: "2rem 1.5rem 5rem" }}>
-      <Link href="/" style={{ fontSize: ".8rem", color: "var(--ink-soft)" }}>‹ all genealogies</Link>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <Link href="/" style={{ fontSize: ".8rem", color: "var(--ink-soft)" }}>‹ all genealogies</Link>
+        <SignInButton />
+      </div>
 
       <header style={{ borderBottom: "2px solid var(--line)", padding: "1rem 0 1.1rem", marginBottom: "1.5rem" }}>
         <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2.1rem", margin: 0 }}>
@@ -58,7 +64,8 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
       <SectionTitle n="1">The {g.nodes.length} meanings, earliest to latest</SectionTitle>
       <div style={{ display: "flex", flexDirection: "column", gap: ".8rem", marginBottom: "2.5rem" }}>
         {g.nodes.map((n, i) => (
-          <NodeCard key={n.node_id} n={n} i={i} genealogyId={g.id} others={g.nodes} deg={degree(n.node_id)} />
+          <NodeCard key={n.node_id} n={n} i={i} genealogyId={g.id} others={g.nodes}
+            deg={degree(n.node_id)} canEdit={canEdit} />
         ))}
       </div>
 
@@ -71,7 +78,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
         {edges.map((e) => (
-          <EdgeRow key={e.id} e={e} genealogyId={g.id}
+          <EdgeRow key={e.id} e={e} genealogyId={g.id} canEdit={canEdit}
             srcLabel={labelOf(e.source_node)} dstLabel={labelOf(e.target_node)}
             srcYear={yearOf(e.source_paper)} dstYear={yearOf(e.target_paper)}
             srcTitle={titleOf(e.source_paper)} dstTitle={titleOf(e.target_paper)} />
@@ -83,8 +90,8 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
   );
 }
 
-function NodeCard({ n, i, genealogyId, others, deg }:
-  { n: Node; i: number; genealogyId: number; others: Node[]; deg: number }) {
+function NodeCard({ n, i, genealogyId, others, deg, canEdit }:
+  { n: Node; i: number; genealogyId: number; others: Node[]; deg: number; canEdit: boolean }) {
   const span = n.year_start === n.year_end ? `${n.year_start}` : `${n.year_start}–${n.year_end}`;
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 8, padding: "0.9rem 1.1rem" }}>
@@ -111,6 +118,7 @@ function NodeCard({ n, i, genealogyId, others, deg }:
             ))}
           </ul>
 
+          {canEdit && (
           <details style={{ marginTop: ".6rem" }}>
             <summary style={{ cursor: "pointer", fontSize: ".76rem", color: "var(--ink-soft)" }}>edit this meaning</summary>
             <div style={{ display: "flex", flexWrap: "wrap", gap: ".8rem", marginTop: ".6rem", alignItems: "flex-end" }}>
@@ -149,14 +157,15 @@ function NodeCard({ n, i, genealogyId, others, deg }:
               relationships too.
             </p>
           </details>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function EdgeRow({ e, genealogyId, srcLabel, dstLabel, srcYear, dstYear, srcTitle, dstTitle }: {
-  e: Edge; genealogyId: number; srcLabel: string; dstLabel: string;
+function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear, srcTitle, dstTitle }: {
+  e: Edge; genealogyId: number; canEdit: boolean; srcLabel: string; dstLabel: string;
   srcYear: number; dstYear: number; srcTitle: string; dstTitle: string;
 }) {
   const color = EDGE_COLORS[e.edge_type] ?? "var(--ink-soft)";
@@ -193,6 +202,7 @@ function EdgeRow({ e, genealogyId, srcLabel, dstLabel, srcYear, dstYear, srcTitl
           </p>
         )}
 
+        {canEdit && (
         <div style={{ display: "flex", gap: ".8rem", marginTop: "1rem", alignItems: "center", flexWrap: "wrap" }}>
           <form action={reclassifyEdge} style={{ display: "flex", gap: ".35rem", alignItems: "center" }}>
             <input type="hidden" name="genealogyId" value={genealogyId} />
@@ -211,12 +221,13 @@ function EdgeRow({ e, genealogyId, srcLabel, dstLabel, srcYear, dstYear, srcTitl
             </button>
           </form>
         </div>
+        )}
       </div>
     </details>
   );
 }
 
-function AuditTrail({ edits }: { edits: { op: string; detail: unknown; at: string }[] }) {
+function AuditTrail({ edits }: { edits: { op: string; detail: unknown; at: string; by?: string }[] }) {
   return (
     <details style={{ marginTop: "2.5rem", paddingTop: "1.2rem", borderTop: "1px solid var(--line)" }}>
       <summary style={{ cursor: "pointer", fontSize: ".85rem", color: "var(--ink)" }}>
@@ -225,7 +236,8 @@ function AuditTrail({ edits }: { edits: { op: string; detail: unknown; at: strin
       <ul style={{ margin: ".7rem 0 0", paddingLeft: "1.1rem", fontSize: ".78rem", color: "var(--ink-soft)" }}>
         {edits.map((e, i) => (
           <li key={i} style={{ marginBottom: ".3rem", fontFamily: "var(--font-mono)" }}>
-            {new Date(e.at).toLocaleString()} — <strong>{e.op}</strong> {JSON.stringify(e.detail)}
+            {new Date(e.at).toLocaleString()} — <strong>{e.op}</strong>
+            {e.by ? ` by ${e.by}` : " (cli)"} {JSON.stringify(e.detail)}
           </li>
         ))}
       </ul>

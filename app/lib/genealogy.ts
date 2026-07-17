@@ -22,7 +22,7 @@ export type Edge = {
   source_quote: string;
   target_quote: string;
 };
-export type UserEdit = { op: string; detail: unknown; at: string };
+export type UserEdit = { op: string; detail: unknown; at: string; by?: string };
 export type Genealogy = {
   id: number;
   concept: string;
@@ -100,9 +100,10 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
 }
 
 /** Every workbench edit is appended here, so a curated map always carries the
- *  record of what a human changed — same contract as the CLI workbench. */
-export async function recordEdit(genealogyId: number, op: string, detail: unknown) {
-  const entry = JSON.stringify([{ op, detail, at: new Date().toISOString() }]);
+ *  record of what a human changed, when, and who — same contract as the CLI
+ *  workbench (which has no session, hence `by` is optional). */
+export async function recordEdit(genealogyId: number, op: string, detail: unknown, by?: string) {
+  const entry = JSON.stringify([{ op, detail, at: new Date().toISOString(), ...(by ? { by } : {}) }]);
   await sql`
     UPDATE genealogies
     SET user_edits = COALESCE(user_edits, '[]'::jsonb) || ${entry}::jsonb,

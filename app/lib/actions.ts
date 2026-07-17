@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { requireOwner } from "./authz";
 import { sql } from "./db";
 import { EDGE_TYPES, getGenealogy, recordEdit, saveNodes, type Node } from "./genealogy";
 
@@ -16,6 +17,7 @@ function refresh(genealogyId: number) {
 }
 
 export async function renameNode(formData: FormData) {
+  const who = await requireOwner();
   const genealogyId = Number(formData.get("genealogyId"));
   const nodeId = String(formData.get("nodeId"));
   const label = String(formData.get("label") ?? "").trim();
@@ -28,7 +30,7 @@ export async function renameNode(formData: FormData) {
   n.label = label;
 
   await saveNodes(genealogyId, nodes);
-  await recordEdit(genealogyId, "rename", { node: nodeId, from, to: label });
+  await recordEdit(genealogyId, "rename", { node: nodeId, from, to: label }, who.login);
   refresh(genealogyId);
 }
 
@@ -40,6 +42,7 @@ export async function renameNode(formData: FormData) {
  * the CLI workbench; the dropped types are recorded so the edit is auditable.
  */
 export async function mergeNode(formData: FormData) {
+  const who = await requireOwner();
   const genealogyId = Number(formData.get("genealogyId"));
   const nodeId = String(formData.get("nodeId"));
   const intoId = String(formData.get("intoId") ?? "");
@@ -68,11 +71,12 @@ export async function mergeNode(formData: FormData) {
   await saveNodes(genealogyId, nodes.filter((x) => x.node_id !== nodeId));
   await recordEdit(genealogyId, "merge", {
     merged: nodeId, into: intoId, self_loops_dropped: dropped.map((d) => d.edge_type),
-  });
+  }, who.login);
   refresh(genealogyId);
 }
 
 export async function deleteNode(formData: FormData) {
+  const who = await requireOwner();
   const genealogyId = Number(formData.get("genealogyId"));
   const nodeId = String(formData.get("nodeId"));
 
@@ -89,11 +93,12 @@ export async function deleteNode(formData: FormData) {
   await saveNodes(genealogyId, nodes.filter((x) => x.node_id !== nodeId));
   await recordEdit(genealogyId, "delete-node", {
     node: nodeId, label: n.label, edges_removed: killed.length,
-  });
+  }, who.login);
   refresh(genealogyId);
 }
 
 export async function reclassifyEdge(formData: FormData) {
+  const who = await requireOwner();
   const genealogyId = Number(formData.get("genealogyId"));
   const edgeId = Number(formData.get("edgeId"));
   const edgeType = String(formData.get("edgeType") ?? "");
@@ -101,11 +106,12 @@ export async function reclassifyEdge(formData: FormData) {
 
   await sql`UPDATE edges SET edge_type = ${edgeType}
             WHERE id = ${edgeId} AND genealogy_id = ${genealogyId}`;
-  await recordEdit(genealogyId, "reclassify", { edge_id: edgeId, to: edgeType });
+  await recordEdit(genealogyId, "reclassify", { edge_id: edgeId, to: edgeType }, who.login);
   refresh(genealogyId);
 }
 
 export async function deleteEdge(formData: FormData) {
+  const who = await requireOwner();
   const genealogyId = Number(formData.get("genealogyId"));
   const edgeId = Number(formData.get("edgeId"));
 
@@ -115,6 +121,6 @@ export async function deleteEdge(formData: FormData) {
   `) as { edge_type: string }[];
   if (!rows.length) return;
 
-  await recordEdit(genealogyId, "delete-edge", { edge_id: edgeId, was: rows[0].edge_type });
+  await recordEdit(genealogyId, "delete-edge", { edge_id: edgeId, was: rows[0].edge_type }, who.login);
   refresh(genealogyId);
 }

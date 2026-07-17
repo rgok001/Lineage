@@ -1,4 +1,5 @@
 import Link from "next/link";
+import SignInButton from "./signin-button";
 import { listGenealogies } from "../lib/genealogy";
 
 export const dynamic = "force-dynamic"; // always read live DB state
@@ -9,9 +10,12 @@ export default async function Home() {
   return (
     <main style={{ maxWidth: 880, margin: "0 auto", padding: "2.5rem 1.5rem 4rem" }}>
       <header style={{ borderBottom: "2px solid var(--line)", paddingBottom: "1.1rem", marginBottom: "1.5rem" }}>
-        <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2.1rem", margin: 0 }}>
-          Lineage
-        </h1>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2.1rem", margin: 0 }}>
+            Lineage
+          </h1>
+          <SignInButton />
+        </div>
         <p style={{ color: "var(--ink-soft)", margin: ".45rem 0 0", lineHeight: 1.5 }}>
           Trace how an academic concept evolved across papers — every relationship backed by a
           verbatim quote from both papers, verified against the source text.
