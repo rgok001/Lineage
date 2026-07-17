@@ -58,4 +58,15 @@ python pipeline/stage_d_edges.py "attention"
 
 # Stage E: grounding check + assemble genealogy JSON
 python pipeline/stage_e_ground.py "attention"
+
+# Workbench: curate the draft (every edit is recorded in genealogies.user_edits)
+python pipeline/workbench.py "attention" list
+python pipeline/workbench.py "attention" merge n6 --into n4
+python pipeline/workbench.py "attention" delete-node n5
+python pipeline/workbench.py "attention" rename n4 "Self-attention as the whole architecture"
+python pipeline/stage_e_ground.py "attention"          # re-ground + re-export after edits
+
+# Export: related-work skeleton (Markdown) + BibTeX
+python pipeline/enrich_authors.py --concept "attention"   # real authors (arXiv first)
+python pipeline/export_related_work.py "attention"
 ```

@@ -462,10 +462,40 @@ Work proceeds in the order set by [CLAUDE.md](../CLAUDE.md) §"Build phases":
 5. ✅ Pipeline stages B–E end-to-end on *attention* → genealogy JSON. **Phase 2
    complete:** a 6-node, 7-edge evidence-grounded genealogy, built for a few
    dollars total, with the grounding check producing solid/dotted edges live.
-6. ⬜ **Next:** UI — timeline + evidence panel rendering the genealogy JSON →
-   workbench editing (split/merge/rename, incl. the deliberate n4/n6 over-split) →
-   export (related-work Markdown + BibTeX).
-7. ⬜ Trace-build UX: job queue, live progress, save/load.
+6. ✅ UI (timeline + evidence panel), ✅ workbench editing (`workbench.py`),
+   ✅ export (`export_related_work.py`). **Phase 3 complete.**
+7. ⬜ **Next:** trace-build UX — job queue, live progress, save/load; deploy the
+   app to Vercel; move workbench editing from CLI into the UI.
+
+### Workbench & export as built (✅)
+
+[`workbench.py`](../pipeline/workbench.py) turns the Stage C/D *draft* into a
+defensible map: `list` (flags isolated nodes), `merge`, `rename`, `delete-node`,
+`delete-edge`, `reclassify`. Every edit appends to `genealogies.user_edits`, so the
+curated map carries the record of what a human changed. **Merging drops any edge
+that becomes a self-loop** — once two states are one state, a relationship between
+them is not a transition. Re-run Stage E afterwards to re-ground and re-export.
+
+Applied to *attention*: merged the deliberate GPT-3/Transformer over-split, deleted
+the R-GCN node (which mentioned attention only as future work), renamed three states
+→ **6 nodes/7 edges became 4 nodes/5 edges**, with the backbone now reading
+Graves → soft-alignment in the decoder → self-attention as the architecture.
+
+[`export_related_work.py`](../pipeline/export_related_work.py) emits a related-work
+skeleton (Markdown) + BibTeX. It supplies real structure, citations and verified
+quotes and leaves the argument to the author; unverified quotes are labelled
+*inferred — verify before citing*, isolated senses are listed under "Unconnected
+senses" claiming no relationship, and analysis is left as explicit placeholders.
+
+> **Design note — authors come from arXiv, not OpenAlex.** BibTeX needs authors,
+> and rule 4 forbids inventing them. [`enrich_authors.py`](../pipeline/enrich_authors.py)
+> asks **arXiv first**: we key by `arxiv_id`, which the fetcher *proved* correct by
+> downloading that paper's source and passing the title-match guard, so arXiv cannot
+> return another paper's authors. OpenAlex is fallback only — its IDs have produced
+> wrong metadata repeatedly here (it returned **one** author for Bahdanau instead of
+> three, and attributed `cond-mat/0308217` to a psychologist rather than M.E.J.
+> Newman). A wrong key silently yields the *wrong* authors, which is worse than
+> none. Papers whose authors stay unknown are omitted from BibTeX, never guessed.
 
 ## 11. Explicitly out of scope
 

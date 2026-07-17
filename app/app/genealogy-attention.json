@@ -20,7 +20,7 @@
       "representative_arxiv_id": "1308.0850"
     },
     {
-      "label": "Neural attention as soft alignment weighting",
+      "label": "Soft-alignment attention inside the decoder",
       "members": [
         {
           "year": 2014,
@@ -49,7 +49,7 @@
       "representative_arxiv_id": "1409.0473"
     },
     {
-      "label": "Region proposal as attention mechanism",
+      "label": "Region proposal borrowed as attention",
       "members": [
         {
           "year": 2015,
@@ -66,7 +66,7 @@
       "representative_arxiv_id": "1506.01497"
     },
     {
-      "label": "Query-Key-Value Dot-Product Attention",
+      "label": "Self-attention as the whole architecture",
       "members": [
         {
           "year": 2017,
@@ -77,6 +77,11 @@
           "year": 2020,
           "title": "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale",
           "arxiv_id": "2010.11929"
+        },
+        {
+          "year": 2020,
+          "title": "Language Models are Few-Shot Learners",
+          "arxiv_id": "2005.14165"
         }
       ],
       "node_id": "n4",
@@ -84,43 +89,10 @@
       "year_start": 2017,
       "definition_ids": [
         11,
-        17
-      ],
-      "representative_arxiv_id": "2010.11929"
-    },
-    {
-      "label": "Data-dependent neighbor weighting in R-GCN",
-      "members": [
-        {
-          "year": 2018,
-          "title": "Modeling Relational Data with Graph Convolutional Networks",
-          "arxiv_id": "1703.06103"
-        }
-      ],
-      "node_id": "n5",
-      "year_end": 2018,
-      "year_start": 2018,
-      "definition_ids": [
-        36
-      ],
-      "representative_arxiv_id": "1703.06103"
-    },
-    {
-      "label": "Transformer attention mechanism and heads",
-      "members": [
-        {
-          "year": 2020,
-          "title": "Language Models are Few-Shot Learners",
-          "arxiv_id": "2005.14165"
-        }
-      ],
-      "node_id": "n6",
-      "year_end": 2020,
-      "year_start": 2020,
-      "definition_ids": [
+        17,
         46
       ],
-      "representative_arxiv_id": "2005.14165"
+      "representative_arxiv_id": "2010.11929"
     }
   ],
   "edges": [
@@ -178,34 +150,12 @@
       "target_paper": "1502.03044",
       "source_quote": "This section describes an augmentation that allows a prediction network to generate data sequences",
       "target_quote": "Rather than compress an entire\nimage into a static representation, attention allows for salient features to\ndynamically come to the forefront as needed."
-    },
-    {
-      "source_node": "n6",
-      "target_node": "n4",
-      "edge_type": "migrates",
-      "confidence": 0.75,
-      "verified": true,
-      "source_paper": "2005.14165",
-      "target_paper": "2010.11929",
-      "source_quote": "We use the same model and architecture as GPT-2  , including the modified initialization, pre-normalization, and reversible tokenization described therein, with the exception that we use alternating dense and locally banded sparse attention patterns in the layers of the transformer, similar to the Sparse Transformer  .",
-      "target_quote": "For each element in an input sequence z\u2208\u211d^N \u00d7 D, we compute a weighted sum over all values v in the sequence. The attention weights A_ij are based on the pairwise similarity between two elements of the sequence and their respective query q^i and key k^j representations."
-    },
-    {
-      "source_node": "n4",
-      "target_node": "n6",
-      "edge_type": "extends",
-      "confidence": 0.62,
-      "verified": true,
-      "source_paper": "1706.03762",
-      "target_paper": "2005.14165",
-      "source_quote": "An attention function can be described as mapping a query and a set of key-value pairs to an output, where the query, keys, values, and output are all vectors.  The output is computed as a weighted sum of the values, where the weight assigned to each value is computed by a compatibility function of the query with the corresponding key.",
-      "target_quote": "We use the same model and architecture as GPT-2  , including the modified initialization, pre-normalization, and reversible tokenization described therein, with the exception that we use alternating dense and locally banded sparse attention patterns in the layers of the transformer, similar to the Sparse Transformer  ."
     }
   ],
   "stats": {
-    "nodes": 6,
-    "edges": 7,
-    "verified_edges": 6,
+    "nodes": 4,
+    "edges": 5,
+    "verified_edges": 4,
     "inferred_edges": 1
   }
 }
