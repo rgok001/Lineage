@@ -1,7 +1,9 @@
-# Lineage — concept genealogy engine (demonstrator)
+# Lineage — concept genealogy engine
 
 ## What this is
-A web app that traces how an academic concept evolved across papers. User enters a concept (e.g. "attention"), the system reads ~150 arXiv papers and produces an interactive genealogy: a timeline of concept-states (nodes) connected by typed, evidence-backed relationships (edges). This is a portfolio demonstrator, not production software: favour simplicity and shipping over robustness, EXCEPT where this file says otherwise.
+A web app that traces how an academic concept evolved across papers. User enters a concept (e.g. "attention"), the system reads ~150 arXiv papers and produces an interactive genealogy: a timeline of concept-states (nodes) connected by typed, evidence-backed relationships (edges).
+
+This is a **real application, not a portfolio demonstrator** (revised — it began as the latter). The app is database-backed: it reads and writes live Postgres, and the workbench edits persist. Still prefer boring tech and shipping over speculative generality — but robustness, correctness and a usable UI are now in scope, not deferred. The four core product rules below were always non-negotiable and remain so.
 
 ## Core product rules (do not violate)
 1. Every edge displayed carries verbatim evidence quotes from both papers.
