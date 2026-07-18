@@ -1,0 +1,43 @@
+# Render Blueprint: the trace worker's permanent home.
+#
+# One background worker, one persistent disk. The worker polls trace_requests
+# for owner-approved jobs and runs the pipeline (see worker/run.py); the disk
+# holds DATA_DIR (fetched papers, extracted text, exports) and the embedding
+# model cache, both of which must outlive restarts.
+#
+# Secrets are sync:false — Render asks for them in the dashboard on first
+# deploy; they are never committed:
+#   DATABASE_URL       Neon DIRECT (unpooled) connection string. The pooled
+#                      endpoint is for the serverless app; this worker holds
+#                      one long-lived connection.
+#   ANTHROPIC_API_KEY  pays for stages B, C (labels) and D
+#   OPENALEX_MAILTO    contact email for the OpenAlex polite pool
+
+services:
+  - type: worker
+    name: lineage-worker
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r pipeline/requirements.txt
+    startCommand: python worker/run.py
+    disk:
+      name: lineage-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.6
+      - key: DATA_DIR
+        value: /data
+      - key: PROMPT_VERSION
+        value: v2
+      - key: LLM_MODEL
+        value: claude-sonnet-5
+      - key: TRACE_SPEND_CAP_USD
+        value: "15"
+      - key: DATABASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENALEX_MAILTO
+        sync: false

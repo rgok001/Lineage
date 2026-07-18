@@ -31,7 +31,7 @@ import numpy as np
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import env  # noqa: E402
+from common import data_dir, env  # noqa: E402
 from stage_b_extract import PRICING, cost_usd  # noqa: E402
 
 EMBED_MODEL = "BAAI/bge-large-en-v1.5"  # 1024-dim, matches definitions.embedding
@@ -69,7 +69,8 @@ def embed_definitions(conn, rows, force: bool) -> np.ndarray:
 
     if to_embed:
         print(f"  embedding {len(to_embed)} definition(s) with {EMBED_MODEL}…")
-        model = TextEmbedding(EMBED_MODEL)
+        # Cache under DATA_DIR: persistent-disk friendly (see corpus_select).
+        model = TextEmbedding(EMBED_MODEL, cache_dir=str(data_dir() / "models"))
         new = list(model.embed([rows[i][4] for i in to_embed]))
         for i, vec in zip(to_embed, new):
             vectors[i] = np.asarray(vec, dtype=float)

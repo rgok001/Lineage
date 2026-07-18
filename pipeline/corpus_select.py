@@ -31,7 +31,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import get_json, mailto  # noqa: E402
+from common import data_dir, get_json, mailto  # noqa: E402
 
 OPENALEX = "https://api.openalex.org"
 CS_CONCEPT_ID = "C41008148"  # "Computer science" — keeps e.g. psychology's "attention" out
@@ -167,7 +167,9 @@ def relevance_scores(concept: str, works: list[dict]) -> list[float]:
     from fastembed import TextEmbedding
 
     docs = [f"{w.get('display_name') or ''}. {abstract_of(w)}"[:2000] for w in works]
-    model = TextEmbedding(EMBED_MODEL)
+    # Cache under DATA_DIR so a deployed worker's persistent disk keeps the
+    # model between restarts (the default cache is a temp dir).
+    model = TextEmbedding(EMBED_MODEL, cache_dir=str(data_dir() / "models"))
     vecs = np.array(list(model.embed([BGE_QUERY_PREFIX + concept] + docs)))
     q, d = vecs[0], vecs[1:]
     q = q / np.linalg.norm(q)

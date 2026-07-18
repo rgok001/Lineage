@@ -87,3 +87,13 @@ python worker/run.py --once    # process at most one job, then exit
 Needs the same root `.env` as the pipeline (direct DB endpoint, API key,
 DATA_DIR). Vercel never runs traces — a trace takes ~15 min and needs a disk,
 so the worker runs on any long-lived box (a laptop counts).
+
+### Deploying the worker (Render)
+
+`render.yaml` declares the production worker: a Render Background Worker with
+a 5 GB persistent disk mounted at `/data` for papers, exports, and the
+embedding-model cache. Deploy: Render dashboard -> New -> Blueprint -> pick
+this repo; Render reads `render.yaml` and prompts for the three secrets
+(DATABASE_URL = the DIRECT/unpooled Neon string, ANTHROPIC_API_KEY,
+OPENALEX_MAILTO). First build downloads the embedding models to the disk;
+later restarts reuse them. Pushes to master auto-deploy the worker.
