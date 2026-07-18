@@ -100,7 +100,7 @@ function DangerZone({ genealogyId, concept }: { genealogyId: number; concept: st
   return (
     <details style={{ marginTop: "2.5rem", paddingTop: "1.2rem", borderTop: "1px solid var(--line)" }}>
       <summary style={{ cursor: "pointer", fontSize: ".85rem", color: "var(--inferred)" }}>
-        Danger zone — delete this genealogy
+        Danger zone: delete this genealogy
       </summary>
       <div style={{ marginTop: ".8rem", border: "1px solid var(--inferred)", borderRadius: 8,
         background: "var(--card)", padding: "1rem 1.1rem" }}>
@@ -187,7 +187,7 @@ function NodeCard({ n, i, genealogyId, others, deg, canEdit }:
               </form>
             </div>
             <p style={{ fontSize: ".7rem", color: "var(--ink-soft)", margin: ".5rem 0 0" }}>
-              Merging discards any relationship that becomes internal to the merged meaning — a
+              Merging discards any relationship that becomes internal to the merged meaning: a
               link between two papers of the <em>same</em> meaning is no longer a transition.
               Deleting a meaning removes its relationships as well.
             </p>
@@ -244,7 +244,7 @@ function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear
             <input type="hidden" name="edgeId" value={e.id} />
             <label style={{ fontSize: ".76rem", color: "var(--ink-soft)" }}>reclassify as</label>
             <select name="edgeType" defaultValue={e.edge_type} style={inputStyle} aria-label="Edge type">
-              {EDGE_TYPES.map((t) => <option key={t} value={t}>{t} — {EDGE_MEANING[t]}</option>)}
+              {EDGE_TYPES.map((t) => <option key={t} value={t}>{t} ({EDGE_MEANING[t]})</option>)}
             </select>
             <button type="submit" style={btnStyle}>Save</button>
           </form>
@@ -266,12 +266,12 @@ function AuditTrail({ edits }: { edits: { op: string; detail: unknown; at: strin
   return (
     <details style={{ marginTop: "2.5rem", paddingTop: "1.2rem", borderTop: "1px solid var(--line)" }}>
       <summary style={{ cursor: "pointer", fontSize: ".85rem", color: "var(--ink)" }}>
-        Audit trail — {edits.length} curatorial change(s)
+        Audit trail: {edits.length} curatorial change(s)
       </summary>
       <ul style={{ margin: ".7rem 0 0", paddingLeft: "1.1rem", fontSize: ".78rem", color: "var(--ink-soft)" }}>
         {edits.map((e, i) => (
           <li key={i} style={{ marginBottom: ".3rem", fontFamily: "var(--font-mono)" }}>
-            {new Date(e.at).toLocaleString()} — <strong>{e.op}</strong>
+            {new Date(e.at).toLocaleString()} · <strong>{e.op}</strong>
             {e.by ? ` by ${e.by}` : " (cli)"} {JSON.stringify(e.detail)}
           </li>
         ))}
@@ -296,7 +296,7 @@ function QuoteCard({ role, arxiv, year, quote }: { role: string; arxiv: string; 
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 6, padding: ".8rem .9rem" }}>
       <div style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)", marginBottom: ".4rem" }}>
-        {role} — arXiv:{arxiv} ({year})
+        {role} · arXiv:{arxiv} ({year})
       </div>
       <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: ".95rem",
         lineHeight: 1.55, color: "var(--ink)", whiteSpace: "pre-wrap" }}>

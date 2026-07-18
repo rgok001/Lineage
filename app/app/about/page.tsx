@@ -26,7 +26,7 @@ export default function AboutPage() {
         </h1>
         <p style={{ color: "var(--ink-soft)", margin: ".5rem 0 0", lineHeight: 1.55 }}>
           Scientific terms drift. “Attention” in 2013 named a Gaussian window over handwriting
-          strokes; by 2017 it named an entire architecture. Lineage maps that drift — and backs
+          strokes; by 2017 it named an entire architecture. Lineage maps that drift, and backs
           every step of the map with quotes you can check.
         </p>
       </header>
@@ -35,7 +35,7 @@ export default function AboutPage() {
         <P>
           Each genealogy says: <em>here are the distinct meanings a concept has had, and here is
           how each meaning grew out of the ones before it</em>. That second part is the risky
-          claim — it is easy to assert influence and hard to show it. Lineage’s rule is that no
+          claim: it is easy to assert influence and hard to show it. Lineage’s rule is that no
           relationship appears on a map unless the two papers are connected by a real citation,
           and the relationship is presented alongside a verbatim passage from each paper so you
           can judge it yourself.
@@ -45,20 +45,20 @@ export default function AboutPage() {
       <Section title="How a genealogy is built">
         <Step n={1} name="Gather the papers.">
           Starting from a concept, Lineage assembles a corpus of up to 150 papers from arXiv,
-          ranked by relevance and citation weight — including ancestors that never use the
+          ranked by relevance and citation weight, including ancestors that never use the
           concept’s name. (The paper that introduced soft alignment never says “attention”; it
           enters through citations, not keywords.)
         </Step>
         <Step n={2} name="Read each paper for a definition.">
           A language model reads each paper’s full text and answers one question: does this paper
           give “{"<"}concept{">"}” a meaning of its own? If yes, it must return the defining
-          passage <em>verbatim</em> — not a summary. Papers that merely use the term are recorded
+          passage <em>verbatim</em>, not a summary. Papers that merely use the term are recorded
           and excluded.
         </Step>
         <Step n={3} name="Group definitions into meanings.">
           Definitions are embedded and clustered: papers that mean the same thing by the term form
-          one “meaning” (one card on the timeline). The clustering deliberately over-splits —
-          merging two meanings is a one-click curatorial act; un-merging is not.
+          one “meaning” (one card on the timeline). The clustering deliberately over-splits:
+          merging two meanings is a one-click curatorial act, while un-merging is not.
         </Step>
         <Step n={4} name="Find and type the relationships.">
           For every pair of meanings, Lineage checks whether their papers actually cite each
@@ -70,8 +70,8 @@ export default function AboutPage() {
           text of their papers. Both found: the relationship is drawn solid and marked
           <strong style={{ color: "var(--verified)" }}> ● verified</strong>. Either one missing:
           it is drawn dotted and marked
-          <strong style={{ color: "var(--inferred)" }}> ○ inferred</strong> — never upgraded,
-          never hidden.
+          <strong style={{ color: "var(--inferred)" }}> ○ inferred</strong>. It is never upgraded
+          and never hidden.
         </Step>
       </Section>
 
@@ -95,14 +95,14 @@ export default function AboutPage() {
           What the pipeline produces is a draft. The curator can rename meanings, merge
           over-split ones, delete weak ones, and reclassify or remove relationships. Every one of
           these decisions is recorded in the genealogy’s audit trail, visible at the bottom of its
-          page — so a curated map always shows what a human changed, and when.
+          page, so a curated map always shows what a human changed, and when.
         </P>
       </Section>
 
       <Section title="Live traces">
         <P>
           Anyone signed in can request a genealogy for a new concept. Requests are reviewed by
-          the curator; approved traces run automatically and report their progress live — which
+          the curator; approved traces run automatically and report their progress live: which
           papers are being read, what each stage found, and what the run cost. A trace of a
           150-paper corpus takes about 15 minutes.
         </P>
@@ -117,12 +117,12 @@ export default function AboutPage() {
           <li>
             Quote verification is exact string matching against extracted text. When extraction
             mangles a passage (math-heavy LaTeX, scanned PDFs), a genuine quote can fail the
-            check — which is why such relationships are shown as <em>inferred</em> rather than
+            check. That is why such relationships are shown as <em>inferred</em> rather than
             dropped: the failure is disclosed, not silently discarded.
           </li>
           <li>
-            Relationships require citation links. Parallel discovery — two groups converging on a
-            meaning without citing each other — appears as unconnected meanings, not as a link.
+            Relationships require citation links. Parallel discovery, where two groups converge on
+            a meaning without citing each other, appears as unconnected meanings, not as a link.
           </li>
           <li>
             The relationship types and confidence scores are a model’s judgment. The quotes are

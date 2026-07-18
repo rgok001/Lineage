@@ -37,7 +37,7 @@ export default async function Home() {
 
       {rows.length === 0 ? (
         <p style={{ color: "var(--ink-soft)" }}>
-          No genealogies yet — request a trace below to create the first one.
+          No genealogies yet. Request a trace below to create the first one.
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: ".7rem" }}>

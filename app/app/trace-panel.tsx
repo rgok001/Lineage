@@ -220,7 +220,7 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
       {r.status === "running" && (
         <div style={{ marginTop: ".55rem" }}>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink)" }}>
-            stage {p.stage_no ?? "?"}/{p.stages ?? 7} — {p.stage ?? "…"}
+            stage {p.stage_no ?? "?"}/{p.stages ?? 7} · {p.stage ?? "…"}
             {p.current != null && p.total != null && <> · {p.current} of {p.total}</>}
           </div>
           {p.message && (
@@ -242,7 +242,7 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
           )}
           {heartbeatStale && (
             <div style={{ fontSize: ".72rem", color: "var(--inferred)", marginTop: ".35rem" }}>
-              Progress has stalled — this trace may need to be restarted.
+              Progress has stalled. This trace may need to be restarted.
             </div>
           )}
         </div>

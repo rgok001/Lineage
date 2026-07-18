@@ -46,7 +46,7 @@ export async function requestTrace(
     SELECT id FROM genealogies WHERE concept = ${concept} LIMIT 1
   `) as { id: number }[];
   if (existing.length) {
-    return { ok: false, message: `“${concept}” has already been traced — its genealogy is listed above.` };
+    return { ok: false, message: `“${concept}” has already been traced. Its genealogy is listed above.` };
   }
 
   if (!owner) {
@@ -95,7 +95,7 @@ export async function requestTrace(
   return {
     ok: true,
     message: owner
-      ? `Queued — “${concept}” will begin shortly.`
+      ? `Queued. “${concept}” will begin shortly.`
       : `Request received. The curator reviews all requests before a trace runs; progress will appear here.`,
   };
 }
