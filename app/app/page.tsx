@@ -26,7 +26,10 @@ export default async function Home() {
         </div>
         <p style={{ color: "var(--ink-soft)", margin: ".45rem 0 0", lineHeight: 1.5 }}>
           Trace how an academic concept evolved across the literature. Every relationship is
-          backed by verbatim quotes from both papers, verified against the source text.
+          backed by verbatim quotes from both papers, verified against the source text.{" "}
+          <Link href="/about" style={{ color: "var(--edge-extends)", whiteSpace: "nowrap" }}>
+            How it works ›
+          </Link>
         </p>
       </header>
 
