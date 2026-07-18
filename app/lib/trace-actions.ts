@@ -35,7 +35,7 @@ export async function requestTrace(
   if (!CONCEPT_RE.test(concept)) {
     return {
       ok: false,
-      message: "Concept must be 2–60 characters: letters, digits, spaces, hyphens.",
+      message: "Concept names are 2–60 characters: letters, numbers, spaces, and hyphens.",
     };
   }
 
@@ -46,7 +46,7 @@ export async function requestTrace(
     SELECT id FROM genealogies WHERE concept = ${concept} LIMIT 1
   `) as { id: number }[];
   if (existing.length) {
-    return { ok: false, message: `"${concept}" is already traced — see it on the home page.` };
+    return { ok: false, message: `“${concept}” has already been traced — its genealogy is listed above.` };
   }
 
   if (!owner) {
@@ -56,10 +56,10 @@ export async function requestTrace(
       FROM trace_requests WHERE requested_by = ${viewer.login}
     `) as { open: number; week: number }[];
     if (Number(open) >= MAX_OPEN_PER_USER) {
-      return { ok: false, message: "You already have an open request — one at a time." };
+      return { ok: false, message: "You already have a request in progress. Requests are limited to one at a time." };
     }
     if (Number(week) >= MAX_PER_WEEK) {
-      return { ok: false, message: `Limit reached (${MAX_PER_WEEK} requests per week).` };
+      return { ok: false, message: `You have reached the limit of ${MAX_PER_WEEK} requests per week.` };
     }
   }
 
@@ -86,7 +86,7 @@ export async function requestTrace(
     // beat us to it between our checks and the insert. The index is the real
     // guard; this is just the polite version of its message.
     if ((e as { code?: string }).code === "23505") {
-      return { ok: false, message: `There is already an open request for "${concept}".` };
+      return { ok: false, message: `There is already an open request for “${concept}”.` };
     }
     throw e;
   }
@@ -95,8 +95,8 @@ export async function requestTrace(
   return {
     ok: true,
     message: owner
-      ? `Queued — the worker will pick "${concept}" up on its next poll.`
-      : `Requested. The owner reviews requests before any trace runs (each costs real money).`,
+      ? `Queued — “${concept}” will begin shortly.`
+      : `Request received. The curator reviews all requests before a trace runs; progress will appear here.`,
   };
 }
 

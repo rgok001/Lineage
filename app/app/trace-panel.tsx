@@ -82,10 +82,10 @@ export default function TracePanel({
     <section style={{ marginTop: "2.2rem" }}>
       <h2 style={{ fontSize: "1rem", color: "var(--ink)", margin: "0 0 .35rem" }}>Live traces</h2>
       <p style={{ fontSize: ".8rem", color: "var(--ink-soft)", margin: "0 0 .9rem", lineHeight: 1.5 }}>
-        A trace reads ~150 papers and takes ~15 minutes of pipeline time, so each run costs real
-        money. {owner
-          ? "Your submissions queue immediately; other people's wait for your approval below."
-          : "Signed-in visitors can request a concept; the owner approves before anything runs."}
+        A trace reads up to 150 papers and takes about 15 minutes.{" "}
+        {owner
+          ? "Your traces start automatically; visitor requests wait below for your approval."
+          : "Requests are reviewed by the curator before a trace runs."}
       </p>
 
       {signedIn ? (
@@ -99,14 +99,14 @@ export default function TracePanel({
         >
           <input
             name="concept"
-            placeholder='concept, e.g. "dropout"'
+            placeholder="Concept, e.g. “batch normalization”"
             required
             maxLength={60}
             style={{ ...input, flex: "1 1 160px" }}
           />
           <input
             name="note"
-            placeholder="why this concept? (optional)"
+            placeholder="Why this concept? (optional)"
             maxLength={500}
             style={{ ...input, flex: "2 1 240px" }}
           />
@@ -117,7 +117,8 @@ export default function TracePanel({
               min={5}
               max={300}
               defaultValue={150}
-              title="corpus size (papers) — the cost dial"
+              title="Corpus size (papers)"
+              aria-label="Corpus size (papers)"
               style={{ ...input, width: 90 }}
             />
           )}
@@ -137,7 +138,7 @@ export default function TracePanel({
         </form>
       ) : (
         <p style={{ fontSize: ".8rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
-          Sign in with GitHub (top right) to request a trace.
+          Sign in with GitHub to request a trace of a concept you care about.
         </p>
       )}
 
@@ -241,24 +242,31 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
           )}
           {heartbeatStale && (
             <div style={{ fontSize: ".72rem", color: "var(--inferred)", marginTop: ".35rem" }}>
-              ⚠ No worker heartbeat for a while — the worker may be offline.
+              Progress has stalled — this trace may need to be restarted.
             </div>
           )}
         </div>
       )}
 
-      {r.status === "failed" && r.error && (
-        <details style={{ marginTop: ".45rem" }}>
-          <summary style={{ fontSize: ".75rem", color: "var(--inferred)", cursor: "pointer" }}>
-            Failure details
-          </summary>
-          <pre style={{
-            fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)",
-            whiteSpace: "pre-wrap", margin: ".4rem 0 0", maxHeight: 220, overflow: "auto",
-          }}>
-            {r.error}
-          </pre>
-        </details>
+      {r.status === "failed" && (
+        owner && r.error ? (
+          // Raw run output is a debugging tool for the owner, not a public artifact.
+          <details style={{ marginTop: ".45rem" }}>
+            <summary style={{ fontSize: ".75rem", color: "var(--inferred)", cursor: "pointer" }}>
+              Failure details
+            </summary>
+            <pre style={{
+              fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)",
+              whiteSpace: "pre-wrap", margin: ".4rem 0 0", maxHeight: 220, overflow: "auto",
+            }}>
+              {r.error}
+            </pre>
+          </details>
+        ) : (
+          <div style={{ marginTop: ".45rem", fontSize: ".75rem", color: "var(--ink-soft)" }}>
+            This trace did not complete. It can be re-run at no extra cost for the work already done.
+          </div>
+        )
       )}
     </div>
   );

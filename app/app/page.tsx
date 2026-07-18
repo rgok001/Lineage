@@ -25,17 +25,16 @@ export default async function Home() {
           <SignInButton />
         </div>
         <p style={{ color: "var(--ink-soft)", margin: ".45rem 0 0", lineHeight: 1.5 }}>
-          Trace how an academic concept evolved across papers — every relationship backed by a
-          verbatim quote from both papers, verified against the source text.
+          Trace how an academic concept evolved across the literature. Every relationship is
+          backed by verbatim quotes from both papers, verified against the source text.
         </p>
       </header>
 
-      <h2 style={{ fontSize: "1rem", color: "var(--ink)", margin: "0 0 .9rem" }}>Your genealogies</h2>
+      <h2 style={{ fontSize: "1rem", color: "var(--ink)", margin: "0 0 .9rem" }}>Genealogies</h2>
 
       {rows.length === 0 ? (
         <p style={{ color: "var(--ink-soft)" }}>
-          No genealogies yet. Build one with the pipeline:{" "}
-          <code>python pipeline/corpus_select.py &quot;attention&quot;</code> …
+          No genealogies yet — request a trace below to create the first one.
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: ".7rem" }}>
@@ -57,11 +56,10 @@ export default async function Home() {
                         {" "}· {g.edge_count - g.verified_count} inferred
                       </span>
                     )}
-                    {g.edit_count > 0 && <> · {g.edit_count} manual edit(s)</>}
+                    {g.edit_count > 0 && <> · {g.edit_count} curatorial change(s)</>}
                   </div>
                 </div>
                 <div style={{ textAlign: "right", fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>
-                  <div>prompt {g.prompt_version}</div>
                   <div>{g.status}</div>
                 </div>
                 <span style={{ color: "var(--ink-soft)", fontSize: "1.3rem" }}>›</span>
@@ -74,8 +72,8 @@ export default async function Home() {
       <TracePanel initial={traces} initialNow={now} signedIn={!!viewer} owner={isOwner(viewer)} />
 
       <p style={{ marginTop: "2rem", fontSize: ".78rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
-        Reading live from the database. Edits you make in a genealogy are saved there and recorded
-        in its audit trail.
+        Genealogies are drafted automatically from the papers themselves, then curated by hand.
+        Every curatorial change is recorded in an audit trail.
       </p>
     </main>
   );

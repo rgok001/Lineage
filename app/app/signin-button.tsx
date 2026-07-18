@@ -19,7 +19,7 @@ export default async function SignInButton() {
             {viewer.login}
             {owner ? (
               <span style={{ marginLeft: ".4rem", color: "var(--verified)", fontFamily: "var(--font-mono)", fontSize: ".68rem" }}>
-                owner — can edit
+                curator
               </span>
             ) : (
               <span style={{ marginLeft: ".4rem", color: "var(--ink-soft)", fontFamily: "var(--font-mono)", fontSize: ".68rem" }}>

@@ -54,9 +54,9 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
           )
         </p>
         <p style={{ color: "var(--ink-soft)", margin: ".5rem 0 0", fontSize: ".82rem", fontStyle: "italic" }}>
-          A workbench, not the last word — this map is a draft you curate. Every edit is saved to the
-          database and recorded below.
-          {g.user_edits.length > 0 && ` ${g.user_edits.length} edit(s) applied so far.`}
+          Drafted automatically from the papers’ own words, then curated by hand. Every curatorial
+          change is recorded in the audit trail below.
+          {g.user_edits.length > 0 && ` ${g.user_edits.length} change(s) so far.`}
         </p>
       </header>
 
@@ -72,9 +72,10 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
       {/* ── relationships ──────────────────────────────── */}
       <SectionTitle n="2">The {edges.length} relationships between them</SectionTitle>
       <p style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 1rem" }}>
-        Each row is a typed link between two papers. ● = both quotes verified against the source
-        text; ○ = one couldn’t be matched, so it’s shown as <em>inferred</em>. Click a row for the
-        evidence and to reclassify or delete it.
+        Each row is a typed relationship between two papers. ● means both quotes were verified
+        verbatim against the source text; ○ means one could not be matched, so the relationship is
+        marked <em>inferred</em>. Click a row to see the evidence
+        {canEdit ? ", reclassify it, or remove it." : "."}
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
         {edges.map((e) => (
@@ -104,14 +105,14 @@ function DangerZone({ genealogyId, concept }: { genealogyId: number; concept: st
       <div style={{ marginTop: ".8rem", border: "1px solid var(--inferred)", borderRadius: 8,
         background: "var(--card)", padding: "1rem 1.1rem" }}>
         <p style={{ fontSize: ".82rem", color: "var(--ink-soft)", margin: "0 0 .7rem", lineHeight: 1.5 }}>
-          Removes this map and all {""}of its relationships. Papers and cached extractions are kept,
-          and “{concept}” becomes requestable again. This cannot be undone from the app.
+          Permanently removes this map and its relationships. Source papers and extracted evidence
+          are kept, and “{concept}” becomes available to trace again.
         </p>
         <form action={deleteGenealogy} style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", alignItems: "center" }}>
           <input type="hidden" name="genealogyId" value={genealogyId} />
           <input
             name="confirm"
-            placeholder={`type “${concept}” to confirm`}
+            placeholder={`Type “${concept}” to confirm`}
             autoComplete="off"
             style={inputStyle}
           />
@@ -154,7 +155,7 @@ function NodeCard({ n, i, genealogyId, others, deg, canEdit }:
 
           {canEdit && (
           <details style={{ marginTop: ".6rem" }}>
-            <summary style={{ cursor: "pointer", fontSize: ".76rem", color: "var(--ink-soft)" }}>edit this meaning</summary>
+            <summary style={{ cursor: "pointer", fontSize: ".76rem", color: "var(--ink-soft)" }}>Edit this meaning</summary>
             <div style={{ display: "flex", flexWrap: "wrap", gap: ".8rem", marginTop: ".6rem", alignItems: "flex-end" }}>
               <form action={renameNode} style={{ display: "flex", gap: ".35rem", alignItems: "center" }}>
                 <input type="hidden" name="genealogyId" value={genealogyId} />
@@ -186,9 +187,9 @@ function NodeCard({ n, i, genealogyId, others, deg, canEdit }:
               </form>
             </div>
             <p style={{ fontSize: ".7rem", color: "var(--ink-soft)", margin: ".5rem 0 0" }}>
-              Merging drops any relationship that becomes internal to the merged meaning — a link
-              between two papers of the <em>same</em> state is not a transition. Deleting removes its
-              relationships too.
+              Merging discards any relationship that becomes internal to the merged meaning — a
+              link between two papers of the <em>same</em> meaning is no longer a transition.
+              Deleting a meaning removes its relationships as well.
             </p>
           </details>
           )}
@@ -265,7 +266,7 @@ function AuditTrail({ edits }: { edits: { op: string; detail: unknown; at: strin
   return (
     <details style={{ marginTop: "2.5rem", paddingTop: "1.2rem", borderTop: "1px solid var(--line)" }}>
       <summary style={{ cursor: "pointer", fontSize: ".85rem", color: "var(--ink)" }}>
-        Audit trail — {edits.length} manual edit(s)
+        Audit trail — {edits.length} curatorial change(s)
       </summary>
       <ul style={{ margin: ".7rem 0 0", paddingLeft: "1.1rem", fontSize: ".78rem", color: "var(--ink-soft)" }}>
         {edits.map((e, i) => (
