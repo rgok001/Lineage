@@ -70,3 +70,20 @@ python pipeline/stage_e_ground.py "attention"          # re-ground + re-export a
 python pipeline/enrich_authors.py --concept "attention"   # real authors (arXiv first)
 python pipeline/export_related_work.py "attention"
 ```
+
+## Trace worker (live trace requests)
+
+The deployed app lets signed-in visitors *request* a trace and shows live
+progress; the owner approves requests (each run costs real LLM spend). The
+queue is the `trace_requests` table itself — the worker claims `approved` rows
+with `FOR UPDATE SKIP LOCKED`, runs the pipeline stages above as subprocesses,
+and streams their stdout into `trace_requests.progress` for the UI to poll.
+
+```bash
+python worker/run.py           # poll forever (10s interval)
+python worker/run.py --once    # process at most one job, then exit
+```
+
+Needs the same root `.env` as the pipeline (direct DB endpoint, API key,
+DATA_DIR). Vercel never runs traces — a trace takes ~15 min and needs a disk,
+so the worker runs on any long-lived box (a laptop counts).

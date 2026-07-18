@@ -22,3 +22,6 @@ data/
 # misc
 .DS_Store
 *.log
+
+# typescript incremental build state
+app/tsconfig.tsbuildinfo

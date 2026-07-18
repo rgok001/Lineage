@@ -26,6 +26,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -121,6 +122,10 @@ def cost_usd(model: str, in_tok: int, out_tok: int) -> float:
     return in_tok / 1e6 * p_in + out_tok / 1e6 * p_out
 
 
+# The papers table is shared across ALL traced concepts. Without --corpus this
+# selects every extracted paper in the DB — right when the DB holds one
+# concept's corpus (research CLI use), wrong for the worker: a new trace would
+# re-bill the LLM against every paper any previous trace ever fetched.
 SELECT_PAPERS = f"""
 SELECT p.id, p.arxiv_id, p.title, p.extracted_text_path
 FROM papers p
@@ -131,7 +136,7 @@ WHERE p.extracted_text_path IS NOT NULL
       WHERE d.paper_id = p.id AND d.concept = %(concept)s
         AND d.prompt_version = %(prompt_version)s
   )
-ORDER BY p.cited_by_count DESC NULLS LAST
+{{corpus_filter}}ORDER BY p.cited_by_count DESC NULLS LAST
 """
 
 INSERT_DEF = """
@@ -156,13 +161,24 @@ def main() -> None:
                     help="enable adaptive thinking (better reasoning, more output tokens)")
     ap.add_argument("--dry-run", action="store_true",
                     help="estimate cost across models; makes no billable call")
+    ap.add_argument("--corpus", metavar="JSON",
+                    help="restrict to the arxiv_ids in this corpus JSON "
+                         "(from corpus_select --json); without it, ALL extracted papers")
     args = ap.parse_args()
+
+    params: dict = {"concept": args.concept}
+    corpus_filter = ""
+    if args.corpus:
+        corpus = json.loads(Path(args.corpus).read_text(encoding="utf-8"))
+        params["arxiv_ids"] = [p["arxiv_id"] for p in corpus]
+        corpus_filter = "  AND p.arxiv_id = ANY(%(arxiv_ids)s)\n"
 
     prompt_version = env("PROMPT_VERSION", "v1")
     cap = float(env("TRACE_SPEND_CAP_USD", "10"))
     conn = psycopg.connect(env("DATABASE_URL"))
-    rows = conn.execute(SELECT_PAPERS, {"concept": args.concept,
-                                        "prompt_version": prompt_version}).fetchall()
+    params["prompt_version"] = prompt_version
+    rows = conn.execute(SELECT_PAPERS.format(corpus_filter=corpus_filter),
+                        params).fetchall()
     if args.limit:
         rows = rows[:args.limit]
     if not rows:

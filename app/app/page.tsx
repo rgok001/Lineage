@@ -1,11 +1,19 @@
 import Link from "next/link";
 import SignInButton from "./signin-button";
+import TracePanel from "./trace-panel";
+import { getViewer, isOwner } from "../lib/authz";
 import { listGenealogies } from "../lib/genealogy";
+import { dbNow, listTraceRequests } from "../lib/traces";
 
 export const dynamic = "force-dynamic"; // always read live DB state
 
 export default async function Home() {
-  const rows = await listGenealogies();
+  const [rows, traces, now, viewer] = await Promise.all([
+    listGenealogies(),
+    listTraceRequests(),
+    dbNow(),
+    getViewer(),
+  ]);
 
   return (
     <main style={{ maxWidth: 880, margin: "0 auto", padding: "2.5rem 1.5rem 4rem" }}>
@@ -62,6 +70,8 @@ export default async function Home() {
           ))}
         </div>
       )}
+
+      <TracePanel initial={traces} initialNow={now} signedIn={!!viewer} owner={isOwner(viewer)} />
 
       <p style={{ marginTop: "2rem", fontSize: ".78rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
         Reading live from the database. Edits you make in a genealogy are saved there and recorded
