@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import SignInButton from "../../signin-button";
-import { deleteEdge, deleteNode, mergeNode, reclassifyEdge, renameNode } from "../../../lib/actions";
+import { deleteEdge, deleteGenealogy, deleteNode, mergeNode, reclassifyEdge, renameNode } from "../../../lib/actions";
 import { getViewer, isOwner } from "../../../lib/authz";
 import { EDGE_MEANING, EDGE_TYPES, getGenealogy, type Edge, type Node } from "../../../lib/genealogy";
 
@@ -86,7 +86,41 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
       </div>
 
       {g.user_edits.length > 0 && <AuditTrail edits={g.user_edits} />}
+
+      {canEdit && <DangerZone genealogyId={g.id} concept={g.concept} />}
     </main>
+  );
+}
+
+/** Owner-only, and deliberately unhurried: the action requires the concept
+ *  name typed back and verifies it server-side (see deleteGenealogy). The
+ *  gating here is cosmetic — requireOwner inside the action is the lock. */
+function DangerZone({ genealogyId, concept }: { genealogyId: number; concept: string }) {
+  return (
+    <details style={{ marginTop: "2.5rem", paddingTop: "1.2rem", borderTop: "1px solid var(--line)" }}>
+      <summary style={{ cursor: "pointer", fontSize: ".85rem", color: "var(--inferred)" }}>
+        Danger zone — delete this genealogy
+      </summary>
+      <div style={{ marginTop: ".8rem", border: "1px solid var(--inferred)", borderRadius: 8,
+        background: "var(--card)", padding: "1rem 1.1rem" }}>
+        <p style={{ fontSize: ".82rem", color: "var(--ink-soft)", margin: "0 0 .7rem", lineHeight: 1.5 }}>
+          Removes this map and all {""}of its relationships. Papers and cached extractions are kept,
+          and “{concept}” becomes requestable again. This cannot be undone from the app.
+        </p>
+        <form action={deleteGenealogy} style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", alignItems: "center" }}>
+          <input type="hidden" name="genealogyId" value={genealogyId} />
+          <input
+            name="confirm"
+            placeholder={`type “${concept}” to confirm`}
+            autoComplete="off"
+            style={inputStyle}
+          />
+          <button type="submit" style={{ ...btnStyle, color: "var(--inferred)", borderColor: "var(--inferred)" }}>
+            Delete genealogy
+          </button>
+        </form>
+      </div>
+    </details>
   );
 }
 

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireOwner } from "./authz";
 import { sql } from "./db";
 import { EDGE_TYPES, getGenealogy, recordEdit, saveNodes, type Node } from "./genealogy";
@@ -95,6 +96,35 @@ export async function deleteNode(formData: FormData) {
     node: nodeId, label: n.label, edges_removed: killed.length,
   }, who.login);
   refresh(genealogyId);
+}
+
+/**
+ * Delete an entire genealogy — the map, its edges (FK cascade), and nothing
+ * else. Papers and cached definitions survive, so re-tracing the concept later
+ * re-bills almost nothing; and since requestTrace refuses concepts that
+ * already have a genealogy, deleting one deliberately re-opens it.
+ *
+ * Confirmation is server-side: the form asks the owner to type the concept
+ * name, and THIS code checks it. A client-side confirm() would be bypassable
+ * by anyone invoking the action endpoint directly.
+ */
+export async function deleteGenealogy(formData: FormData) {
+  await requireOwner();
+  const genealogyId = Number(formData.get("genealogyId"));
+  const typed = String(formData.get("confirm") ?? "").trim().toLowerCase();
+
+  const rows = (await sql`
+    SELECT concept FROM genealogies WHERE id = ${genealogyId}
+  `) as { concept: string }[];
+  if (!rows.length || typed !== rows[0].concept.toLowerCase()) return;
+
+  // Trace history outlives the genealogy it produced (it is the record of who
+  // requested what and what it cost); null the link or the FK blocks the delete.
+  await sql`UPDATE trace_requests SET genealogy_id = NULL WHERE genealogy_id = ${genealogyId}`;
+  await sql`DELETE FROM genealogies WHERE id = ${genealogyId}`;
+
+  revalidatePath("/");
+  redirect("/");
 }
 
 export async function reclassifyEdge(formData: FormData) {
