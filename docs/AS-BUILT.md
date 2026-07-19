@@ -448,3 +448,17 @@ Open engineering work, in priority order:
 6. Some notification when a stranger's request lands (currently visible only
    by visiting the site).
 7. `genealogies.status` semantics are loose and partly vestigial.
+8. **Topic-scoped traces (backlog idea, 2026-07-19).** Corpus selection
+   currently hardcodes the OpenAlex "Computer science" concept filter
+   (`C41008148`), and OpenAlex has deprecated concepts in favour of Topics
+   (verified live: `topics.field.id:fields/17` and `primary_topic.field.id`
+   filters work; the any-topic variant suits a recall stage best). The idea:
+   let the person requesting a trace choose the subject area from a
+   selectable list of OpenAlex Topics, restricted to Topics that actually
+   have arXiv-indexed papers (or a similar availability signal), instead of
+   silently assuming computer science. Touches `corpus_select.py` (a
+   `--topic` argument replacing the fixed filter), the trace request form
+   (a topic picker populated from the OpenAlex Topics API), and
+   `trace_requests` (store the chosen topic with the request). Folds the
+   concepts-to-Topics migration into a user-facing feature instead of a
+   silent swap.
