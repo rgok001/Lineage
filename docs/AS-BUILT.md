@@ -240,7 +240,12 @@ which suits serverless.
 - `/g/[id]` : the genealogy page. Timeline of concept-state cards, typed
   relationship rows with evidence panels (both quotes, verification stamp,
   confidence), workbench edit controls (owner only), audit trail, danger zone
-  (owner only).
+  (owner only). Meanings are grouped into citation-connected families
+  (`computeFamilies()`, union-find over edges): a term whose senses do not
+  cite each other (polysemy like "kernel") renders as separate families under
+  a disclosure banner, with citation-isolated meanings pulled into an
+  "Unconnected meanings" section. A single-family genealogy renders flat and
+  unchanged.
 - `/about` : the public methods page. Claims, pipeline steps, edge taxonomy
   (rendered from the same `EDGE_MEANING` map the product uses, so it cannot
   drift), curation model, and an explicit limitations section.

@@ -121,8 +121,10 @@ export default function AboutPage() {
             dropped: the failure is disclosed, not silently discarded.
           </li>
           <li>
-            Relationships require citation links. Parallel discovery, where two groups converge on
-            a meaning without citing each other, appears as unconnected meanings, not as a link.
+            Relationships require citation links. When a term carries unrelated senses (the way
+            “kernel” differs in operating systems and machine learning), or two groups converge on
+            a meaning without citing each other, the map shows them as separate families and
+            flags any meaning that no citation connects, rather than inventing a link.
           </li>
           <li>
             The relationship types and confidence scores are a model’s judgment. The quotes are
