@@ -99,6 +99,53 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
   };
 }
 
+/**
+ * Partition a genealogy's meanings into connected families.
+ *
+ * A polysemous term ("kernel": operating systems, SVMs, GPUs) produces
+ * unrelated lineages that share nothing but the word — no citation ever
+ * crosses between them, so they form disjoint components in the edge graph.
+ * Rendering them interleaved in one timeline silently implies one story.
+ * This computes the truth so the page can disclose it: families (components
+ * with at least one edge, largest first) and unconnected singletons.
+ */
+export function computeFamilies(nodes: Node[], edges: Edge[]) {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    let cur = x;
+    while (parent.get(cur) !== cur) {
+      const next = parent.get(cur)!;
+      parent.set(cur, root);
+      cur = next;
+    }
+    return root;
+  };
+  for (const n of nodes) parent.set(n.node_id, n.node_id);
+  for (const e of edges) {
+    if (!parent.has(e.source_node) || !parent.has(e.target_node)) continue;
+    parent.set(find(e.source_node), find(e.target_node));
+  }
+
+  const groups = new Map<string, Node[]>();
+  for (const n of nodes) {
+    const root = find(n.node_id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root)!.push(n); // nodes arrive year-sorted; order is preserved
+  }
+
+  const families: Node[][] = [];
+  const unconnected: Node[] = [];
+  for (const g of groups.values()) {
+    if (g.length === 1) unconnected.push(g[0]);
+    else families.push(g);
+  }
+  families.sort((a, b) => b.length - a.length || a[0].year_start - b[0].year_start);
+  unconnected.sort((a, b) => a.year_start - b.year_start);
+  return { families, unconnected };
+}
+
 /** Every workbench edit is appended here, so a curated map always carries the
  *  record of what a human changed, when, and who — same contract as the CLI
  *  workbench (which has no session, hence `by` is optional). */

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import SignInButton from "../../signin-button";
 import { deleteEdge, deleteGenealogy, deleteNode, mergeNode, reclassifyEdge, renameNode } from "../../../lib/actions";
 import { getViewer, isOwner } from "../../../lib/authz";
-import { EDGE_MEANING, EDGE_TYPES, getGenealogy, type Edge, type Node } from "../../../lib/genealogy";
+import { computeFamilies, EDGE_MEANING, EDGE_TYPES, getGenealogy, type Edge, type Node } from "../../../lib/genealogy";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +31,15 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
   const verified = edges.filter((e) => e.verified).length;
   const degree = (nid: string) =>
     edges.filter((e) => e.source_node === nid || e.target_node === nid).length;
+
+  // A polysemous term ("kernel", "attention" across fields) yields lineages that
+  // share nothing but the word. Grouping them by citation-connected family, and
+  // pulling truly isolated meanings out of the timeline, keeps the page from
+  // implying one story where the corpus shows several.
+  const { families, unconnected } = computeFamilies(g.nodes, edges);
+  const split = families.length > 1;
+  const grouped = split || (families.length === 1 && unconnected.length > 0);
+  const colStyle = { display: "flex", flexDirection: "column", gap: ".8rem" } as const;
 
   return (
     <main style={{ maxWidth: 940, margin: "0 auto", padding: "2rem 1.5rem 5rem" }}>
@@ -61,13 +70,56 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
       </header>
 
       {/* ── concept-states ─────────────────────────────── */}
-      <SectionTitle n="1">The {g.nodes.length} meanings, earliest to latest</SectionTitle>
-      <div style={{ display: "flex", flexDirection: "column", gap: ".8rem", marginBottom: "2.5rem" }}>
-        {g.nodes.map((n, i) => (
-          <NodeCard key={n.node_id} n={n} i={i} genealogyId={g.id} others={g.nodes}
-            deg={degree(n.node_id)} canEdit={canEdit} />
-        ))}
-      </div>
+      {!grouped ? (
+        <>
+          <SectionTitle n="1">The {g.nodes.length} meanings, earliest to latest</SectionTitle>
+          <div style={{ ...colStyle, marginBottom: "2.5rem" }}>
+            {g.nodes.map((n, i) => (
+              <NodeCard key={n.node_id} n={n} i={i} genealogyId={g.id} others={g.nodes}
+                deg={degree(n.node_id)} canEdit={canEdit} />
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <SectionTitle n="1">
+            The {g.nodes.length} meanings{split ? `, in ${families.length} unrelated families` : ""}
+          </SectionTitle>
+          {split && <SplitBanner concept={g.concept} n={families.length} />}
+          <div style={{ display: "flex", flexDirection: "column", gap: "1.7rem", marginBottom: "2.5rem" }}>
+            {families.map((fam, fi) => (
+              <div key={fam[0].node_id}>
+                {split && (
+                  <GroupHeading label={`Family ${fi + 1}`}
+                    sub={`${fam.length} meaning${fam.length > 1 ? "s" : ""} · ${familyYears(fam)}`} />
+                )}
+                <div style={colStyle}>
+                  {fam.map((n, i) => (
+                    <NodeCard key={n.node_id} n={n} i={i} genealogyId={g.id} others={g.nodes}
+                      deg={degree(n.node_id)} canEdit={canEdit} />
+                  ))}
+                </div>
+              </div>
+            ))}
+            {unconnected.length > 0 && (
+              <div>
+                <GroupHeading label="Unconnected meanings"
+                  sub={`${unconnected.length} not linked by any citation`} />
+                <p style={{ color: "var(--ink-soft)", fontSize: ".8rem", margin: "0 0 .7rem", lineHeight: 1.5 }}>
+                  No citation in this corpus links these to a family. That can mean a genuinely
+                  separate sense of the term, or simply a gap in what the corpus covers.
+                </p>
+                <div style={colStyle}>
+                  {unconnected.map((n, i) => (
+                    <NodeCard key={n.node_id} n={n} i={i} genealogyId={g.id} others={g.nodes}
+                      deg={degree(n.node_id)} canEdit={canEdit} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* ── relationships ──────────────────────────────── */}
       <SectionTitle n="2">The {edges.length} relationships between them</SectionTitle>
@@ -315,6 +367,44 @@ function SectionTitle({ n, children }: { n: string; children: React.ReactNode })
       </span>
       {children}
     </h2>
+  );
+}
+
+/** Year span of a family (nodes arrive year-sorted; end is the latest end). */
+function familyYears(fam: Node[]): string {
+  const start = Math.min(...fam.map((n) => n.year_start));
+  const end = Math.max(...fam.map((n) => n.year_end));
+  return start === end ? `${start}` : `${start}–${end}`;
+}
+
+/** Shown only when a term splits into 2+ citation-disconnected families:
+ *  turns silent polysemy into a disclosed finding, the same move the product
+ *  makes with verified vs inferred. */
+function SplitBanner({ concept, n }: { concept: string; n: number }) {
+  return (
+    <div style={{ border: "1px solid var(--inferred)", borderRadius: 8, background: "var(--card)",
+      padding: ".8rem 1rem", margin: "0 0 1.3rem" }}>
+      <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1rem", color: "var(--ink)" }}>
+        “{concept}” carries {n} unrelated meanings here
+      </div>
+      <p style={{ margin: ".35rem 0 0", fontSize: ".82rem", color: "var(--ink-soft)", lineHeight: 1.5 }}>
+        The families below share the word but no citation links them. That usually signals distinct
+        senses (the way “kernel” means one thing in operating systems and another in machine
+        learning) rather than one evolving idea.
+      </p>
+    </div>
+  );
+}
+
+function GroupHeading({ label, sub }: { label: string; sub: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: ".6rem", margin: "0 0 .7rem",
+      borderBottom: "1px solid var(--line)", paddingBottom: ".35rem" }}>
+      <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.02rem", color: "var(--ink)" }}>
+        {label}
+      </span>
+      <span style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>{sub}</span>
+    </div>
   );
 }
 
