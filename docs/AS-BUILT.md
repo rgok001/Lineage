@@ -84,13 +84,15 @@ because a negative verdict ("this paper does not define the concept") is a
 finding: before 003, negatives wrote no row, so every re-run re-paid the LLM
 for most of the corpus. `embedding vector(1024)` holds the Stage C embedding.
 
-**genealogies** (001): the map itself. `nodes` is JSONB (concept-states with
-members and year ranges), `user_edits` is the append-only curatorial audit
+**genealogies** (001, 007): the map itself. `nodes` is JSONB (concept-states
+with members and year ranges), `user_edits` is the append-only curatorial audit
 trail, `spend_usd` accumulates cost, `status` is loosely one of
-pending/running/complete/failed/aborted_spend_cap. Known defect: Stage C
-inserts a new row per run instead of reusing the (concept, prompt_version)
-row. This produced an orphan after a crashed run (see section 10) and remains
-open work.
+pending/running/complete/failed/aborted_spend_cap. Migration 007 adds
+`UNIQUE (concept, prompt_version)`: Stage C now upserts on that key (stable id
+across re-runs, in place), where it used to DELETE then INSERT and mint a new
+id every run. That old pattern broke `/g/<id>` links on re-trace and orphaned a
+`running` row when a run crashed between Stage C and Stage E (see section 10,
+incident 4).
 
 **edges** (001): typed relationships between nodes, with FK to both papers,
 both verbatim quotes, `confidence`, and `verified` (the grounding verdict).
@@ -456,18 +458,22 @@ string matching fails closed to "inferred" when extraction mangles a passage;
 parallel discovery without citation appears as unconnected meanings; edge
 types and confidences are model judgment, mitigated by the quotes being shown.
 
+Done since first draft: Render worker deployed and verified live
+(2026-07-21); Stage C genealogy upsert (migration 007, stable id); account
+Anthropic billing cap (owner, confirmed set); topic picker + sense gloss
+(item 8 below); family grouping on the genealogy page.
+
 Open engineering work, in priority order:
 
-1. Finish the Render console setup (owner action) and verify a live trace
-   through the deployed worker.
-2. Stage C should upsert its genealogy row per (concept, prompt_version)
-   instead of inserting a new one per run.
-3. Account-level Anthropic billing cap (owner action, console).
-4. Curate the dropout genealogy (12 draft nodes want merging to ~5).
-5. Proper 403s instead of fail-closed 500s on unauthorised writes.
-6. Some notification when a stranger's request lands (currently visible only
+1. Pick and trace a showcase concept the owner cares about (attention was
+   deleted; only dropout exists). The one demo-facing blocker; owner decision.
+2. Curate the dropout genealogy (12 draft nodes want merging to ~5).
+3. Proper 403s instead of fail-closed 500s on unauthorised writes.
+4. Some notification when a stranger's request lands (currently visible only
    by visiting the site).
-7. `genealogies.status` semantics are loose and partly vestigial.
+5. `genealogies.status` semantics are loose and partly vestigial.
+6. Optional: a free OpenAlex pre-flight probe at approval time (show the
+   curator the would-be corpus before they approve).
 8. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
    OpenAlex field picker (populated live from a `group_by` of arXiv works,
    `lib/openalex.ts`), and corpus selection scopes to the chosen field. A

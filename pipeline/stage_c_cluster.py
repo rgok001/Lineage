@@ -117,6 +117,9 @@ def label_cluster_llm(client, concept, member_defs) -> str | None:
 UPSERT_GENEALOGY = """
 INSERT INTO genealogies (concept, prompt_version, status, nodes, updated_at)
 VALUES (%(concept)s, %(prompt_version)s, 'running', %(nodes)s, now())
+ON CONFLICT (concept, prompt_version) DO UPDATE
+    SET nodes = EXCLUDED.nodes, status = 'running', updated_at = now()
+RETURNING id
 """
 
 
@@ -187,13 +190,18 @@ def main() -> None:
             print(f"       {star} {rows[i][1]:<13} {rows[i][2]}  {(rows[i][3] or '')[:50]}")
         print()
 
-    # persist: one genealogy per (concept, prompt_version)
-    conn.execute("DELETE FROM genealogies WHERE concept = %s AND prompt_version = %s",
-                 (args.concept, prompt_version))
-    conn.execute(UPSERT_GENEALOGY, {
+    # Persist in place: upsert on (concept, prompt_version) keeps the genealogy's
+    # id stable across re-runs, so /g/<id> links and trace_requests.genealogy_id
+    # survive a re-trace, and a requeued run reuses its row instead of orphaning
+    # a new one. user_edits is intentionally left untouched (the audit trail
+    # outlives a re-cluster). Re-clustering changes node ids/membership, which
+    # invalidates the old edges; Stage D rebuilds them, but clear them now so a
+    # crash before Stage D can't leave fresh nodes wired to stale edges.
+    gen_id = conn.execute(UPSERT_GENEALOGY, {
         "concept": args.concept, "prompt_version": prompt_version,
         "nodes": psycopg.types.json.Json(nodes),
-    })
+    }).fetchone()[0]
+    conn.execute("DELETE FROM edges WHERE genealogy_id = %s", (gen_id,))
     conn.commit()
     conn.close()
 
