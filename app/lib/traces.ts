@@ -22,6 +22,8 @@ export type TraceRequest = {
   id: number;
   concept: string;
   corpus_limit: number;
+  field_id: string;
+  gloss: string | null;
   requested_by: string;
   note: string | null;
   status: "requested" | "approved" | "rejected" | "running" | "complete" | "failed";
@@ -46,7 +48,7 @@ export async function dbNow(): Promise<string> {
 
 export async function listTraceRequests(): Promise<TraceRequest[]> {
   return (await sql`
-    SELECT id, concept, corpus_limit, requested_by, note, status, decided_by,
+    SELECT id, concept, corpus_limit, field_id, gloss, requested_by, note, status, decided_by,
            started_at, finished_at, progress, error, genealogy_id,
            created_at, updated_at
     FROM trace_requests

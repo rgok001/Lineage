@@ -35,6 +35,10 @@ cd app && npm install && npm run dev
 ```sh
 # Stage A part 1: ranked candidate corpus (metadata only, no downloads)
 python pipeline/corpus_select.py "attention" --limit 150 --json corpus.json
+#   --field fields/N : scope to an OpenAlex field (default fields/17 = Computer
+#                      Science; 'all' drops the field filter)
+#   --gloss "..."    : disambiguate a polysemous sense; becomes the relevance
+#                      query (e.g. "kernel" --gloss "kernel methods in SVMs")
 
 # Acquisition: download arXiv source (LaTeX-first) into DATA_DIR + papers table
 python pipeline/fetch_papers.py corpus.json --dry-run   # preview, no downloads

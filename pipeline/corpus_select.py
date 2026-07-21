@@ -34,7 +34,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import data_dir, get_json, mailto  # noqa: E402
 
 OPENALEX = "https://api.openalex.org"
-CS_CONCEPT_ID = "C41008148"  # "Computer science" — keeps e.g. psychology's "attention" out
 WORK_FIELDS = ("id,display_name,publication_year,cited_by_count,referenced_works,doi,"
                "locations,abstract_inverted_index")
 REQUEST_PAUSE_S = 0.15  # stay well under polite-pool limits
@@ -102,22 +101,37 @@ def _paginate_seeds(params: dict, max_seeds: int, label: str) -> list[dict]:
     return seeds[:max_seeds]
 
 
-def fetch_seeds_by_concept(concept_id: str, max_seeds: int, cs_filter: bool) -> list[dict]:
+def field_clause(field: str | None) -> str:
+    """OpenAlex filter clause scoping a work to one field's primary subject.
+
+    Accepts "17", "fields/17", or None/"all". Replaces the old hardcoded
+    Computer Science *concept* filter: concepts are deprecated, and a field is
+    the right granularity for "which discipline is this paper in". Uses
+    primary_topic.field.id (the paper's main field) rather than topics.field.id
+    (any assigned field) to keep the corpus on-subject; recall within the field
+    is still high, and the embedding filter refines from there.
+    """
+    if not field or field.lower() == "all":
+        return ""
+    return f"primary_topic.field.id:fields/{field.rsplit('/', 1)[-1]}"
+
+
+def fetch_seeds_by_concept(concept_id: str, max_seeds: int, field: str) -> list[dict]:
     filters = [f"concepts.id:{concept_id}", "indexed_in:arxiv"]
-    if cs_filter:
-        filters.append(f"concepts.id:{CS_CONCEPT_ID}")
+    if (fc := field_clause(field)):
+        filters.append(fc)
     return _paginate_seeds(
         {"filter": ",".join(filters), "sort": "cited_by_count:desc"},
         max_seeds, "seeds")
 
 
-def fetch_seeds_by_search(query: str, max_seeds: int, cs_filter: bool) -> list[dict]:
+def fetch_seeds_by_search(query: str, max_seeds: int, field: str) -> list[dict]:
     # Relevance search over title/abstract/fulltext. Cursor paging can't sort by
     # relevance_score, so we page by citations within the matched set — good enough
     # for seeding; the embedding filter refines relevance later.
     filters = ["indexed_in:arxiv"]
-    if cs_filter:
-        filters.append(f"concepts.id:{CS_CONCEPT_ID}")
+    if (fc := field_clause(field)):
+        filters.append(fc)
     return _paginate_seeds(
         {"search": query, "filter": ",".join(filters), "sort": "cited_by_count:desc"},
         max_seeds, "seeds")
@@ -193,8 +207,12 @@ def main() -> None:
     ap.add_argument("--concept-id", help="OpenAlex concept ID; enables concept mode (e.g. C66322947)")
     ap.add_argument("--concept-mode", action="store_true",
                     help="resolve the concept string to an OpenAlex tag instead of searching")
-    ap.add_argument("--no-cs-filter", action="store_true",
-                    help="drop the Computer science concept filter")
+    ap.add_argument("--field", default="fields/17",
+                    help="OpenAlex field scoping the corpus (default fields/17 = Computer "
+                         "Science; accepts '17' or 'fields/17'; 'all' drops the field filter)")
+    ap.add_argument("--gloss",
+                    help="one-line sense clarification (e.g. 'kernel, as in SVM kernel methods'); "
+                         "used as the relevance query instead of the bare concept")
     ap.add_argument("--keep-seeds", type=int, default=DEFAULT_KEEP_SEEDS,
                     help=f"keep the top N seeds by relevance (default {DEFAULT_KEEP_SEEDS})")
     ap.add_argument("--min-relevance", type=float, default=0.0,
@@ -204,16 +222,18 @@ def main() -> None:
     ap.add_argument("--json", metavar="PATH", help="also write the ranked corpus as JSON")
     args = ap.parse_args()
 
-    cs_filter = not args.no_cs_filter
+    # The gloss disambiguates the sense for RANKING; the search still uses the
+    # bare concept to cast a wide recall net. Wide word, tight meaning.
+    rel_query = args.gloss or args.concept
     if args.concept_id or args.concept_mode:
         concept_id = args.concept_id or resolve_concept(args.concept)
         print("Fetching concept-tagged arXiv seeds from OpenAlex…")
-        seeds = fetch_seeds_by_concept(concept_id, args.max_seeds, cs_filter)
+        seeds = fetch_seeds_by_concept(concept_id, args.max_seeds, args.field)
     else:
-        print(f'Searching arXiv+CS works for "{args.concept}" (relevance seed mode)…')
-        seeds = fetch_seeds_by_search(args.concept, args.max_seeds, cs_filter)
+        print(f'Searching {args.field} arXiv works for "{args.concept}" (relevance seed mode)…')
+        seeds = fetch_seeds_by_search(args.concept, args.max_seeds, args.field)
     if not seeds:
-        sys.exit("No seed papers found — try --no-cs-filter, --concept-mode, or a different query.")
+        sys.exit("No seed papers found — try --field all, --concept-mode, or a different query.")
 
     # Embedding relevance filter — SEEDS ONLY, deliberately.
     #
@@ -226,8 +246,8 @@ def main() -> None:
     # via citations from the cleaned seeds instead.
     rel_by_id: dict[str, float] = {}
     if not args.no_relevance_filter:
-        print(f"Scoring seed relevance to \"{args.concept}\" ({EMBED_MODEL}, local)…")
-        scores = relevance_scores(args.concept, seeds)
+        print(f"Scoring seed relevance to \"{rel_query}\" ({EMBED_MODEL}, local)…")
+        scores = relevance_scores(rel_query, seeds)
         rel_by_id = {w["id"]: s for w, s in zip(seeds, scores)}
         by_rel = sorted(seeds, key=lambda w: rel_by_id[w["id"]], reverse=True)
         kept = [w for w in by_rel[:args.keep_seeds] if rel_by_id[w["id"]] >= args.min_relevance]

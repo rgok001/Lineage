@@ -46,19 +46,24 @@ def connect() -> psycopg.Connection:
     return psycopg.connect(env("DATABASE_URL"))
 
 
-def stages_for(concept: str, corpus_limit: int) -> list[tuple[str, list[str]]]:
+def stages_for(concept: str, corpus_limit: int, field: str,
+               gloss: str | None) -> list[tuple[str, list[str]]]:
     py = [sys.executable, "-u"]  # -u: unbuffered, so progress streams live
     corpus_json = str(data_dir() / f"corpus_{re.sub(r'[^a-z0-9]+', '_', concept.lower())}.json")
+    # The gloss disambiguates a polysemous sense; it steers corpus relevance and
+    # Stage B's extraction question. The field scopes the corpus to a discipline.
+    gloss_arg = ["--gloss", gloss] if gloss else []
     return [
         ("select corpus", py + ["pipeline/corpus_select.py", concept,
-                                "--limit", str(corpus_limit), "--json", corpus_json]),
+                                "--limit", str(corpus_limit), "--field", field,
+                                "--json", corpus_json] + gloss_arg),
         ("fetch papers", py + ["pipeline/fetch_papers.py", corpus_json]),
         ("extract text", py + ["pipeline/extract_text.py"]),
         # --corpus scopes Stage B to THIS trace's papers; the papers table is
         # shared across concepts, and without it every past trace's corpus
         # would be re-billed against the new concept.
         ("extract definitions", py + ["pipeline/stage_b_extract.py", concept,
-                                      "--corpus", corpus_json]),
+                                      "--corpus", corpus_json] + gloss_arg),
         ("cluster concept-states", py + ["pipeline/stage_c_cluster.py", concept]),
         ("classify edges", py + ["pipeline/stage_d_edges.py", concept]),
         ("ground & assemble", py + ["pipeline/stage_e_ground.py", concept]),
@@ -103,8 +108,9 @@ class Progress:
         self.conn.commit()
 
 
-def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: int) -> None:
-    stages = stages_for(concept, corpus_limit)
+def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: int,
+            field: str, gloss: str | None) -> None:
+    stages = stages_for(concept, corpus_limit, field, gloss)
     prog = Progress(conn, job_id, len(stages))
     tail: list[str] = []  # last lines, kept for the error report on failure
 
@@ -184,14 +190,14 @@ def sweep_stale(conn: psycopg.Connection) -> None:
         print(f"[sweep] job {jid}: stale 'running' row marked failed")
 
 
-def claim(conn: psycopg.Connection) -> tuple[int, str, int] | None:
+def claim(conn: psycopg.Connection) -> tuple[int, str, int, str, str | None] | None:
     row = conn.execute(
         """UPDATE trace_requests
            SET status = 'running', started_at = now(), updated_at = now()
            WHERE id = (SELECT id FROM trace_requests WHERE status = 'approved'
                        ORDER BY decided_at NULLS FIRST, created_at
                        LIMIT 1 FOR UPDATE SKIP LOCKED)
-           RETURNING id, concept, corpus_limit""").fetchone()
+           RETURNING id, concept, corpus_limit, field_id, gloss""").fetchone()
     conn.commit()
     return row
 
@@ -214,10 +220,11 @@ def main() -> None:
             time.sleep(args.poll)
             continue
 
-        job_id, concept, corpus_limit = job
-        print(f'[job {job_id}] claimed: "{concept}" (corpus limit {corpus_limit})')
+        job_id, concept, corpus_limit, field, gloss = job
+        print(f'[job {job_id}] claimed: "{concept}" (field {field}, corpus limit {corpus_limit}'
+              f'{", glossed" if gloss else ""})')
         try:
-            run_job(conn, job_id, concept, corpus_limit)
+            run_job(conn, job_id, concept, corpus_limit, field, gloss)
         except StageFailed as e:
             print(f"[job {job_id}] FAILED: {e}")
             fail_job(conn, job_id, str(e), e.tail)

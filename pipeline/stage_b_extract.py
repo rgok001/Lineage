@@ -68,7 +68,7 @@ cited for unrelated reasons; saying "no" is the correct, expected answer.
 given to you. Never paraphrase, correct, shorten with ellipses, or reconstruct \
 it. It is checked by exact string match and a mismatch is treated as a failure."""
 
-USER = """Concept: "{concept}"
+USER = """Concept: "{concept}"{sense}
 
 Below is the extracted text of a paper. How does THIS paper define or use the \
 concept above?
@@ -76,6 +76,14 @@ concept above?
 <paper>
 {text}
 </paper>"""
+
+# Injected only when the request carries a gloss. Makes the yes/no question
+# sense-specific, so a polysemous word (OS "kernel" vs ML "kernel") is judged
+# against the intended meaning rather than the bare token.
+SENSE = """
+Intended sense: {gloss}
+Judge the concept in THIS sense only. A different, unrelated sense of the same \
+word does not count as defining the concept."""
 
 
 class Extraction(BaseModel):
@@ -164,8 +172,12 @@ def main() -> None:
     ap.add_argument("--corpus", metavar="JSON",
                     help="restrict to the arxiv_ids in this corpus JSON "
                          "(from corpus_select --json); without it, ALL extracted papers")
+    ap.add_argument("--gloss",
+                    help="one-line sense clarification; makes the extraction question "
+                         "sense-specific for polysemous concepts")
     args = ap.parse_args()
 
+    sense = SENSE.format(gloss=args.gloss) if args.gloss else ""
     params: dict = {"concept": args.concept}
     corpus_filter = ""
     if args.corpus:
@@ -197,7 +209,7 @@ def main() -> None:
     prompts = []
     for pid, aid, title, tpath in rows:
         text = (REPO_ROOT / tpath).read_text(encoding="utf-8")[:args.max_chars]
-        prompts.append((pid, aid, title, USER.format(concept=args.concept, text=text)))
+        prompts.append((pid, aid, title, USER.format(concept=args.concept, sense=sense, text=text)))
 
     total_in = sum(estimate_tokens(client, args.model, SYSTEM, u) for _, _, _, u in prompts)
     out_tok = (EST_OUTPUT_TOKENS + (1200 if args.thinking else 0)) * len(prompts)

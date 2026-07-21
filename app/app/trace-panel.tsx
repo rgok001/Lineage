@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
 import { approveTrace, rejectTrace, requestTrace } from "../lib/trace-actions";
 import type { TraceRequest } from "../lib/traces";
+import type { ArxivField } from "../lib/openalex";
 
 /**
  * The live-trace panel: request form, queue, and progress.
@@ -47,11 +48,13 @@ function ago(iso: string, skewMs: number): string {
 export default function TracePanel({
   initial,
   initialNow,
+  fields,
   signedIn,
   owner,
 }: {
   initial: TraceRequest[];
   initialNow: string;
+  fields: ArxivField[];
   signedIn: boolean;
   owner: boolean;
 }) {
@@ -102,7 +105,20 @@ export default function TracePanel({
             placeholder="Concept, e.g. “batch normalization”"
             required
             maxLength={60}
-            style={{ ...input, flex: "1 1 160px" }}
+            style={{ ...input, flex: "1 1 150px" }}
+          />
+          <select name="field_id" defaultValue="fields/17" aria-label="Subject field"
+            title="Which discipline to search" style={{ ...input, flex: "1 1 150px" }}>
+            {fields.map((f) => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
+          <input
+            name="gloss"
+            placeholder="Which sense? e.g. “kernel methods in SVMs” (optional)"
+            maxLength={200}
+            title="Disambiguates a word with more than one meaning"
+            style={{ ...input, flex: "1 1 100%" }}
           />
           <input
             name="note"
@@ -210,6 +226,12 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
           </form>
         )}
       </div>
+
+      {r.gloss && (
+        <div style={{ fontSize: ".76rem", color: "var(--ink-soft)", marginTop: ".3rem" }}>
+          sense: <span style={{ color: "var(--ink)" }}>{r.gloss}</span>
+        </div>
+      )}
 
       {r.note && (
         <div style={{ fontSize: ".78rem", color: "var(--ink-soft)", marginTop: ".35rem", fontStyle: "italic" }}>

@@ -3,15 +3,17 @@ import SignInButton from "./signin-button";
 import TracePanel from "./trace-panel";
 import { getViewer, isOwner } from "../lib/authz";
 import { listGenealogies } from "../lib/genealogy";
+import { getArxivFields } from "../lib/openalex";
 import { dbNow, listTraceRequests } from "../lib/traces";
 
 export const dynamic = "force-dynamic"; // always read live DB state
 
 export default async function Home() {
-  const [rows, traces, now, viewer] = await Promise.all([
+  const [rows, traces, now, fields, viewer] = await Promise.all([
     listGenealogies(),
     listTraceRequests(),
     dbNow(),
+    getArxivFields(),
     getViewer(),
   ]);
 
@@ -72,7 +74,7 @@ export default async function Home() {
         </div>
       )}
 
-      <TracePanel initial={traces} initialNow={now} signedIn={!!viewer} owner={isOwner(viewer)} />
+      <TracePanel initial={traces} initialNow={now} fields={fields} signedIn={!!viewer} owner={isOwner(viewer)} />
 
       <p style={{ marginTop: "2rem", fontSize: ".78rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
         Genealogies are drafted automatically from the papers themselves, then curated by hand.

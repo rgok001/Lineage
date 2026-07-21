@@ -96,7 +96,15 @@ open work.
 both verbatim quotes, `confidence`, and `verified` (the grounding verdict).
 `ON DELETE CASCADE` from genealogies.
 
-**trace_requests** (005): the request inbox and the job queue in one table.
+The request also carries a **subject field** and an optional **sense gloss**
+(migration 006): `field_id` (an OpenAlex field, default `fields/17` = Computer
+Science) scopes corpus selection to a discipline; `gloss` disambiguates a
+polysemous sense and flows into both the relevance query and Stage B's
+extraction question. The field is not a disambiguator (polysemy collides
+within a field: OS vs ML "kernel" are both CS); the gloss is. The worker reads
+both from the row and passes them through as CLI args.
+
+**trace_requests** (005, 006): the request inbox and the job queue in one table.
 Status flow: `requested -> approved -> running -> complete`, plus `rejected`
 and `failed`. `progress` JSONB is written live by the worker; `updated_at`
 doubles as the worker heartbeat; `genealogy_id` links the finished map. A
@@ -111,8 +119,15 @@ Five stages plus auxiliaries, each a standalone CLI script reading root
 `.env`. The pipeline is CLI-first by rule: the worker orchestrates these same
 commands and adds nothing to them.
 
-**Stage A part 1: corpus selection** (`corpus_select.py <concept> --limit N --json PATH`).
+**Stage A part 1: corpus selection**
+(`corpus_select.py <concept> --limit N --field fields/K --gloss "..." --json PATH`).
 Metadata only; nothing is fetched or paid for before the corpus is chosen.
+`--field` scopes to an OpenAlex field (default `fields/17` = Computer Science,
+`all` disables) via `primary_topic.field.id`, replacing the old hardcoded CS
+*concept* filter (concepts are deprecated). `--gloss` is an optional sense
+clarification used as the relevance embedding query instead of the bare
+concept, so a polysemous word ("kernel") retrieves the intended sense first;
+the SEARCH still uses the bare concept for recall. Wide word, tight meaning.
 Seeds come from OpenAlex relevance search (an OpenAlex "concept" mode exists
 but the default is search: OpenAlex has no ML "attention" concept). Seeds are
 filtered by a local embedding relevance check (fastembed bge-small, free) with
@@ -453,17 +468,11 @@ Open engineering work, in priority order:
 6. Some notification when a stranger's request lands (currently visible only
    by visiting the site).
 7. `genealogies.status` semantics are loose and partly vestigial.
-8. **Topic-scoped traces (backlog idea, 2026-07-19).** Corpus selection
-   currently hardcodes the OpenAlex "Computer science" concept filter
-   (`C41008148`), and OpenAlex has deprecated concepts in favour of Topics
-   (verified live: `topics.field.id:fields/17` and `primary_topic.field.id`
-   filters work; the any-topic variant suits a recall stage best). The idea:
-   let the person requesting a trace choose the subject area from a
-   selectable list of OpenAlex Topics, restricted to Topics that actually
-   have arXiv-indexed papers (or a similar availability signal), instead of
-   silently assuming computer science. Touches `corpus_select.py` (a
-   `--topic` argument replacing the fixed filter), the trace request form
-   (a topic picker populated from the OpenAlex Topics API), and
-   `trace_requests` (store the chosen topic with the request). Folds the
-   concepts-to-Topics migration into a user-facing feature instead of a
-   silent swap.
+8. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
+   OpenAlex field picker (populated live from a `group_by` of arXiv works,
+   `lib/openalex.ts`), and corpus selection scopes to the chosen field. A
+   sense gloss was shipped alongside it (polysemy prevention at intake). Both
+   flow request form -> `trace_requests` (migration 006) -> worker -> pipeline.
+   Remaining refinement: the picker is at *field* granularity (26 fields); a
+   finer *topic*-level picker (~4500 topics) was deferred as unnecessary for
+   scoping.

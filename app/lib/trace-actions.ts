@@ -15,6 +15,8 @@ import { sql } from "./db";
 export type TraceFormState = { ok: boolean; message: string } | null;
 
 const CONCEPT_RE = /^[a-z0-9][a-z0-9 -]{1,59}$/;
+const FIELD_RE = /^fields\/\d{1,4}$/;
+const DEFAULT_FIELD_ID = "fields/17"; // Computer Science
 
 // Non-owner quota: an inbox for humans, not an API.
 const MAX_OPEN_PER_USER = 1;
@@ -32,6 +34,19 @@ export async function requestTrace(
   const concept = String(formData.get("concept") ?? "")
     .trim().toLowerCase().replace(/\s+/g, " ");
   const note = String(formData.get("note") ?? "").trim().slice(0, 500) || null;
+
+  // Subject field: scopes the corpus to a discipline. Validate the shape (it
+  // becomes a CLI arg); a malformed value falls back to Computer Science rather
+  // than blocking the request. The dropdown only ever sends valid ids.
+  const rawField = String(formData.get("field_id") ?? "");
+  const fieldId = FIELD_RE.test(rawField) ? rawField : DEFAULT_FIELD_ID;
+
+  // Sense gloss: free text, so strip control chars and bound the length. Passed
+  // to subprocesses as a single argv element (no shell), and into an LLM prompt.
+  const gloss =
+    String(formData.get("gloss") ?? "").replace(/[\x00-\x1f]/g, " ").trim().slice(0, 200) ||
+    null;
+
   if (!CONCEPT_RE.test(concept)) {
     return {
       ok: false,
@@ -72,13 +87,15 @@ export async function requestTrace(
   try {
     if (owner) {
       await sql`
-        INSERT INTO trace_requests (concept, note, requested_by, corpus_limit, status, decided_by, decided_at)
-        VALUES (${concept}, ${note}, ${viewer.login}, ${corpusLimit}, 'approved', ${viewer.login}, now())
+        INSERT INTO trace_requests
+          (concept, note, requested_by, corpus_limit, field_id, gloss, status, decided_by, decided_at)
+        VALUES
+          (${concept}, ${note}, ${viewer.login}, ${corpusLimit}, ${fieldId}, ${gloss}, 'approved', ${viewer.login}, now())
       `;
     } else {
       await sql`
-        INSERT INTO trace_requests (concept, note, requested_by)
-        VALUES (${concept}, ${note}, ${viewer.login})
+        INSERT INTO trace_requests (concept, note, requested_by, field_id, gloss)
+        VALUES (${concept}, ${note}, ${viewer.login}, ${fieldId}, ${gloss})
       `;
     }
   } catch (e) {
