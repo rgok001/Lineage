@@ -34,7 +34,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import data_dir, env  # noqa: E402
 from stage_b_extract import PRICING, cost_usd  # noqa: E402
 
-EMBED_MODEL = "BAAI/bge-large-en-v1.5"  # 1024-dim, matches definitions.embedding
+# 1024-dim (matches definitions.embedding). mxbai is ~0.64 GB vs bge-large's
+# ~1.2 GB: bge-large's fp32 weights spike past 2 GB during onnxruntime's graph
+# optimization and OOM-killed the 2 GB worker at load; this fits with headroom
+# and downloads faster. Same dimension, so no migration. NOTE: DEFAULT_THRESHOLD
+# below was calibrated on bge-large distances; revisit if clustering granularity
+# looks off with this model.
+EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
 EMBED_BATCH = 8  # cap embedding batch to bound peak memory (see embed_definitions)
 # Cosine-distance cutoff, calibrated on the "attention" corpus: all definitions
 # are semantically close (they are all "attention"), so the separating structure
