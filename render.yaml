@@ -17,10 +17,12 @@ services:
   - type: worker
     name: lineage-worker
     runtime: python
-    # 'standard' = 2 GB RAM / 1 CPU. The pipeline peaks ~1.5 GB loading the
-    # bge-large embedding model in Stage C, so the 512 MB 'starter' OOM-kills the
-    # worker mid-run. For a blueprint-managed service this line is authoritative:
-    # changing the plan in the dashboard alone gets reverted on the next sync.
+    # 'standard' = 2 GB RAM / 1 CPU. This was needed when embeddings ran on a
+    # local model (bge-large peaked >2 GB at load and OOM-killed 'starter').
+    # Embeddings are now the Voyage hosted API (no model in memory), so the
+    # worker's footprint is ~250 MB and 'starter' (512 MB) would suffice —
+    # downgrade to save cost once a Voyage run is confirmed. Kept at 'standard'
+    # for now for safety. For a blueprint service this line is authoritative.
     plan: standard
     buildCommand: pip install -r pipeline/requirements.txt
     startCommand: python worker/run.py
@@ -37,11 +39,15 @@ services:
         value: v2
       - key: LLM_MODEL
         value: claude-sonnet-5
+      - key: VOYAGE_MODEL
+        value: voyage-3
       - key: TRACE_SPEND_CAP_USD
         value: "15"
       - key: DATABASE_URL
         sync: false
       - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
         sync: false
       - key: OPENALEX_MAILTO
         sync: false

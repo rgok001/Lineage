@@ -81,6 +81,51 @@ def get_bytes(url: str, max_retries: int = 5) -> tuple[bytes, str] | None:
     raise RuntimeError(f"Gave up after {max_retries} retries: {url}")
 
 
+VOYAGE_URL = "https://api.voyageai.com/v1/embeddings"
+
+
+def voyage_embed(texts: list[str], input_type: str = "document") -> list[list[float]]:
+    """Embed texts with the Voyage AI hosted embedding API.
+
+    Replaces local embedding models: nothing is loaded into memory or downloaded,
+    so the worker stays lightweight. This is what the vector(1024) schema was
+    designed for (voyage-3 is 1024-dim). `input_type` is "query" for a search
+    query or "document" for corpus/definition text — Voyage embeds the two
+    asymmetrically. Batches to respect the API's per-request input limit, and
+    retries on transient errors.
+    """
+    key = env("VOYAGE_API_KEY")
+    model = env("VOYAGE_MODEL", "voyage-3")
+    out: list[list[float]] = []
+    BATCH = 128  # Voyage's max inputs per request
+    for start in range(0, len(texts), BATCH):
+        chunk = texts[start:start + BATCH]
+        delay = 2.0
+        for attempt in range(5):
+            resp = requests.post(
+                VOYAGE_URL,
+                headers={"Authorization": f"Bearer {key}"},
+                json={"input": chunk, "model": model, "input_type": input_type},
+                timeout=120,
+            )
+            if resp.status_code == 200:
+                break
+            if resp.status_code == 429 or resp.status_code >= 500:
+                print(f"  [voyage {resp.status_code}] retrying in {delay:.0f}s…", file=sys.stderr)
+                time.sleep(delay)
+                delay *= 2
+                continue
+            sys.exit(f"Voyage API error {resp.status_code}: {resp.text[:300]}")
+        else:
+            raise RuntimeError("Voyage API: gave up after retries")
+        data = sorted(resp.json()["data"], key=lambda d: d["index"])
+        out.extend(d["embedding"] for d in data)
+    if out and len(out[0]) != 1024:
+        sys.exit(f"Voyage model {model} returned dim {len(out[0])}, expected 1024 "
+                 "(definitions.embedding is vector(1024); pick a 1024-dim model).")
+    return out
+
+
 def data_dir() -> Path:
     """DATA_DIR from env (default ./data), resolved relative to the repo root."""
     raw = os.environ.get("DATA_DIR", "./data")

@@ -34,14 +34,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import data_dir, env  # noqa: E402
 from stage_b_extract import PRICING, cost_usd  # noqa: E402
 
-# 1024-dim (matches definitions.embedding). mxbai is ~0.64 GB vs bge-large's
-# ~1.2 GB: bge-large's fp32 weights spike past 2 GB during onnxruntime's graph
-# optimization and OOM-killed the 2 GB worker at load; this fits with headroom
-# and downloads faster. Same dimension, so no migration. NOTE: DEFAULT_THRESHOLD
+# Embeddings come from the Voyage hosted API (see common.voyage_embed), which
+# returns 1024-dim vectors matching definitions.embedding. NOTE: DEFAULT_THRESHOLD
 # below was calibrated on bge-large distances; revisit if clustering granularity
-# looks off with this model.
-EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
-EMBED_BATCH = 8  # cap embedding batch to bound peak memory (see embed_definitions)
+# looks off with Voyage vectors.
 # Cosine-distance cutoff, calibrated on the "attention" corpus: all definitions
 # are semantically close (they are all "attention"), so the separating structure
 # is fine. Soft-alignment and self-attention cores sit ~0.16 apart, but a bridge
@@ -63,8 +59,12 @@ ORDER BY p.year NULLS LAST, p.arxiv_id
 
 
 def embed_definitions(conn, rows, force: bool) -> np.ndarray:
-    """Return an (n, 1024) matrix; embed+store any definition missing a vector."""
-    from fastembed import TextEmbedding
+    """Return an (n, 1024) matrix; embed+store any definition missing a vector.
+
+    Embeddings come from the Voyage hosted API (no local model to load or
+    download), which is what the vector(1024) column was designed for.
+    """
+    from common import voyage_embed
 
     to_embed = [i for i, r in enumerate(rows) if force or r[5] is None]
     vectors: list[np.ndarray | None] = [None] * len(rows)
@@ -75,14 +75,8 @@ def embed_definitions(conn, rows, force: bool) -> np.ndarray:
             vectors[i] = np.fromstring(r[5].strip("[]"), sep=",")
 
     if to_embed:
-        print(f"  embedding {len(to_embed)} definition(s) with {EMBED_MODEL}…")
-        # Cache under DATA_DIR: persistent-disk friendly (see corpus_select).
-        # batch_size caps peak memory: the default (256) allocates activations
-        # for the whole batch and spikes multiple GB, OOM-killing a small worker.
-        # See corpus_select for the measurement. bge-large's own ~1.3 GB weights
-        # dominate here, but the batch cap removes the multi-GB activation spike.
-        model = TextEmbedding(EMBED_MODEL, cache_dir=str(data_dir() / "models"), threads=1)
-        new = list(model.embed([rows[i][4] for i in to_embed], batch_size=EMBED_BATCH))
+        print(f"  embedding {len(to_embed)} definition(s) via Voyage…")
+        new = voyage_embed([rows[i][4] for i in to_embed], input_type="document")
         for i, vec in zip(to_embed, new):
             vectors[i] = np.asarray(vec, dtype=float)
             vec_str = "[" + ",".join(f"{x:.6f}" for x in vectors[i]) + "]"

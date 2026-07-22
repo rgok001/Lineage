@@ -38,9 +38,6 @@ WORK_FIELDS = ("id,display_name,publication_year,cited_by_count,referenced_works
                "locations,abstract_inverted_index")
 REQUEST_PAUSE_S = 0.15  # stay well under polite-pool limits
 
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"
-EMBED_BATCH = 8  # cap embedding batch to bound peak memory (see relevance_scores)
-BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 # Keep the top-K seeds by relevance rather than applying an absolute cosine
 # cutoff: raw similarity shifts with query phrasing and model, so a fixed number
 # is brittle. Measured on "attention": junk seeds ~0.33-0.40, median ~0.46, and
@@ -174,23 +171,17 @@ def abstract_of(work: dict) -> str:
 def relevance_scores(concept: str, works: list[dict]) -> list[float]:
     """Cosine similarity of each work's title+abstract to the concept.
 
-    Local model on purpose: Stage A must stay free — nothing is paid for before
-    the corpus is chosen. These embeddings are ephemeral (the stored vector(1024)
-    definition embeddings in Stage C are a separate, higher-quality model).
+    Embeddings come from the Voyage hosted API (no local model), so the concept
+    is embedded as a "query" and the papers as "documents". Stage A now costs a
+    few cents of embedding calls rather than being strictly free, but the corpus
+    is still chosen before any LLM spend.
     """
     import numpy as np
-    from fastembed import TextEmbedding
+    from common import voyage_embed
 
     docs = [f"{w.get('display_name') or ''}. {abstract_of(w)}"[:2000] for w in works]
-    # Cache under DATA_DIR so a deployed worker's persistent disk keeps the
-    # model between restarts (the default cache is a temp dir).
-    # batch_size caps peak memory. fastembed defaults to 256 and allocates the
-    # transformer's activations for the whole batch at once, which spikes to
-    # ~2.4 GB regardless of model size and OOM-kills a small worker. batch_size=8
-    # bounds it to ~340 MB (measured); threads=1 avoids extra onnxruntime arenas.
-    model = TextEmbedding(EMBED_MODEL, cache_dir=str(data_dir() / "models"), threads=1)
-    vecs = np.array(list(model.embed([BGE_QUERY_PREFIX + concept] + docs, batch_size=EMBED_BATCH)))
-    q, d = vecs[0], vecs[1:]
+    q = np.asarray(voyage_embed([concept], input_type="query")[0])
+    d = np.asarray(voyage_embed(docs, input_type="document"))
     q = q / np.linalg.norm(q)
     d = d / np.linalg.norm(d, axis=1, keepdims=True)
     return (d @ q).tolist()
@@ -251,7 +242,7 @@ def main() -> None:
     # via citations from the cleaned seeds instead.
     rel_by_id: dict[str, float] = {}
     if not args.no_relevance_filter:
-        print(f"Scoring seed relevance to \"{rel_query}\" ({EMBED_MODEL}, local)…")
+        print(f"Scoring seed relevance to \"{rel_query}\" (Voyage embeddings)…")
         scores = relevance_scores(rel_query, seeds)
         rel_by_id = {w["id"]: s for w, s in zip(seeds, scores)}
         by_rel = sorted(seeds, key=lambda w: rel_by_id[w["id"]], reverse=True)
