@@ -198,19 +198,25 @@ def main() -> None:
     text_root.mkdir(parents=True, exist_ok=True)
     conn = psycopg.connect(env("DATABASE_URL"))
 
-    where = "raw_path IS NOT NULL" + ("" if args.force else " AND extracted_text_path IS NULL")
-    sql = f"SELECT arxiv_id, source_format, raw_path, title FROM papers WHERE {where} ORDER BY arxiv_id"
+    sql = ("SELECT arxiv_id, source_format, raw_path, extracted_text_path, title "
+           "FROM papers WHERE raw_path IS NOT NULL ORDER BY arxiv_id")
     rows = conn.execute(sql).fetchall()
     if args.limit:
         rows = rows[:args.limit]
 
     if not rows:
-        print("Nothing to extract (all fetched papers already have text; use --force to redo).")
+        print("Nothing to extract (no fetched papers).")
         return
 
-    done = failed = 0
+    done = failed = skipped = 0
     flagged: list[tuple[str, float]] = []
-    for i, (aid, fmt, raw_path, title) in enumerate(rows, 1):
+    for i, (aid, fmt, raw_path, etpath, title) in enumerate(rows, 1):
+        # Skip only if already extracted AND the text file is on THIS disk. The
+        # DB is shared across machines but files are per-disk, so a paper marked
+        # extracted on another worker still needs its text produced here.
+        if not args.force and etpath and (data_dir() / etpath).exists():
+            skipped += 1
+            continue
         raw = data_dir() / raw_path  # paths are stored relative to DATA_DIR
         if not raw.exists():
             print(f"[{i}/{len(rows)}] {aid}: raw file missing ({raw_path}), skipping")
@@ -245,7 +251,7 @@ def main() -> None:
         done += 1
 
     conn.close()
-    print(f"\nDone: {done} extracted, {failed} failed.")
+    print(f"\nDone: {done} extracted, {skipped} already present, {failed} failed.")
     if flagged:
         print(f"\n⚠ {len(flagged)} paper(s) below the {TITLE_MATCH_MIN:.0%} title-match "
               f"threshold — text and metadata likely describe different papers:")
