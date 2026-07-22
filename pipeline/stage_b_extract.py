@@ -34,7 +34,7 @@ import psycopg
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import REPO_ROOT, env  # noqa: E402
+from common import REPO_ROOT, data_dir, env  # noqa: E402
 
 DEFAULT_MODEL = "claude-opus-4-8"
 
@@ -208,7 +208,14 @@ def main() -> None:
     # ---- estimate -----------------------------------------------------------
     prompts = []
     for pid, aid, title, tpath in rows:
-        text = (REPO_ROOT / tpath).read_text(encoding="utf-8")[:args.max_chars]
+        # The DB is shared across machines but the files are per-disk: a paper
+        # extracted on another worker is flagged extracted here, yet its text
+        # file may be absent on this disk. Skip rather than crash the whole run.
+        tfile = data_dir() / tpath
+        if not tfile.exists():
+            print(f"    ⚠ text missing for {aid} on this disk ({tpath}); skipping")
+            continue
+        text = tfile.read_text(encoding="utf-8")[:args.max_chars]
         prompts.append((pid, aid, title, USER.format(concept=args.concept, sense=sense, text=text)))
 
     total_in = sum(estimate_tokens(client, args.model, SYSTEM, u) for _, _, _, u in prompts)
@@ -264,7 +271,7 @@ def main() -> None:
         # occur in the text we sent, or it is not evidence.
         verified = False
         if ex.defines_concept and ex.verbatim_quote:
-            full = (REPO_ROOT / text_path_by_id[aid]).read_text(encoding="utf-8")
+            full = (data_dir() / text_path_by_id[aid]).read_text(encoding="utf-8")
             verified = ex.verbatim_quote in full
 
         # Always record the verdict — "does not define it" is a finding worth

@@ -53,7 +53,7 @@ def main() -> None:
         if not quote or not path:
             return False
         if path not in text_cache:
-            text_cache[path] = (REPO_ROOT / path).read_text(encoding="utf-8")
+            text_cache[path] = (data_dir() / path).read_text(encoding="utf-8")
         return quote in text_cache[path]
 
     print(f'Grounding {len(edges)} edges for "{args.concept}" (prompt {prompt_version})…\n')

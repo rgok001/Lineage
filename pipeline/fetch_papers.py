@@ -130,7 +130,11 @@ def main() -> None:
         content, source_format, ext = result
         out = raw_root / f"{stem}.{ext}"
         out.write_bytes(content)
-        rel_path = str(out.relative_to(REPO_ROOT)).replace("\\", "/")
+        # Store paths relative to DATA_DIR, not the repo: on a deployed worker
+        # DATA_DIR is a separate mounted disk (e.g. /data) outside the repo, so
+        # relative_to(REPO_ROOT) raised ValueError. DATA_DIR always holds the
+        # file, and every reader resolves via data_dir(), so this stays portable.
+        rel_path = str(out.relative_to(data_dir())).replace("\\", "/")
 
         conn.execute(UPSERT, {
             "arxiv_id": aid,

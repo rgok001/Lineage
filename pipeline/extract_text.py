@@ -211,7 +211,7 @@ def main() -> None:
     done = failed = 0
     flagged: list[tuple[str, float]] = []
     for i, (aid, fmt, raw_path, title) in enumerate(rows, 1):
-        raw = REPO_ROOT / raw_path
+        raw = data_dir() / raw_path  # paths are stored relative to DATA_DIR
         if not raw.exists():
             print(f"[{i}/{len(rows)}] {aid}: raw file missing ({raw_path}), skipping")
             failed += 1
@@ -230,7 +230,7 @@ def main() -> None:
 
         out = text_root / f"{aid.replace('/', '_')}.txt"
         out.write_text(text, encoding="utf-8")
-        rel = str(out.relative_to(REPO_ROOT)).replace("\\", "/")
+        rel = str(out.relative_to(data_dir())).replace("\\", "/")
         score = title_match(title, text)
         conn.execute(
             "UPDATE papers SET extracted_text_path=%s, text_title_match=%s WHERE arxiv_id=%s",
