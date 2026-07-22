@@ -17,7 +17,11 @@ services:
   - type: worker
     name: lineage-worker
     runtime: python
-    plan: starter
+    # 'standard' = 2 GB RAM / 1 CPU. The pipeline peaks ~1.5 GB loading the
+    # bge-large embedding model in Stage C, so the 512 MB 'starter' OOM-kills the
+    # worker mid-run. For a blueprint-managed service this line is authoritative:
+    # changing the plan in the dashboard alone gets reverted on the next sync.
+    plan: standard
     buildCommand: pip install -r pipeline/requirements.txt
     startCommand: python worker/run.py
     disk:
