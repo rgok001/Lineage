@@ -35,6 +35,7 @@ from common import data_dir, env  # noqa: E402
 from stage_b_extract import PRICING, cost_usd  # noqa: E402
 
 EMBED_MODEL = "BAAI/bge-large-en-v1.5"  # 1024-dim, matches definitions.embedding
+EMBED_BATCH = 8  # cap embedding batch to bound peak memory (see embed_definitions)
 # Cosine-distance cutoff, calibrated on the "attention" corpus: all definitions
 # are semantically close (they are all "attention"), so the separating structure
 # is fine. Soft-alignment and self-attention cores sit ~0.16 apart, but a bridge
@@ -70,8 +71,12 @@ def embed_definitions(conn, rows, force: bool) -> np.ndarray:
     if to_embed:
         print(f"  embedding {len(to_embed)} definition(s) with {EMBED_MODEL}…")
         # Cache under DATA_DIR: persistent-disk friendly (see corpus_select).
-        model = TextEmbedding(EMBED_MODEL, cache_dir=str(data_dir() / "models"))
-        new = list(model.embed([rows[i][4] for i in to_embed]))
+        # batch_size caps peak memory: the default (256) allocates activations
+        # for the whole batch and spikes multiple GB, OOM-killing a small worker.
+        # See corpus_select for the measurement. bge-large's own ~1.3 GB weights
+        # dominate here, but the batch cap removes the multi-GB activation spike.
+        model = TextEmbedding(EMBED_MODEL, cache_dir=str(data_dir() / "models"), threads=1)
+        new = list(model.embed([rows[i][4] for i in to_embed], batch_size=EMBED_BATCH))
         for i, vec in zip(to_embed, new):
             vectors[i] = np.asarray(vec, dtype=float)
             vec_str = "[" + ",".join(f"{x:.6f}" for x in vectors[i]) + "]"

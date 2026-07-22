@@ -39,6 +39,7 @@ WORK_FIELDS = ("id,display_name,publication_year,cited_by_count,referenced_works
 REQUEST_PAUSE_S = 0.15  # stay well under polite-pool limits
 
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+EMBED_BATCH = 8  # cap embedding batch to bound peak memory (see relevance_scores)
 BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 # Keep the top-K seeds by relevance rather than applying an absolute cosine
 # cutoff: raw similarity shifts with query phrasing and model, so a fixed number
@@ -183,8 +184,12 @@ def relevance_scores(concept: str, works: list[dict]) -> list[float]:
     docs = [f"{w.get('display_name') or ''}. {abstract_of(w)}"[:2000] for w in works]
     # Cache under DATA_DIR so a deployed worker's persistent disk keeps the
     # model between restarts (the default cache is a temp dir).
-    model = TextEmbedding(EMBED_MODEL, cache_dir=str(data_dir() / "models"))
-    vecs = np.array(list(model.embed([BGE_QUERY_PREFIX + concept] + docs)))
+    # batch_size caps peak memory. fastembed defaults to 256 and allocates the
+    # transformer's activations for the whole batch at once, which spikes to
+    # ~2.4 GB regardless of model size and OOM-kills a small worker. batch_size=8
+    # bounds it to ~340 MB (measured); threads=1 avoids extra onnxruntime arenas.
+    model = TextEmbedding(EMBED_MODEL, cache_dir=str(data_dir() / "models"), threads=1)
+    vecs = np.array(list(model.embed([BGE_QUERY_PREFIX + concept] + docs, batch_size=EMBED_BATCH)))
     q, d = vecs[0], vecs[1:]
     q = q / np.linalg.norm(q)
     d = d / np.linalg.norm(d, axis=1, keepdims=True)
