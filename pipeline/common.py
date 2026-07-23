@@ -62,13 +62,20 @@ def get_json(url: str, params: dict | None = None, max_retries: int = 5) -> dict
 
 
 def get_bytes(url: str, max_retries: int = 5) -> tuple[bytes, str] | None:
-    """Binary GET with backoff. Returns (content, content_type), or None on 404."""
+    """Binary GET with backoff. Returns (content, content_type), or None when the
+    resource simply isn't available to us.
+
+    403 counts as unavailable, not as an error: arXiv refuses source downloads
+    for some papers (withheld or licence-restricted). Raising there killed a
+    whole 150-paper fetch over one paper; the caller treats None as "no source",
+    falls back to the PDF, and moves on.
+    """
     delay = 2.0
     for attempt in range(max_retries):
         resp = session().get(url, timeout=120)
         if resp.status_code == 200:
             return resp.content, resp.headers.get("Content-Type", "")
-        if resp.status_code == 404:
+        if resp.status_code in (403, 404, 410):
             return None
         if resp.status_code in (429, 500, 502, 503, 504):
             retry_after = resp.headers.get("Retry-After")

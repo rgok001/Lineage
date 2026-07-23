@@ -22,6 +22,7 @@ import json
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -108,28 +109,83 @@ class Progress:
         self.conn.commit()
 
 
+class Heartbeat:
+    """Keeps trace_requests.updated_at fresh while a stage runs, so the
+    heartbeat means "worker process alive", not "stdout active".
+
+    Progress only flushes updated_at when a stage prints a newline-terminated
+    line, but stages go silent for minutes at a time: the Voyage embedding batch
+    in Stage C, a slow LLM call, or a network wait during paper fetching can all
+    run with nothing on stdout. During those stretches updated_at would freeze —
+    tripping the UI's stall warning and eventually the stale-row sweeper on a
+    worker that is perfectly healthy. A background thread bumps updated_at on a
+    fixed interval regardless of stdout, so the heartbeat only goes cold when
+    the worker is genuinely dead.
+
+    It uses its OWN connection: a psycopg connection is not safe to share across
+    threads, and the main thread is busy streaming stdout through Progress on
+    the job connection.
+    """
+
+    def __init__(self, job_id: int, interval: float = 30.0):
+        self.job_id, self.interval = job_id, interval
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "Heartbeat":
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def _run(self) -> None:
+        conn = None
+        try:
+            conn = connect()
+            # wait() returns True when stopped, False on timeout: tick, then
+            # exit promptly the moment the stage loop is done.
+            while not self._stop.wait(self.interval):
+                try:
+                    # Guarded on status so a late tick can never resurrect a row
+                    # that already finished or failed on the main connection.
+                    conn.execute(
+                        "UPDATE trace_requests SET updated_at = now() "
+                        "WHERE id = %s AND status = 'running'", (self.job_id,))
+                    conn.commit()
+                except Exception as e:  # a cold heartbeat should surface, not crash
+                    print(f"[heartbeat] job {self.job_id}: {type(e).__name__}: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
+
+
 def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: int,
             field: str, gloss: str | None) -> None:
     stages = stages_for(concept, corpus_limit, field, gloss)
     prog = Progress(conn, job_id, len(stages))
     tail: list[str] = []  # last lines, kept for the error report on failure
 
-    for no, (name, cmd) in enumerate(stages, start=1):
-        prog.start_stage(no, name)
-        print(f"[job {job_id}] stage {no}/{len(stages)}: {name}")
-        proc = subprocess.Popen(
-            cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace")
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            print(f"    {line.rstrip()}")
-            tail.append(line.rstrip())
-            del tail[:-30]
-            if line.strip():
-                prog.line(line)
-        rc = proc.wait()
-        if rc != 0:
-            raise StageFailed(f"stage '{name}' exited with code {rc}", tail)
+    with Heartbeat(job_id):
+        for no, (name, cmd) in enumerate(stages, start=1):
+            prog.start_stage(no, name)
+            print(f"[job {job_id}] stage {no}/{len(stages)}: {name}")
+            proc = subprocess.Popen(
+                cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace")
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                print(f"    {line.rstrip()}")
+                tail.append(line.rstrip())
+                del tail[:-30]
+                if line.strip():
+                    prog.line(line)
+            rc = proc.wait()
+            if rc != 0:
+                raise StageFailed(f"stage '{name}' exited with code {rc}", tail)
 
     # Stage E created/updated the genealogy row for (concept, prompt_version).
     pv = env("PROMPT_VERSION", "v2")

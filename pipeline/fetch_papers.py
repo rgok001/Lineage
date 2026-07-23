@@ -121,7 +121,15 @@ def main() -> None:
             continue
 
         print(f"[{i}/{len(papers)}] {aid}: fetching…")
-        result = fetch_source(aid)
+        # One unfetchable paper must never abort the corpus. arXiv can refuse,
+        # rate-limit, time out or serve something broken for a single id; log it,
+        # count it, keep going. The corpus is large enough to absorb a few losses.
+        try:
+            result = fetch_source(aid)
+        except Exception as e:
+            print(f"    ✗ fetch failed ({type(e).__name__}: {str(e)[:120]}), skipping")
+            failed += 1
+            continue
         if result is None:
             print(f"    ✗ no source or PDF available")
             failed += 1

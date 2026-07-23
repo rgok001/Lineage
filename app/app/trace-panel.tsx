@@ -171,7 +171,11 @@ export default function TracePanel({
 
 function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewMs: number }) {
   const p = r.progress ?? {};
-  const heartbeatStale = r.status === "running" && elapsedS(r.updated_at, skewMs) > 150;
+  // The worker heartbeats every ~30s while alive (worker/run.py Heartbeat) and
+  // the stale-row sweeper gives up at 600s. Warn only well past a few missed
+  // heartbeats, so a silent-but-healthy stage never trips this — but still
+  // ahead of the sweeper, so a genuinely dead worker surfaces here first.
+  const heartbeatStale = r.status === "running" && elapsedS(r.updated_at, skewMs) > 240;
 
   return (
     <div style={{
@@ -264,7 +268,8 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
           )}
           {heartbeatStale && (
             <div style={{ fontSize: ".72rem", color: "var(--inferred)", marginTop: ".35rem" }}>
-              Progress has stalled. This trace may need to be restarted.
+              No progress for a few minutes. The trace is usually still working
+              through a quiet stage; if it stays here it may need a restart.
             </div>
           )}
         </div>
