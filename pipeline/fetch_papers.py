@@ -18,6 +18,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -44,6 +45,35 @@ def throttled_get(url: str) -> tuple[bytes, str] | None:
         return get_bytes(url)
     finally:
         _last_request = time.monotonic()
+
+
+ARXIV_NEW_RE = re.compile(r"^(\d{2})(\d{2})\.\d{4,5}$")          # 1706.03762
+ARXIV_OLD_RE = re.compile(r"^[a-z\-\.]+/(\d{2})(\d{2})\d{3}$")   # cs/0701907
+
+
+def arxiv_year(arxiv_id: str) -> int | None:
+    """Submission year encoded in the arXiv id itself (YYMM...)."""
+    m = ARXIV_NEW_RE.match(arxiv_id) or ARXIV_OLD_RE.match(arxiv_id)
+    if not m:
+        return None
+    yy = int(m.group(1))
+    return 1900 + yy if yy >= 91 else 2000 + yy
+
+
+def earliest_year(arxiv_id: str, openalex_year: int | None) -> int | None:
+    """The earliest credible date for a paper.
+
+    A genealogy is ordered by when an idea first appeared publicly, so the
+    earlier of the two dates we hold is both the right semantics and the safer
+    one. OpenAlex metadata is sometimes wrong in the *forward* direction (it
+    dated "Attention Is All You Need" to 2025), and a future date corrupts the
+    whole chronology. Taking the minimum neutralises that, while still honouring
+    genuinely old work posted to arXiv years later, where OpenAlex holds the
+    true, earlier date and the arXiv id does not.
+    """
+    ay = arxiv_year(arxiv_id)
+    candidates = [y for y in (ay, openalex_year) if y]
+    return min(candidates) if candidates else None
 
 
 def detect_format(content: bytes) -> str | None:
@@ -148,7 +178,7 @@ def main() -> None:
             "arxiv_id": aid,
             "openalex_id": p.get("openalex_id"),
             "title": p.get("title"),
-            "year": p.get("year"),
+            "year": earliest_year(aid, p.get("year")),
             "cited_by_count": p.get("cited_by_count") or 0,
             "source_format": source_format,
             "raw_path": rel_path,
