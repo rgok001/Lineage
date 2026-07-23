@@ -132,7 +132,8 @@ concept, so a polysemous word ("kernel") retrieves the intended sense first;
 the SEARCH still uses the bare concept for recall. Wide word, tight meaning.
 Seeds come from OpenAlex relevance search (an OpenAlex "concept" mode exists
 but the default is search: OpenAlex has no ML "attention" concept). Seeds are
-filtered by a local embedding relevance check (fastembed bge-small, free) with
+filtered by an embedding relevance check (Voyage hosted API; the concept is
+embedded as a "query", papers as "documents") with
 **top-K retention, never an absolute cosine cutoff**: a 0.62 threshold once
 deleted "Attention Is All You Need", which scores 0.567 (rank 21 of 400)
 against the query "attention". The corpus then expands one hop through
@@ -162,9 +163,12 @@ every extracted paper in the shared papers table, which is correct for
 single-concept research use and wrong for the worker (section 10, incident 3).
 
 **Stage C: clustering** (`stage_c_cluster.py <concept>`).
-Embeds definitions with bge-large-en-v1.5 (1024-dim, local, free; cached in
+Embeds definitions via the Voyage hosted API (1024-dim, cached in
 `definitions.embedding`), then agglomerative clustering with cosine distance
-and no fixed k. `DEFAULT_THRESHOLD = 0.16` was calibrated on real distances:
+and no fixed k. `DEFAULT_THRESHOLD = 0.16` was calibrated on bge-large
+distances back when embeddings were local, so it may want re-tuning for Voyage
+vectors; clustering granularity is a curatable draft either way.
+The original calibration:
 the soft-alignment and self-attention cores sit ~0.16 apart, and a bridge pair
 (Show-Attend-Tell / Transformer) is 0.161, so 0.19 would merge the two senses
 the product exists to distinguish. 0.16 over-splits weak singletons on
@@ -234,11 +238,16 @@ knowledge condensed:
 - **Completion.** Looks up the genealogy Stage E wrote for
   (concept, PROMPT_VERSION), stamps the job `complete` with `genealogy_id`.
 
+- **Heartbeat.** A background thread bumps `updated_at` every ~30 s while a
+  stage runs, on its own connection. Without it the heartbeat only moved when a
+  stage printed a line, so genuinely silent stretches (an embedding batch, a
+  slow LLM call) looked like a stall to both the UI and the sweeper. The
+  heartbeat now means "worker alive", not "stdout active".
+
 Deployment is declared in `render.yaml`: a Render Background Worker plus a
-5 GB persistent disk at `/data` holding `DATA_DIR` and the embedding model
-cache. Both `TextEmbedding` call sites pass `cache_dir` under `DATA_DIR`
-because fastembed's default cache is a temp directory, which on a deployed box
-means re-downloading ~1.3 GB of models every restart.
+5 GB persistent disk at `/data` for `DATA_DIR` (fetched papers, extracted text,
+exports). Since embeddings moved to the Voyage API the worker loads no models,
+so its footprint is ~250 MB and the disk holds only data.
 
 ---
 
@@ -339,6 +348,8 @@ separate GitHub OAuth apps.
 | `DATABASE_URL` | root `.env`, worker/Render | Neon **direct** endpoint (no `-pooler`): pipeline and worker hold real connections |
 | `DATABASE_URL` | `app/.env.local`, Vercel | Neon **pooled** endpoint (`-pooler` host): serverless wants per-query fetches |
 | `ANTHROPIC_API_KEY` | root `.env`, Render | pays for stages B, C labels, D |
+| `VOYAGE_API_KEY` | root `.env`, Render | embeddings for Stage A relevance and Stage C clustering. **Required**; the pipeline fails fast without it |
+| `VOYAGE_MODEL` | optional | defaults to `voyage-3` (1024-dim, matches the column) |
 | `LLM_MODEL` | root `.env` | `claude-sonnet-5` (see decision record) |
 | `PROMPT_VERSION` | root `.env` | `v2`; part of the Stage B cache key |
 | `TRACE_SPEND_CAP_USD` | root `.env` | 15 |
@@ -412,6 +423,19 @@ The why behind the load-bearing choices, in one place:
     confirm() decorates the button, not the endpoint.
 12. **Already-traced concepts refused for everyone**: protects curated maps
     from silent Stage C overwrite; deletion is the deliberate re-open path.
+13. **Embeddings via a hosted API, not local models** (2026-07-23). Running
+    1024-dim embedding models in-process is what made the small worker
+    unrunnable: onnxruntime spikes past 2 GB building its optimised copy at
+    load, and the 1+ GB model download stalled on both Render and a laptop.
+    Voyage removes the model from the process entirely (~250 MB footprint,
+    nothing to download), which is what the `vector(1024)` schema was designed
+    for. The lesson generalises: on small deployments, call an embedding API
+    rather than hosting the model.
+14. **Robustness at every external boundary.** Upstream sources fail
+    individually and must not be fatal: arXiv 403s a minority of papers, the
+    shared DB can disagree with a per-machine disk, a stage can go silent for
+    minutes. Each is now skipped, guarded or heartbeat-covered rather than
+    aborting a whole run.
 
 ---
 
@@ -448,6 +472,23 @@ Recorded because the system's shape is partly their consequence.
    spanned five hours and every clock was correct. The DB-time design (#10
    above) was kept anyway because it makes the heartbeat check robust against
    viewer clocks that really are wrong.
+7. **The first cloud trace: seven deployment-only bugs (2026-07-21..23).**
+   Nothing here could surface locally, where `DATA_DIR` sits inside the repo
+   and RAM is plentiful. In order: (a) unbounded embedding batch — fastembed
+   defaults to 256 and allocated ~2.4 GB of activations for a 130 MB model,
+   OOM-killing the worker; capped to 8 (measured 2440 MB -> 342 MB). (b) Paths
+   stored relative to the repo root broke when `DATA_DIR` became a separate
+   mounted disk. (c) A shared DB with per-machine disks: papers flagged
+   extracted elsewhere had no local text file. (d) Those same papers were
+   silently dropped from the corpus until extraction learned to re-run on a
+   missing file. (e) An invalid `ANTHROPIC_API_KEY` on the worker. (f) The
+   1024-dim model itself could not load in 2 GB — the fix was not a bigger box
+   but removing local models entirely (decision 13). (g) A single arXiv 403
+   aborted a 150-paper fetch. **Lesson: a first real cloud run is a test in
+   its own right; local success proves very little about a deployed
+   environment.** Two wrong diagnoses along the way (blaming instance size,
+   then model file size) were corrected only by measuring rather than
+   reasoning — the batch-size measurement in fresh processes was decisive.
 
 ---
 
