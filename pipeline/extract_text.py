@@ -196,7 +196,7 @@ def main() -> None:
 
     text_root = data_dir() / "text"
     text_root.mkdir(parents=True, exist_ok=True)
-    conn = psycopg.connect(env("DATABASE_URL"))
+    conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
 
     sql = ("SELECT arxiv_id, source_format, raw_path, extracted_text_path, title "
            "FROM papers WHERE raw_path IS NOT NULL ORDER BY arxiv_id")

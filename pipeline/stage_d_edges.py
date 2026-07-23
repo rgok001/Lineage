@@ -106,7 +106,7 @@ def main() -> None:
 
     prompt_version = env("PROMPT_VERSION", "v1")
     cap = float(env("TRACE_SPEND_CAP_USD", "10"))
-    conn = psycopg.connect(env("DATABASE_URL"))
+    conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
 
     gen = conn.execute("SELECT id, nodes FROM genealogies WHERE concept=%s AND prompt_version=%s",
                        (args.concept, prompt_version)).fetchone()
@@ -160,6 +160,15 @@ def main() -> None:
         sys.exit("ANTHROPIC_API_KEY not set — needed to classify edges.")
     import anthropic
     client = anthropic.Anthropic()
+
+    # Reconnect before writing. Every read this stage needs is already in memory,
+    # and fetching references from Semantic Scholar can take ten minutes or more
+    # under rate limiting. Holding the original connection across that gap left a
+    # transaction idle and Postgres terminated it (idle-in-transaction timeout),
+    # which surfaced here at the first write. A long external phase should never
+    # straddle a database connection.
+    conn.close()
+    conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
 
     conn.execute("DELETE FROM edges WHERE genealogy_id=%s", (gen_id,))
     spend = 0.0

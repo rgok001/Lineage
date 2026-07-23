@@ -146,7 +146,7 @@ def main() -> None:
     args = ap.parse_args()
 
     prompt_version = env("PROMPT_VERSION", "v1")
-    conn = psycopg.connect(env("DATABASE_URL"))
+    conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
     rows = conn.execute(SELECT_DEFS, {"concept": args.concept,
                                       "prompt_version": prompt_version}).fetchall()
     if len(rows) < 2:

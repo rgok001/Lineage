@@ -187,7 +187,7 @@ def main() -> None:
 
     prompt_version = env("PROMPT_VERSION", "v1")
     cap = float(env("TRACE_SPEND_CAP_USD", "10"))
-    conn = psycopg.connect(env("DATABASE_URL"))
+    conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
     params["prompt_version"] = prompt_version
     rows = conn.execute(SELECT_PAPERS.format(corpus_filter=corpus_filter),
                         params).fetchall()

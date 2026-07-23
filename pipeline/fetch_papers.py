@@ -108,7 +108,7 @@ def main() -> None:
         return
 
     raw_root.mkdir(parents=True, exist_ok=True)
-    conn = psycopg.connect(env("DATABASE_URL"))
+    conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
 
     fetched = skipped = failed = 0
     for i, p in enumerate(papers, 1):
