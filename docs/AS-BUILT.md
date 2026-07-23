@@ -474,7 +474,7 @@ Recorded because the system's shape is partly their consequence.
    viewer clocks that really are wrong.
 7. **The first cloud trace: seven deployment-only bugs (2026-07-21..23).**
    Nothing here could surface locally, where `DATA_DIR` sits inside the repo
-   and RAM is plentiful. In order: (a) unbounded embedding batch — fastembed
+   and RAM is plentiful. In order: (a) unbounded embedding batch: fastembed
    defaults to 256 and allocated ~2.4 GB of activations for a 130 MB model,
    OOM-killing the worker; capped to 8 (measured 2440 MB -> 342 MB). (b) Paths
    stored relative to the repo root broke when `DATA_DIR` became a separate
@@ -482,13 +482,13 @@ Recorded because the system's shape is partly their consequence.
    extracted elsewhere had no local text file. (d) Those same papers were
    silently dropped from the corpus until extraction learned to re-run on a
    missing file. (e) An invalid `ANTHROPIC_API_KEY` on the worker. (f) The
-   1024-dim model itself could not load in 2 GB — the fix was not a bigger box
+   1024-dim model itself could not load in 2 GB, and the fix was not a bigger box
    but removing local models entirely (decision 13). (g) A single arXiv 403
    aborted a 150-paper fetch. **Lesson: a first real cloud run is a test in
    its own right; local success proves very little about a deployed
    environment.** Two wrong diagnoses along the way (blaming instance size,
    then model file size) were corrected only by measuring rather than
-   reasoning — the batch-size measurement in fresh processes was decisive.
+   reasoning; the batch-size measurement in fresh processes was decisive.
 
 ---
 
