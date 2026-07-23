@@ -81,10 +81,18 @@ def fetch_references(arxiv_id: str) -> list[dict]:
     f = cache / f"{arxiv_id.replace('/', '_')}.json"
     if f.exists():
         return json.loads(f.read_text(encoding="utf-8"))
-    data = get_json(f"{S2}/paper/arXiv:{arxiv_id}/references", {
-        "fields": "contexts,intents,isInfluential,title,externalIds", "limit": 1000,
-    })
-    refs = data.get("data", [])
+    # Semantic Scholar does not hold every arXiv paper. A 404 means "no citation
+    # data for this one", not a broken run: treat it as an empty reference list,
+    # cache that, and carry on. Any transport error is likewise per-paper, so one
+    # missing id cannot abort edge classification for the whole genealogy.
+    try:
+        data = get_json(f"{S2}/paper/arXiv:{arxiv_id}/references", {
+            "fields": "contexts,intents,isInfluential,title,externalIds", "limit": 1000,
+        })
+        refs = data.get("data", [])
+    except Exception as e:
+        print(f"    ⚠ no S2 references for {arxiv_id} ({type(e).__name__}); treating as none")
+        refs = []
     f.write_text(json.dumps(refs), encoding="utf-8")
     return refs
 

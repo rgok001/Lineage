@@ -35,18 +35,26 @@ from common import data_dir, env  # noqa: E402
 from stage_b_extract import PRICING, cost_usd  # noqa: E402
 
 # Embeddings come from the Voyage hosted API (see common.voyage_embed), which
-# returns 1024-dim vectors matching definitions.embedding. NOTE: DEFAULT_THRESHOLD
-# below was calibrated on bge-large distances; revisit if clustering granularity
-# looks off with Voyage vectors.
-# Cosine-distance cutoff, calibrated on the "attention" corpus: all definitions
-# are semantically close (they are all "attention"), so the separating structure
-# is fine. Soft-alignment and self-attention cores sit ~0.16 apart, but a bridge
-# pair (Show-Attend-Tell / Transformer) is 0.161 — so >=0.19 merges the two
-# senses the genealogy exists to distinguish. 0.16 keeps them apart; it also
-# over-splits weak singletons, which is the safe direction: merging nodes is a
-# one-click workbench action, un-merging a conflated node is not. This produces a
-# DRAFT clustering for human curation, per the hand-curated-showcase design.
-DEFAULT_THRESHOLD = 0.16
+# returns 1024-dim vectors matching definitions.embedding.
+# Cosine-distance cutoff, RE-CALIBRATED for Voyage vectors on the 134-definition
+# "embedding" corpus. Absolute distances are model-specific: the previous value
+# of 0.16 was tuned for bge-large and sits at the 1st percentile of Voyage's
+# pairwise distances, so almost nothing merged (105 clusters, 87 of them
+# singletons). Measured Voyage distribution: p5 0.205, p25 0.273, median 0.318.
+#
+# Cluster counts and, more importantly, what they do to meaning:
+#   0.25 -> 41 clusters   still fragmentary
+#   0.28 -> 27 clusters   word / graph / recommender / knowledge-graph /
+#                         latent-code / kernel-mean senses all stay separate
+#   0.30 -> 20 clusters   merges graph-embedding with recommender-embedding,
+#                         two senses that should not be one node
+#   0.35 ->  8 clusters   collapses (largest holds 124 of 134)
+#
+# 0.28 is chosen because it is the loosest value that still keeps genuinely
+# distinct senses apart. It over-splits weak singletons, which is the safe
+# direction: merging nodes is a one-click workbench action, un-merging a
+# conflated node is not. This produces a DRAFT clustering for human curation.
+DEFAULT_THRESHOLD = 0.28
 LABEL_MODEL = "claude-sonnet-5"
 
 SELECT_DEFS = """
