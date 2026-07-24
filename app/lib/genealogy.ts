@@ -21,6 +21,8 @@ export type Edge = {
   target_paper: string;
   source_quote: string;
   target_quote: string;
+  rationale: string | null;
+  citation_context: string | null;
 };
 export type UserEdit = { op: string; detail: unknown; at: string; by?: string };
 export type Genealogy = {
@@ -78,7 +80,7 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
   const edges = (await sql`
     SELECT e.id, e.source_node, e.target_node, e.edge_type, e.confidence, e.verified,
            sp.arxiv_id AS source_paper, tp.arxiv_id AS target_paper,
-           e.source_quote, e.target_quote
+           e.source_quote, e.target_quote, e.rationale, e.citation_context
     FROM edges e
     JOIN papers sp ON sp.id = e.source_paper_id
     JOIN papers tp ON tp.id = e.target_paper_id

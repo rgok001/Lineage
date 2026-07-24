@@ -279,6 +279,11 @@ function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear
       </summary>
 
       <div style={{ borderTop: "1px solid var(--line)", padding: "1rem 1.1rem", background: "var(--paper)" }}>
+        <BasisCard color={color} rationale={e.rationale} citationContext={e.citation_context} />
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: ".64rem", textTransform: "uppercase",
+          letterSpacing: ".06em", color: "var(--ink-soft)", margin: ".1rem 0 .5rem" }}>
+          How each paper defines the concept
+        </div>
         <QuoteCard role="Earlier paper says" arxiv={e.source_paper} year={srcYear} quote={e.source_quote} />
         <div style={{ textAlign: "center", color, fontSize: "1.3rem", margin: ".2rem 0" }}>↓ {e.edge_type}</div>
         <QuoteCard role="Later paper says" arxiv={e.target_paper} year={dstYear} quote={e.target_quote} />
@@ -341,6 +346,46 @@ function PaperTag({ year, title, sub }: { year: number; title: string; sub: stri
       </span>
       <span style={{ fontSize: ".72rem", color: "var(--ink-soft)", fontStyle: "italic" }}>{sub}</span>
     </span>
+  );
+}
+
+/** The edge's BASIS: what the later paper did to the concept and how. The
+ *  rationale is the tool's one-sentence reading; the citation context is the
+ *  verbatim sentence where the later paper cites the earlier (Semantic Scholar,
+ *  not string-verified). Both are deliberately styled apart from the verified
+ *  QuoteCards below so neither is ever mistaken for a grounded quote. */
+function BasisCard({ color, rationale, citationContext }: {
+  color: string; rationale: string | null; citationContext: string | null;
+}) {
+  if (!rationale && !citationContext) return null;
+  return (
+    <div style={{ border: `1px solid ${color}`, borderRadius: 6, background: "var(--card)",
+      padding: ".85rem .95rem", marginBottom: ".9rem" }}>
+      <div style={{ fontFamily: "var(--font-mono)", fontSize: ".66rem", textTransform: "uppercase",
+        letterSpacing: ".06em", color, marginBottom: ".4rem" }}>
+        What the later paper did with the concept
+      </div>
+      {rationale && (
+        <p style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: ".98rem",
+          lineHeight: 1.55, color: "var(--ink)" }}>
+          {rationale}
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", color: "var(--ink-soft)",
+            marginLeft: ".45rem", whiteSpace: "nowrap" }}>— the tool’s reading</span>
+        </p>
+      )}
+      {citationContext && (
+        <div style={{ marginTop: rationale ? ".7rem" : 0, paddingTop: rationale ? ".7rem" : 0,
+          borderTop: rationale ? "1px dashed var(--line)" : "none" }}>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", color: "var(--ink-soft)", marginBottom: ".3rem" }}>
+            Verbatim · where the later paper cites the earlier · per Semantic Scholar, not string-verified
+          </div>
+          <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontStyle: "italic",
+            fontSize: ".9rem", lineHeight: 1.5, color: "var(--ink)", whiteSpace: "pre-wrap" }}>
+            “{citationContext.length > 480 ? citationContext.slice(0, 480) + "…" : citationContext}”
+          </blockquote>
+        </div>
+      )}
+    </div>
   );
 }
 

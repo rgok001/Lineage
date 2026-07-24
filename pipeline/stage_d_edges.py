@@ -193,15 +193,21 @@ def main() -> None:
         # Evidence quotes must ground against OUR extracted text (Stage E), so we
         # store each paper's Stage-B definition quote — both already string-verified.
         # The Semantic Scholar citation context is a classification signal only: it
-        # comes from S2's PDF extraction and would not match our LaTeX text.
+        # comes from S2's PDF extraction and would not match our LaTeX text — so we
+        # keep it as the edge's BASIS (what/how), not as a groundable quote. The
+        # rationale is the model's one-sentence reading of that basis. Neither may
+        # ever wear the verified stamp; the app renders both as unverified context.
         target_quote = dst["quote"]
+        citation_context = "\n\n".join(e["contexts"]) or None
         conn.execute("""
             INSERT INTO edges (genealogy_id, source_node, target_node, edge_type,
                                source_paper_id, target_paper_id, source_quote,
-                               target_quote, confidence, verified)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,false)
+                               target_quote, confidence, verified, rationale,
+                               citation_context)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,false,%s,%s)
         """, (gen_id, e["src_node"], e["dst_node"], ec.edge_type,
-              src["paper_id"], dst["paper_id"], src["quote"], target_quote, ec.confidence))
+              src["paper_id"], dst["paper_id"], src["quote"], target_quote, ec.confidence,
+              ec.rationale, citation_context))
         conn.commit()
         written += 1
         print(f"  {ec.edge_type.upper():<9} {e['src']} -> {e['dst']}  "
