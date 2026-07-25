@@ -29,6 +29,18 @@ export type Edge = {
   target_section: string | null;
 };
 export type UserEdit = { op: string; detail: unknown; at: string; by?: string };
+/** A paper ranked for the spine. attention = on-term weighted uptake (who built
+ *  on it for this term); displacement = how far it moved the term's meaning.
+ *  Both drive ordering only — never shown as numbers (see product guardrail). */
+export type RankedPaper = {
+  arxiv: string;
+  year: number;
+  title: string;
+  node_id: string;
+  attention: number | null;
+  displacement: number | null;
+  novelty: string[] | null;
+};
 export type Genealogy = {
   id: number;
   concept: string;
@@ -37,6 +49,7 @@ export type Genealogy = {
   updated_at: string;
   nodes: Node[];
   edges: Edge[];
+  papers: RankedPaper[];
   user_edits: UserEdit[];
 };
 
@@ -99,6 +112,16 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
     ORDER BY e.id
   `) as Edge[];
 
+  const paperRows = (await sql`
+    SELECT p.arxiv_id AS arxiv, p.year, p.title, d.attention, d.displacement, d.novelty_claims AS novelty
+    FROM definitions d JOIN papers p ON p.id = d.paper_id
+    WHERE d.concept = ${g.concept} AND d.prompt_version = ${g.prompt_version} AND d.defines_concept = true
+    ORDER BY d.attention DESC NULLS LAST
+  `) as Omit<RankedPaper, "node_id">[];
+
+  const nodeOf = new Map<string, string>();
+  for (const n of g.nodes as Node[]) for (const m of n.members) nodeOf.set(m.arxiv_id, n.node_id);
+
   return {
     id: g.id,
     concept: g.concept,
@@ -108,6 +131,12 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
     nodes: (g.nodes as Node[]).slice().sort((a, b) => a.year_start - b.year_start),
     user_edits: (g.user_edits ?? []) as UserEdit[],
     edges: edges.map((e) => ({ ...e, confidence: Number(e.confidence) })),
+    papers: paperRows.map((p) => ({
+      ...p,
+      attention: p.attention === null ? null : Number(p.attention),
+      displacement: p.displacement === null ? null : Number(p.displacement),
+      node_id: nodeOf.get(p.arxiv) ?? "",
+    })),
   };
 }
 

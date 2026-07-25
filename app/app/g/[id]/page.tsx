@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import SignInButton from "../../signin-button";
 import { deleteEdge, deleteGenealogy, deleteNode, mergeNode, reclassifyEdge, renameNode } from "../../../lib/actions";
 import { getViewer, isOwner } from "../../../lib/authz";
-import { computeFamilies, EDGE_MEANING, EDGE_TYPES, getGenealogy, type Edge, type Node } from "../../../lib/genealogy";
+import { computeFamilies, EDGE_MEANING, EDGE_TYPES, getGenealogy, type Edge, type Node, type RankedPaper, type Genealogy } from "../../../lib/genealogy";
 
 export const dynamic = "force-dynamic";
 
@@ -69,10 +69,13 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
         </p>
       </header>
 
+      {/* ── the papers that shaped the term (ranked spine) ── */}
+      <PaperSpine g={g} labelOf={labelOf} />
+
       {/* ── concept-states ─────────────────────────────── */}
       {!grouped ? (
         <>
-          <SectionTitle n="1">The {g.nodes.length} meanings, earliest to latest</SectionTitle>
+          <SectionTitle n="2">The {g.nodes.length} meanings, earliest to latest</SectionTitle>
           <div style={{ ...colStyle, marginBottom: "2.5rem" }}>
             {g.nodes.map((n, i) => (
               <NodeCard key={n.node_id} n={n} i={i} genealogyId={g.id} others={g.nodes}
@@ -82,7 +85,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
         </>
       ) : (
         <>
-          <SectionTitle n="1">
+          <SectionTitle n="2">
             The {g.nodes.length} meanings{split ? `, in ${families.length} unrelated families` : ""}
           </SectionTitle>
           {split && <SplitBanner concept={g.concept} n={families.length} />}
@@ -122,7 +125,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
       )}
 
       {/* ── relationships ──────────────────────────────── */}
-      <SectionTitle n="2">The {edges.length} relationships between them</SectionTitle>
+      <SectionTitle n="3">The {edges.length} relationships between them</SectionTitle>
       <p style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 1rem" }}>
         Each row is a typed relationship between two papers. ● means both quotes were verified
         verbatim against the source text; ○ means one could not be matched, so the relationship is
@@ -174,6 +177,74 @@ function DangerZone({ genealogyId, concept }: { genealogyId: number; concept: st
         </form>
       </div>
     </details>
+  );
+}
+
+/** The opening act: which papers shaped the term, and how. Two ranked lists
+ *  because attention and displacement are orthogonal (proven on the data) —
+ *  the papers everyone built on, and the ones that moved the meaning, which the
+ *  first list structurally misses. Order is driven by the magnitude scores; the
+ *  scores themselves are never shown (they are the editor, not the content). */
+function PaperSpine({ g, labelOf }: { g: Genealogy; labelOf: (nid: string) => string }) {
+  const scored = g.papers.filter((p) => p.attention !== null);
+  if (scored.length === 0) return null; // no magnitude yet (un-scored trace)
+
+  const builtOn = scored.slice(0, 8); // already attention-desc from the query
+  const shown = new Set(builtOn.map((p) => p.arxiv));
+  const movers = scored
+    .filter((p) => p.displacement !== null && (p.attention ?? 0) >= 1 && !shown.has(p.arxiv))
+    .sort((a, b) => (b.displacement ?? 0) - (a.displacement ?? 0))
+    .slice(0, 6);
+
+  return (
+    <section style={{ marginBottom: "2.5rem" }}>
+      <SectionTitle n="1">Which papers shaped “{g.concept}”</SectionTitle>
+      <p style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 1.2rem", lineHeight: 1.5 }}>
+        Drawn from how later work actually cites each paper for this term, not raw citation counts.
+        The first list is what the field built on; the second is where the meaning turned, which the
+        first list misses because a paper that moves a term is cited by the field it moved into.
+      </p>
+
+      <GroupHeading label="Most built on" sub={`what later work leaned on for “${g.concept}”`} />
+      <div style={{ display: "flex", flexDirection: "column", gap: ".5rem", marginBottom: "1.6rem" }}>
+        {builtOn.map((p, i) => <PaperRow key={p.arxiv} p={p} rank={i + 1} sense={labelOf(p.node_id)} />)}
+      </div>
+
+      {movers.length > 0 && (
+        <>
+          <GroupHeading label="Turning points" sub="moved the term’s meaning, even if lightly cited here" />
+          <div style={{ display: "flex", flexDirection: "column", gap: ".5rem" }}>
+            {movers.map((p) => <PaperRow key={p.arxiv} p={p} turning sense={labelOf(p.node_id)} />)}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function PaperRow({ p, rank, turning, sense }: { p: RankedPaper; rank?: number; turning?: boolean; sense: string }) {
+  const did = (p.novelty ?? []).find((c) => c && c.trim());
+  return (
+    <div style={{ display: "flex", gap: ".9rem", background: "var(--card)", border: "1px solid var(--line)",
+      borderRadius: 8, padding: ".75rem .95rem" }}>
+      <div style={{ flex: "0 0 26px", textAlign: "center", fontFamily: "var(--font-mono)", paddingTop: ".1rem",
+        color: "var(--ink-soft)", fontSize: rank ? "1rem" : "1.1rem" }}>
+        {turning ? "★" : rank}
+      </div>
+      <div style={{ flex: 1 }}>
+        <a href={`https://arxiv.org/abs/${p.arxiv}`} target="_blank" rel="noopener noreferrer"
+          style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.02rem", color: "var(--ink)", textDecoration: "none" }}>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>{p.year}</span>{" "}
+          {p.title}
+        </a>
+        {did && (
+          <p style={{ margin: ".3rem 0 0", fontSize: ".88rem", lineHeight: 1.5, color: "var(--ink-soft)" }}>{did}</p>
+        )}
+        <div style={{ marginTop: ".3rem", fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
+          {sense}
+        </div>
+      </div>
+    </div>
   );
 }
 
