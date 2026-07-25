@@ -23,6 +23,10 @@ export type Edge = {
   target_quote: string;
   rationale: string | null;
   citation_context: string | null;
+  source_novelty: string[] | null;
+  target_novelty: string[] | null;
+  source_section: string | null;
+  target_section: string | null;
 };
 export type UserEdit = { op: string; detail: unknown; at: string; by?: string };
 export type Genealogy = {
@@ -76,19 +80,25 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
     FROM genealogies WHERE id = ${id}
   `) as any[];
   if (!rows.length) return null;
+  const g = rows[0];
 
   const edges = (await sql`
     SELECT e.id, e.source_node, e.target_node, e.edge_type, e.confidence, e.verified,
            sp.arxiv_id AS source_paper, tp.arxiv_id AS target_paper,
-           e.source_quote, e.target_quote, e.rationale, e.citation_context
+           e.source_quote, e.target_quote, e.rationale, e.citation_context,
+           ds.novelty_claims AS source_novelty, dt.novelty_claims AS target_novelty,
+           ds.section AS source_section, dt.section AS target_section
     FROM edges e
     JOIN papers sp ON sp.id = e.source_paper_id
     JOIN papers tp ON tp.id = e.target_paper_id
+    LEFT JOIN definitions ds ON ds.paper_id = e.source_paper_id
+      AND ds.concept = ${g.concept} AND ds.prompt_version = ${g.prompt_version} AND ds.defines_concept = true
+    LEFT JOIN definitions dt ON dt.paper_id = e.target_paper_id
+      AND dt.concept = ${g.concept} AND dt.prompt_version = ${g.prompt_version} AND dt.defines_concept = true
     WHERE e.genealogy_id = ${id}
     ORDER BY e.id
   `) as Edge[];
 
-  const g = rows[0];
   return {
     id: g.id,
     concept: g.concept,

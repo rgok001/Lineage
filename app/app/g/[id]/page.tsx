@@ -284,9 +284,11 @@ function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear
           letterSpacing: ".06em", color: "var(--ink-soft)", margin: ".1rem 0 .5rem" }}>
           How each paper defines the concept
         </div>
-        <QuoteCard role="Earlier paper says" arxiv={e.source_paper} year={srcYear} quote={e.source_quote} />
+        <QuoteCard role="Earlier paper says" arxiv={e.source_paper} year={srcYear} quote={e.source_quote}
+          novelty={e.source_novelty} section={e.source_section} />
         <div style={{ textAlign: "center", color, fontSize: "1.3rem", margin: ".2rem 0" }}>↓ {e.edge_type}</div>
-        <QuoteCard role="Later paper says" arxiv={e.target_paper} year={dstYear} quote={e.target_quote} />
+        <QuoteCard role="Later paper says" arxiv={e.target_paper} year={dstYear} quote={e.target_quote}
+          novelty={e.target_novelty} section={e.target_section} />
         {!e.verified && (
           <p style={{ fontSize: ".78rem", color: "var(--inferred)", margin: ".7rem 0 0" }}>
             ○ One of these quotes could not be string-matched against the extracted source text, so
@@ -373,32 +375,62 @@ function BasisCard({ color, rationale, citationContext }: {
             marginLeft: ".45rem", whiteSpace: "nowrap" }}>— the tool’s reading</span>
         </p>
       )}
-      {citationContext && (
-        <div style={{ marginTop: rationale ? ".7rem" : 0, paddingTop: rationale ? ".7rem" : 0,
-          borderTop: rationale ? "1px dashed var(--line)" : "none" }}>
-          <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", color: "var(--ink-soft)", marginBottom: ".3rem" }}>
-            Verbatim · where the later paper cites the earlier · per Semantic Scholar, not string-verified
+      {citationContext && (() => {
+        const passages = citationContext.split("\n\n").map((s) => s.trim()).filter(Boolean);
+        return (
+          <div style={{ marginTop: rationale ? ".7rem" : 0, paddingTop: rationale ? ".7rem" : 0,
+            borderTop: rationale ? "1px dashed var(--line)" : "none" }}>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", color: "var(--ink-soft)", marginBottom: ".35rem" }}>
+              Verbatim · where the later paper cites the earlier · per Semantic Scholar, not string-verified
+            </div>
+            {passages.slice(0, 3).map((p, i) => (
+              <blockquote key={i} style={{ margin: i === 0 ? 0 : ".45rem 0 0", fontFamily: "var(--font-display)",
+                fontStyle: "italic", fontSize: ".9rem", lineHeight: 1.5, color: "var(--ink)", whiteSpace: "pre-wrap" }}>
+                “{p.length > 360 ? p.slice(0, 360) + "…" : p}”
+              </blockquote>
+            ))}
+            {passages.length > 3 && (
+              <div style={{ fontSize: ".72rem", color: "var(--ink-soft)", marginTop: ".3rem" }}>
+                +{passages.length - 3} more citing passage(s)
+              </div>
+            )}
           </div>
-          <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontStyle: "italic",
-            fontSize: ".9rem", lineHeight: 1.5, color: "var(--ink)", whiteSpace: "pre-wrap" }}>
-            “{citationContext.length > 480 ? citationContext.slice(0, 480) + "…" : citationContext}”
-          </blockquote>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
 
-function QuoteCard({ role, arxiv, year, quote }: { role: string; arxiv: string; year: number; quote: string }) {
+function QuoteCard({ role, arxiv, year, quote, novelty, section }: {
+  role: string; arxiv: string; year: number; quote: string;
+  novelty?: string[] | null; section?: string | null;
+}) {
+  const claims = (novelty ?? []).filter((c) => c && c.trim());
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 6, padding: ".8rem .9rem" }}>
-      <div style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)", marginBottom: ".4rem" }}>
-        {role} · arXiv:{arxiv} ({year})
+      <div style={{ display: "flex", justifyContent: "space-between", gap: ".5rem",
+        fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)", marginBottom: ".4rem" }}>
+        <span>{role} · arXiv:{arxiv} ({year})</span>
+        {section && <span style={{ fontStyle: "italic", opacity: 0.85 }}>from §{section.length > 28 ? section.slice(0, 28) + "…" : section}</span>}
       </div>
       <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: ".95rem",
         lineHeight: 1.55, color: "var(--ink)", whiteSpace: "pre-wrap" }}>
         “{quote.length > 360 ? quote.slice(0, 360) + "…" : quote}”
       </blockquote>
+      {claims.length > 0 && (
+        <div style={{ marginTop: ".65rem", paddingTop: ".6rem", borderTop: "1px dashed var(--line)" }}>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", color: "var(--ink-soft)",
+            textTransform: "uppercase", letterSpacing: ".05em", marginBottom: ".3rem" }}>
+            What it contributed · extracted, not verbatim
+          </div>
+          <ul style={{ margin: 0, paddingLeft: "1.05rem", fontSize: ".84rem", lineHeight: 1.5, color: "var(--ink-soft)" }}>
+            {claims.slice(0, 3).map((c, i) => <li key={i} style={{ marginBottom: ".2rem" }}>{c}</li>)}
+          </ul>
+          {claims.length > 3 && (
+            <div style={{ fontSize: ".72rem", color: "var(--ink-soft)", marginTop: ".2rem" }}>+{claims.length - 3} more</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
