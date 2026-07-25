@@ -27,19 +27,20 @@ export default async function Home() {
           <SignInButton />
         </div>
         <p style={{ color: "var(--ink-soft)", margin: ".45rem 0 0", lineHeight: 1.5 }}>
-          Trace how an academic concept evolved across the literature. Every relationship is
-          backed by verbatim quotes from both papers, verified against the source text.{" "}
+          Read how an academic concept evolved: the currents it split into, how they fed each other,
+          and the papers that moved it, in order. Every claim is tied to a verbatim quote, verified
+          against the source text.{" "}
           <Link href="/about" style={{ color: "var(--edge-extends)", whiteSpace: "nowrap" }}>
             How it works ›
           </Link>
         </p>
       </header>
 
-      <h2 style={{ fontSize: "1rem", color: "var(--ink)", margin: "0 0 .9rem" }}>Genealogies</h2>
+      <h2 style={{ fontSize: "1rem", color: "var(--ink)", margin: "0 0 .9rem" }}>Concepts</h2>
 
       {rows.length === 0 ? (
         <p style={{ color: "var(--ink-soft)" }}>
-          No genealogies yet. Request a trace below to create the first one.
+          No concepts traced yet. Request a trace below to create the first one.
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: ".7rem" }}>
@@ -54,13 +55,11 @@ export default async function Home() {
                     {g.concept}
                   </div>
                   <div style={{ fontSize: ".8rem", color: "var(--ink-soft)", marginTop: ".25rem" }}>
-                    {g.node_count} concept-states · {g.edge_count} relationships ·{" "}
-                    <span style={{ color: "var(--verified)" }}>{g.verified_count} verified</span>
-                    {g.edge_count - g.verified_count > 0 && (
-                      <span style={{ color: "var(--inferred)" }}>
-                        {" "}· {g.edge_count - g.verified_count} inferred
-                      </span>
-                    )}
+                    {g.paper_count} papers ·{" "}
+                    {g.stream_count != null
+                      ? <>{g.stream_count} currents</>
+                      : <>{g.edge_count} relationships</>} ·{" "}
+                    <span style={{ color: "var(--verified)" }}>{g.verified_count} verified quotes</span>
                     {g.edit_count > 0 && <> · {g.edit_count} curatorial change(s)</>}
                   </div>
                 </div>
@@ -77,7 +76,7 @@ export default async function Home() {
       <TracePanel initial={traces} initialNow={now} fields={fields} signedIn={!!viewer} owner={isOwner(viewer)} />
 
       <p style={{ marginTop: "2rem", fontSize: ".78rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
-        Genealogies are drafted automatically from the papers themselves, then curated by hand.
+        Each account is drafted automatically from the papers themselves, then curated by hand.
         Every curatorial change is recorded in an audit trail.
       </p>
     </main>

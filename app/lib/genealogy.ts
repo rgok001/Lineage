@@ -75,16 +75,20 @@ export const EDGE_MEANING: Record<string, string> = {
 export async function listGenealogies() {
   return (await sql`
     SELECT g.id, g.concept, g.prompt_version, g.status, g.updated_at,
-           jsonb_array_length(g.nodes)      AS node_count,
            jsonb_array_length(g.user_edits) AS edit_count,
+           CASE WHEN g.streams IS NOT NULL
+                THEN jsonb_array_length(g.streams->'streams') END                        AS stream_count,
+           (SELECT count(*) FROM definitions d
+             WHERE d.concept = g.concept AND d.prompt_version = g.prompt_version
+               AND d.defines_concept = true)                                             AS paper_count,
            (SELECT count(*) FROM edges e WHERE e.genealogy_id = g.id)                    AS edge_count,
            (SELECT count(*) FROM edges e WHERE e.genealogy_id = g.id AND e.verified)     AS verified_count
     FROM genealogies g
     ORDER BY g.updated_at DESC
   `) as {
     id: number; concept: string; prompt_version: string; status: string;
-    updated_at: string; node_count: number; edit_count: number;
-    edge_count: number; verified_count: number;
+    updated_at: string; edit_count: number; stream_count: number | null;
+    paper_count: number; edge_count: number; verified_count: number;
   }[];
 }
 
