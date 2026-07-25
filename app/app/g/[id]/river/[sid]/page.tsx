@@ -16,7 +16,7 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
     <main style={{ padding: "2rem 1.5rem 5rem" }}>
       <div style={{ maxWidth: "42rem", margin: "0 auto" }}>
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>
-          <Link href={`/g/${id}/river`} style={{ color: c, textDecoration: "none" }}>‹ the river</Link>
+          <Link href={`/g/${id}`} style={{ color: c, textDecoration: "none" }}>‹ the river</Link>
           {" / "}<span style={{ color: "var(--ink)" }}>{s.name}</span>
         </div>
 
