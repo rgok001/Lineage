@@ -51,6 +51,7 @@ export type Genealogy = {
   edges: Edge[];
   papers: RankedPaper[];
   user_edits: UserEdit[];
+  has_river: boolean;
 };
 
 export const EDGE_TYPES = [
@@ -87,9 +88,28 @@ export async function listGenealogies() {
   }[];
 }
 
+export type RiverPaper = { arxiv: string; year: number; title: string; move: string; prose: string; quote: string };
+export type RiverStream = {
+  id: string; name: string; tagline: string; arc: string; color: string;
+  origin_year: number | null; papers: RiverPaper[];
+};
+export type RiverCross = { from: string; to: string; year: number | null; label: string };
+export type River = { through_line: string; streams: RiverStream[]; cross_currents: RiverCross[] };
+
+/** The generated river for a map: conceptual streams + per-stream grounded dive
+ *  accounts. Read-only render artifact (migration 012); null until the streams
+ *  job has run for this genealogy. */
+export async function getRiver(id: number): Promise<{ concept: string; river: River } | null> {
+  const rows = (await sql`SELECT concept, streams FROM genealogies WHERE id = ${id}`) as
+    { concept: string; streams: River | null }[];
+  if (!rows.length || !rows[0].streams) return null;
+  return { concept: rows[0].concept, river: rows[0].streams };
+}
+
 export async function getGenealogy(id: number): Promise<Genealogy | null> {
   const rows = (await sql`
-    SELECT id, concept, prompt_version, status, updated_at, nodes, user_edits
+    SELECT id, concept, prompt_version, status, updated_at, nodes, user_edits,
+           (streams IS NOT NULL) AS has_river
     FROM genealogies WHERE id = ${id}
   `) as any[];
   if (!rows.length) return null;
@@ -130,6 +150,7 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
     updated_at: g.updated_at,
     nodes: (g.nodes as Node[]).slice().sort((a, b) => a.year_start - b.year_start),
     user_edits: (g.user_edits ?? []) as UserEdit[],
+    has_river: Boolean(g.has_river),
     edges: edges.map((e) => ({ ...e, confidence: Number(e.confidence) })),
     papers: paperRows.map((p) => ({
       ...p,

@@ -69,6 +69,19 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
         </p>
       </header>
 
+      {g.has_river && (
+        <Link href={`/g/${g.id}/river`} style={{ display: "flex", alignItems: "center", gap: ".6rem",
+          textDecoration: "none", background: "var(--card)", border: "1px solid var(--edge-migrates)",
+          borderRadius: 10, padding: ".8rem 1.05rem", margin: "0 0 2rem" }}>
+          <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.02rem", color: "var(--ink)" }}>
+            Read “{g.concept}” as a river →
+          </span>
+          <span style={{ fontSize: ".84rem", color: "var(--ink-soft)", marginLeft: "auto" }}>
+            the concept's currents and how they fed each other · the account view
+          </span>
+        </Link>
+      )}
+
       {/* ── the papers that shaped the term (ranked spine) ── */}
       <PaperSpine g={g} labelOf={labelOf} />
 
