@@ -58,19 +58,66 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
   };
   const rad = (p: MapPaper) => 5 + Math.sqrt(Math.max(p.attention, 0)) * 2.8;
 
+  // Hover previews; clicking pins. Without the pin, moving the mouse off a dot
+  // toward the panel cleared it, so its button could never be reached.
+  const focusId = hot ?? sel?.arxiv ?? null;
+
   const conn = useMemo(() => {
     const s = new Set<string>();
-    if (hot) {
-      s.add(hot);
+    if (focusId) {
+      s.add(focusId);
       for (const e of data.edges) {
-        if (e.from === hot) s.add(e.to);
-        if (e.to === hot) s.add(e.from);
+        if (e.from === focusId) s.add(e.to);
+        if (e.to === focusId) s.add(e.from);
       }
     }
     return s;
-  }, [hot, data.edges]);
+  }, [focusId, data.edges]);
 
-  const shown = sel ?? (hot ? data.papers.find((p) => p.arxiv === hot) ?? null : null);
+  const shown = (hot ? data.papers.find((p) => p.arxiv === hot) ?? null : null) ?? sel;
+
+  /* The focused paper's lineage. Curves stop short of the target dot so the
+     arrowhead reads clearly. Type labels slide along their own curve to the
+     first position that does not collide with an already-placed one; parallel
+     curves would otherwise stack every label at the same midpoint. */
+  const lineage = (() => {
+    if (!focusId) return [] as {
+      key: string; d: string; col: string; type: string; verified: boolean;
+      lx: number | null; ly: number;
+    }[];
+    const boxes: { x: number; y: number; w: number }[] = [];
+    const out = [];
+    for (const [k, e] of data.edges.entries()) {
+      if (e.from !== focusId && e.to !== focusId) continue;
+      const a = placed.get(e.from), b = placed.get(e.to);
+      if (!a || !b) continue;
+      const x1 = x(a.p.year), y1 = py(e.from), x2 = x(b.p.year), y2 = py(e.to);
+      const dx = (x2 - x1) * 0.42;
+      const r2 = rad(b.p) + 7;
+      const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+      const ex = x2 - ((x2 - x1) / len) * r2, ey = y2 - ((y2 - y1) / len) * r2;
+      const c1x = x1 + dx, c1y = y1, c2x = ex - dx, c2y = ey;
+      const at = (t: number) => {
+        const u = 1 - t;
+        return {
+          x: u * u * u * x1 + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * ex,
+          y: u * u * u * y1 + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * ey,
+        };
+      };
+      const w = e.type.length * 6.4 + 8;
+      let lx: number | null = null, ly = 0;
+      for (const t of [0.5, 0.38, 0.62, 0.28, 0.72, 0.2]) {
+        const pt = at(t);
+        const clash = boxes.some((bx) => Math.abs(bx.y - pt.y) < 13 && Math.abs(bx.x - pt.x) < (bx.w + w) / 2);
+        if (!clash) { lx = pt.x; ly = pt.y - 5; boxes.push({ x: pt.x, y: pt.y, w }); break; }
+      }
+      out.push({
+        key: `${k}`, d: `M${x1},${y1} C${c1x},${c1y} ${c2x},${c2y} ${ex},${ey}`,
+        col: EC[e.type] ?? "var(--ink-faint)", type: e.type, verified: e.verified, lx, ly,
+      });
+    }
+    return out;
+  })();
   const ticks: number[] = [];
   for (let y = Math.ceil(yr0); y <= yr1; y++) ticks.push(y);
 
@@ -147,41 +194,32 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
             ))}
           </defs>
 
-          {data.edges.map((e, k) => {
-            const a = placed.get(e.from), b = placed.get(e.to);
-            if (!a || !b) return null;
-            const on = hot && (e.from === hot || e.to === hot);
-            if (!on) return null;
-            const x1 = x(a.p.year), y1 = py(e.from), x2 = x(b.p.year), y2 = py(e.to);
-            const dx = (x2 - x1) * 0.42;
-            // stop the curve short of the target dot so the arrowhead sits clear of it
-            const r2 = rad(b.p) + 7;
-            const len = Math.hypot(x2 - x1, y2 - y1) || 1;
-            const ex = x2 - ((x2 - x1) / len) * r2, ey = y2 - ((y2 - y1) / len) * r2;
-            const col = EC[e.type] ?? "var(--ink-faint)";
-            const mx = (x1 + ex) / 2, my = (y1 + ey) / 2;
-            return (
-              <g key={k} style={{ pointerEvents: "none" }}>
-                <path d={`M${x1},${y1} C${x1 + dx},${y1} ${ex - dx},${ey} ${ex},${ey}`}
-                  fill="none" stroke={col} strokeWidth={e.verified ? 1.7 : 1.3}
-                  strokeDasharray={e.verified ? undefined : "3 3"}
-                  markerEnd={`url(#ah-${e.type})`} opacity={0.92} />
-                <text x={mx} y={my - 5} textAnchor="middle" fill={col} fontSize={10.5}
+          {lineage.map((l) => (
+            <g key={l.key} style={{ pointerEvents: "none" }}>
+              <path d={l.d} fill="none" stroke={l.col} strokeWidth={l.verified ? 1.7 : 1.3}
+                strokeDasharray={l.verified ? undefined : "3 3"}
+                markerEnd={`url(#ah-${l.type})`} opacity={0.92} />
+              {l.lx !== null && (
+                <text x={l.lx} y={l.ly} textAnchor="middle" fill={l.col} fontSize={10.5}
                   fontFamily="var(--font-mono)"
                   style={{ paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 4 }}>
-                  {e.type}
+                  {l.type}
                 </text>
-              </g>
-            );
-          })}
+              )}
+            </g>
+          ))}
 
           {data.papers.map((p) => {
             const r = rad(p), cx = x(p.year), cyv = py(p.arxiv);
-            const dim = hot && !conn.has(p.arxiv);
+            const dim = focusId && !conn.has(p.arxiv);
+            const pinned = sel?.arxiv === p.arxiv;
             return (
               <g key={p.arxiv} style={{ cursor: "pointer", transition: "opacity .15s", opacity: dim ? 0.16 : 1 }}
                 onMouseEnter={() => setHot(p.arxiv)} onMouseLeave={() => setHot(null)}
-                onClick={() => router.push(`/g/${id}/p/${encodeURIComponent(p.arxiv)}`)}>
+                onClick={() => setSel(p)}>
+                {pinned && (
+                  <circle cx={cx} cy={cyv} r={r + 7} fill="none" stroke={p.color} strokeWidth={1.2} opacity={0.55} />
+                )}
                 {p.displacement >= 0.25 && (
                   <circle cx={cx} cy={cyv} r={r + 3.5} fill="none" stroke="var(--ink)" strokeWidth={1.3} opacity={0.7} />
                 )}
@@ -224,13 +262,21 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
                 borderRadius: 8, padding: ".5rem .95rem", width: "100%" }}>
               Read the dossier →
             </button>
+            {sel && (
+              <button onClick={() => setSel(null)}
+                style={{ font: "inherit", fontSize: ".74rem", cursor: "pointer", marginTop: ".45rem",
+                  background: "none", color: "var(--ink-faint)", border: "none", padding: 0 }}>
+                clear selection
+              </button>
+            )}
           </>
         ) : (
           <>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", letterSpacing: ".12em",
               textTransform: "uppercase", color: "var(--ink-faint)" }}>Hover a paper</div>
             <p style={{ fontSize: ".88rem", lineHeight: 1.6, color: "var(--ink-soft)", margin: ".55rem 0 0" }}>
-              Its lineage lights up here, with what it contributed. Click through for the evidence.
+              Its lineage lights up on the map and its contribution appears here. Click a paper to keep
+              it open, then read the dossier for the evidence.
             </p>
             <ul style={{ margin: "1rem 0 0", padding: 0, listStyle: "none", display: "flex",
               flexDirection: "column", gap: ".45rem", fontSize: ".8rem", color: "var(--ink-soft)" }}>
