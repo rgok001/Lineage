@@ -73,6 +73,39 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
   const ticks: number[] = [];
   for (let y = Math.ceil(yr0); y <= yr1; y++) ticks.push(y);
 
+  // Collision-aware labels: within a band, labels alternate above/below their
+  // dot and a label that would overlap an already-placed one on both sides is
+  // dropped (the paper still names itself in the reading panel on hover).
+  const labels: { arxiv: string; x: number; y: number; text: string }[] = [];
+  {
+    const byBand = new Map<string, MapPaper[]>();
+    for (const p of data.papers)
+      if (p.attention >= 4.5) {
+        if (!byBand.has(p.stream_id)) byBand.set(p.stream_id, []);
+        byBand.get(p.stream_id)!.push(p);
+      }
+    for (const ps of byBand.values()) {
+      ps.sort((a, b) => a.year - b.year || py(a.arxiv) - py(b.arxiv));
+      let endAbove = -1e9, endBelow = -1e9;
+      for (const p of ps) {
+        const r = rad(p), cx = x(p.year), cyv = py(p.arxiv);
+        const base = p.title.split(":")[0];
+        const text = base.length > 24 ? base.slice(0, 23) + "…" : base;
+        const wpx = text.length * 6.6 + 10;
+        const x0 = cx + r + 5;
+        const prefAbove = (placed.get(p.arxiv)?.dy ?? 0) <= 0;
+        let side: "a" | "b" | null = null;
+        if (prefAbove && x0 >= endAbove) side = "a";
+        else if (!prefAbove && x0 >= endBelow) side = "b";
+        else if (x0 >= endAbove) side = "a";
+        else if (x0 >= endBelow) side = "b";
+        if (!side) continue;
+        if (side === "a") endAbove = x0 + wpx; else endBelow = x0 + wpx;
+        labels.push({ arxiv: p.arxiv, x: x0, y: side === "a" ? cyv - r - 7 : cyv + r + 15, text });
+      }
+    }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
       <div style={{ width: "100%", overflowX: "auto", border: "1px solid var(--line)",
@@ -129,15 +162,18 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
                   <circle cx={cx} cy={cyv} r={r + 3.5} fill="none" stroke="var(--ink)" strokeWidth={1.3} opacity={0.7} />
                 )}
                 <circle cx={cx} cy={cyv} r={r} fill={p.color} stroke="var(--paper)" strokeWidth={1} opacity={0.95} />
-                {p.attention >= 4.5 && (
-                  <text x={cx + r + 5} y={cyv + 4} fill="var(--ink)" fontSize={12.5}
-                    fontFamily="var(--font-ui)" style={{ paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3 }}>
-                    {p.title.length > 26 ? p.title.slice(0, 25) + "…" : p.title.split(":")[0]}
-                  </text>
-                )}
               </g>
             );
           })}
+
+          {labels.map((l) => (
+            <text key={l.arxiv} x={l.x} y={l.y} fill="var(--ink)" fontSize={12.5}
+              fontFamily="var(--font-ui)" pointerEvents="none"
+              opacity={hot && !conn.has(l.arxiv) ? 0.16 : 1}
+              style={{ paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 4, transition: "opacity .15s" }}>
+              {l.text}
+            </text>
+          ))}
         </svg>
       </div>
 
