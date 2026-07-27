@@ -1,6 +1,6 @@
 # Lineage: As-Built Documentation
 
-**As of commit `18c9d33`, 2026-07-19.**
+**As of commit `883671b`, 2026-07-26.**
 
 This is the as-built record: a description of the system as it actually exists,
 including the deviations, incidents, and hard-won rules that shaped it. The
@@ -9,14 +9,31 @@ design intent lives in [CLAUDE.md](../CLAUDE.md) (product spec) and
 say what was planned, this one says what is true. When they disagree, trust
 this one, then update it.
 
+**What changed since 2026-07-19 (the river turn).** The product's face moved
+from a drift map (senses as the spine, a wall of typed relationships) to an
+**account**: a map opens as a "river" of the concept's parallel currents and how
+they fed each other, and you dive from there into a current's grounded narrative
+and then a single paper. Three things made that possible, all live: edges now
+keep the *basis* they used to discard (what each paper did and how, with the
+citing sentence, migration 010); every paper carries two magnitude scores that
+decide reading order (migration 011); and each map stores a generated river of
+conceptual streams with per-stream dive accounts (migration 012). The old
+sense-taxonomy and the raw relationship list still exist, demoted to a secondary
+`/g/[id]/evidence` layer. See sections 3, 4b, and 6 for the detail, and section
+11 for the honest gap: the magnitude and river generation currently run as
+one-off scripts against the showcase map, not yet as committed pipeline stages.
+
 ---
 
 ## 1. The system at a glance
 
 Lineage traces how an academic concept evolved across arXiv papers and
-publishes the result as an interactive, evidence-backed genealogy. Every
-relationship on a map is backed by verbatim quotes from both papers, verified
-against the extracted source text.
+publishes the result as an interactive, evidence-backed account. A map opens as
+a river of the concept's parallel currents (the account view); underneath it
+still holds the typed relationships between papers, each backed by verbatim
+quotes from both papers verified against the extracted source text. The
+showcase map is "embedding" (`/g/10`, 134 papers, 305 relationships, 233
+verified); the earlier "dropout" map was deleted on 2026-07-26.
 
 | Component | Technology | Where it runs | Cost |
 |---|---|---|---|
@@ -24,7 +41,7 @@ against the extracted source text.
 | Database | Neon serverless Postgres, pgvector 0.8 | Neon (Vercel-linked account) | free tier |
 | Pipeline | Python 3.12 CLI scripts | Anywhere with the repo and `.env` | LLM spend only |
 | Trace worker | Python 3.12, single process | Render Background Worker (declared in `render.yaml`; the owner's laptop until the Render console setup is done) | ~$8/mo |
-| LLM | Claude Sonnet (`claude-sonnet-5`) via the Anthropic API | n/a | ~$6 per 150-paper trace |
+| LLM | Claude Sonnet (`claude-sonnet-5`) for extraction/classification; Claude Haiku (`claude-haiku-4-5`) for the cheaper post-pipeline scoring and river generation | n/a | ~$6 per 150-paper trace; +~$0.7 for magnitude + river on one map |
 
 External data sources, all keyless: **arXiv** (paper source, LaTeX-first,
 throttled 1 request/3s), **OpenAlex** (corpus metadata and citation counts,
@@ -48,10 +65,12 @@ docs/                ARCHITECTURE.md (design), AS-BUILT.md (this file)
 pipeline/            the five stages + auxiliaries (Python, CLI-first)
   common.py          env loading, polite HTTP session, data_dir()
   db/migrate.py      ordered SQL migrations, schema_migrations table
-  db/migrations/     001..005
+  db/migrations/     001..012
 worker/run.py        the trace worker (queue consumer)
 app/                 Next.js app (Vercel root directory is app/)
-  app/               routes: /, /about, /g/[id], /api/traces, /api/auth
+  app/               routes: /, /about, /g/[id] (the river), /g/[id]/river/[sid]
+                     (a current's dive), /g/[id]/evidence (the old detailed view),
+                     /api/traces, /api/auth
   lib/               db.ts, authz.ts, genealogy.ts, traces.ts, actions
 data/                DATA_DIR (gitignored): raw papers, texts, exports, models
 ```
@@ -64,8 +83,11 @@ hold different `DATABASE_URL` values; see section 8.
 
 ## 3. Data model
 
-Six tables, migrations `001` through `005`, applied by
-`python pipeline/db/migrate.py` (tracked in `schema_migrations`).
+Six tables, migrations `001` through `012`, applied by
+`python pipeline/db/migrate.py` (tracked in `schema_migrations`). Migrations
+`008`-`009` are data fixes (paths relative to `DATA_DIR`; correcting future
+publication years OpenAlex mis-dated). `010`-`012` are the river turn and are
+described inline below.
 
 **papers** (001, 002): one row per fetched arXiv paper. Notable columns:
 `raw_path` and `extracted_text_path` point into `DATA_DIR`;
@@ -83,6 +105,16 @@ excluding the model so a model switch does not re-bill an extracted corpus;
 because a negative verdict ("this paper does not define the concept") is a
 finding: before 003, negatives wrote no row, so every re-run re-paid the LLM
 for most of the corpus. `embedding vector(1024)` holds the Stage C embedding.
+`novelty_claims` (JSONB, from Stage B) lists what the paper claims it
+contributed; it was extracted from the start but only surfaced in the UI in the
+river turn. `attention` and `displacement` (REAL, migration 011) are the two
+per-paper magnitude scores that drive reading order (section 4b): attention is
+on-term weighted uptake (how much later work built on this paper *for this
+term*), displacement is how far the paper moved the term's meaning (embedding
+distance from the centroid of earlier definitions). Both are per
+(paper, concept, prompt_version) because magnitude is relative to the term
+being traced, and both are nullable (computed by a post-Stage-D job; the
+earliest paper has no earlier work to be displaced from).
 
 **genealogies** (001, 007): the map itself. `nodes` is JSONB (concept-states
 with members and year ranges), `user_edits` is the append-only curatorial audit

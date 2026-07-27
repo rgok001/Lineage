@@ -1,20 +1,24 @@
-/* Design tokens from the approved mockup — keep consistent (see CLAUDE.md). */
+/* Design tokens — the dark system from the approved journey mockup (2026-07-27).
+   The whole app styles through these variables; change them here, never inline. */
 :root {
-  --paper: #edf0f1;
-  --card: #fbfcfc;
-  --ink: #1c2b33;
-  --ink-soft: #5a6b74;
-  --line: #d8dee1;
+  --paper: #0d1317;      /* page ground */
+  --card: #121a20;       /* raised panel */
+  --card-2: #182126;     /* nested panel */
+  --ink: #e8eef1;
+  --ink-soft: #8b9aa2;
+  --ink-faint: #5a6a72;
+  --line: #223038;
+  --line-soft: #18232a;
 
-  --edge-extends: #33628c;
-  --edge-contests: #a34a3a;
-  --edge-narrows: #6b5b95;
-  --edge-renames: #8a7433;
-  --edge-migrates: #3e7257;
-  --edge-merges: #a0522d; /* not in the approved 5; assigned for completeness */
+  --edge-extends: #6b9bd0;
+  --edge-contests: #c9776a;
+  --edge-narrows: #9a8ac4;
+  --edge-renames: #c9a84e;
+  --edge-migrates: #5cb389;
+  --edge-merges: #d0895c;
 
-  --verified: #3e7257;
-  --inferred: #a34a3a;
+  --verified: #5cb389;
+  --inferred: #f0605f;
 
   --font-display: "Spectral", Georgia, serif;
   --font-ui: "IBM Plex Sans", system-ui, sans-serif;
@@ -30,4 +34,19 @@ body {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-ui);
+}
+
+a {
+  color: inherit;
+}
+
+input, select, textarea {
+  background: #0f1519;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+}
+
+::selection {
+  background: #2c4a5c;
 }

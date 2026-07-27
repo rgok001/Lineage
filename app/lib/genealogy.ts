@@ -54,6 +54,85 @@ export type Genealogy = {
   has_river: boolean;
 };
 
+/* ── the influence map (the front door) ─────────────────────────── */
+
+export type MapPaper = {
+  arxiv: string; year: number; title: string;
+  attention: number; displacement: number;
+  contrib: string | null;           // first novelty claim, the one-liner
+  stream_id: string; stream_name: string; color: string;
+};
+export type MapEdge = { from: string; to: string; type: string; verified: boolean };
+export type InfluenceMapData = {
+  concept: string;
+  through_line: string;
+  papers: MapPaper[];
+  edges: MapEdge[];
+  streams: { id: string; name: string; color: string; count: number }[];
+  total_papers: number;
+};
+
+/** The pivotal papers and the typed links among them: top-N by on-term uptake
+ *  plus the strongest movers (displacement, gated by uptake so outliers stay
+ *  out). The magnitude scores select and size; they are never displayed. */
+export async function getInfluenceMap(id: number): Promise<InfluenceMapData | null> {
+  const riverData = await getRiver(id);
+  if (!riverData) return null;
+  const { concept, river } = riverData;
+
+  const g = (await sql`SELECT concept, prompt_version FROM genealogies WHERE id = ${id}`) as
+    { concept: string; prompt_version: string }[];
+  if (!g.length) return null;
+
+  const rows = (await sql`
+    SELECT p.arxiv_id AS arxiv, p.year, p.title, d.attention, d.displacement, d.novelty_claims AS novelty
+    FROM definitions d JOIN papers p ON p.id = d.paper_id
+    WHERE d.concept = ${g[0].concept} AND d.prompt_version = ${g[0].prompt_version}
+      AND d.defines_concept = true AND d.attention IS NOT NULL
+  `) as { arxiv: string; year: number; title: string; attention: number; displacement: number | null; novelty: string[] | null }[];
+
+  const streamOf = new Map<string, { id: string; name: string; color: string }>();
+  for (const s of river.streams)
+    for (const p of s.papers)
+      if (!streamOf.has(p.arxiv)) streamOf.set(p.arxiv, { id: s.id, name: s.name, color: s.color });
+
+  const byAtt = [...rows].sort((a, b) => Number(b.attention) - Number(a.attention));
+  const picked = new Map<string, typeof rows[number]>();
+  for (const r of byAtt.slice(0, 20)) picked.set(r.arxiv, r);
+  const movers = rows
+    .filter((r) => r.displacement !== null && Number(r.attention) >= 1 && !picked.has(r.arxiv))
+    .sort((a, b) => Number(b.displacement) - Number(a.displacement));
+  for (const r of movers.slice(0, 8)) picked.set(r.arxiv, r);
+
+  const arxivs = [...picked.keys()];
+  const edgeRows = (await sql`
+    SELECT sp.arxiv_id AS from, tp.arxiv_id AS to, e.edge_type AS type, e.verified
+    FROM edges e JOIN papers sp ON sp.id = e.source_paper_id
+                 JOIN papers tp ON tp.id = e.target_paper_id
+    WHERE e.genealogy_id = ${id} AND sp.arxiv_id = ANY(${arxivs}) AND tp.arxiv_id = ANY(${arxivs})
+  `) as MapEdge[];
+
+  const papers: MapPaper[] = arxivs.map((a) => {
+    const r = picked.get(a)!;
+    const st = streamOf.get(a) ?? { id: "other", name: "Other", color: "#7f8c94" };
+    return {
+      arxiv: a, year: r.year, title: r.title,
+      attention: Number(r.attention), displacement: Number(r.displacement ?? 0),
+      contrib: r.novelty?.find((c) => c && c.trim()) ?? null,
+      stream_id: st.id, stream_name: st.name, color: st.color,
+    };
+  });
+
+  return {
+    concept,
+    through_line: river.through_line,
+    papers,
+    edges: edgeRows,
+    streams: river.streams.map((s) => ({ id: s.id, name: s.name, color: s.color, count: s.papers.length })),
+    total_papers: rows.length,
+  };
+}
+
 export const EDGE_TYPES = [
   "extends",
   "contests",
