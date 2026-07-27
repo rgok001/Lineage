@@ -86,6 +86,7 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
       lx: number | null; ly: number;
     }[];
     const boxes: { x: number; y: number; w: number }[] = [];
+    const labelledTypes = new Set<string>();
     const out = [];
     for (const [k, e] of data.edges.entries()) {
       if (e.from !== focusId && e.to !== focusId) continue;
@@ -104,12 +105,22 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
           y: u * u * u * y1 + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * ey,
         };
       };
+      // Name each relationship type once. Repeating "extends" down a fan of
+      // parallel curves is noise; the colours carry the rest, and the panel
+      // gives the full breakdown.
       const w = e.type.length * 6.4 + 8;
       let lx: number | null = null, ly = 0;
-      for (const t of [0.5, 0.38, 0.62, 0.28, 0.72, 0.2]) {
-        const pt = at(t);
-        const clash = boxes.some((bx) => Math.abs(bx.y - pt.y) < 13 && Math.abs(bx.x - pt.x) < (bx.w + w) / 2);
-        if (!clash) { lx = pt.x; ly = pt.y - 5; boxes.push({ x: pt.x, y: pt.y, w }); break; }
+      if (!labelledTypes.has(e.type)) {
+        for (const t of [0.5, 0.4, 0.6, 0.3, 0.7]) {
+          const pt = at(t);
+          const clash = boxes.some((bx) => Math.abs(bx.y - pt.y) < 20 && Math.abs(bx.x - pt.x) < (bx.w + w) / 2);
+          if (!clash) {
+            lx = pt.x; ly = pt.y - 5;
+            boxes.push({ x: pt.x, y: pt.y, w });
+            labelledTypes.add(e.type);
+            break;
+          }
+        }
       }
       out.push({
         key: `${k}`, d: `M${x1},${y1} C${c1x},${c1y} ${c2x},${c2y} ${ex},${ey}`,
@@ -256,6 +267,34 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
             <p style={{ fontSize: ".92rem", lineHeight: 1.6, color: "var(--ink-soft)", margin: ".8rem 0 0" }}>
               {shown.contrib ?? "Open the dossier for what this paper did and its evidence."}
             </p>
+            {(() => {
+              const drew = data.edges.filter((e) => e.to === shown.arxiv);
+              const fed = data.edges.filter((e) => e.from === shown.arxiv);
+              const tally = (es: typeof drew) => {
+                const m = new Map<string, number>();
+                for (const e of es) m.set(e.type, (m.get(e.type) ?? 0) + 1);
+                return [...m.entries()];
+              };
+              const Row = ({ label, es }: { label: string; es: typeof drew }) =>
+                es.length === 0 ? null : (
+                  <div style={{ marginTop: ".5rem" }}>
+                    <div style={{ fontFamily: "var(--font-mono)", fontSize: ".6rem", letterSpacing: ".1em",
+                      textTransform: "uppercase", color: "var(--ink-faint)" }}>{label}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: ".25rem .7rem", marginTop: ".2rem",
+                      fontFamily: "var(--font-mono)", fontSize: ".72rem" }}>
+                      {tally(es).map(([t, n]) => (
+                        <span key={t} style={{ color: EC[t] ?? "var(--ink-soft)" }}>{n} {t}</span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              return (
+                <div style={{ marginTop: ".9rem", paddingTop: ".7rem", borderTop: "1px solid var(--line)" }}>
+                  <Row label="Drew from" es={drew} />
+                  <Row label="Fed into" es={fed} />
+                </div>
+              );
+            })()}
             <button onClick={() => router.push(`/g/${id}/p/${encodeURIComponent(shown.arxiv)}`)}
               style={{ font: "inherit", fontSize: ".85rem", cursor: "pointer", marginTop: "1rem",
                 background: "#1d3b31", color: "#bfe6d4", border: "1px solid #2f5f4d",
