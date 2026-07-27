@@ -105,12 +105,21 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
   for (const r of movers.slice(0, 8)) picked.set(r.arxiv, r);
 
   const arxivs = [...picked.keys()];
-  const edgeRows = (await sql`
-    SELECT sp.arxiv_id AS from, tp.arxiv_id AS to, e.edge_type AS type, e.verified
+  const rawEdges = (await sql`
+    SELECT sp.arxiv_id AS from, tp.arxiv_id AS to, e.edge_type AS type, e.verified,
+           sp.year AS from_year, tp.year AS to_year
     FROM edges e JOIN papers sp ON sp.id = e.source_paper_id
                  JOIN papers tp ON tp.id = e.target_paper_id
     WHERE e.genealogy_id = ${id} AND sp.arxiv_id = ANY(${arxivs}) AND tp.arxiv_id = ANY(${arxivs})
-  `) as MapEdge[];
+  `) as (MapEdge & { from_year: number; to_year: number })[];
+
+  // An edge means "the newer paper did X to the older one's concept", so a link
+  // pointing backwards in time is a data error: arXiv revisions let two papers
+  // cite each other, and the stored year is the v1 date. Drop the reverse leg
+  // rather than draw a lineage the data cannot support.
+  const edges: MapEdge[] = rawEdges
+    .filter((e) => e.to_year >= e.from_year)
+    .map(({ from, to, type, verified }) => ({ from, to, type, verified }));
 
   const papers: MapPaper[] = arxivs.map((a) => {
     const r = picked.get(a)!;
@@ -127,7 +136,7 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
     concept,
     through_line: river.through_line,
     papers,
-    edges: edgeRows,
+    edges,
     streams: river.streams.map((s) => ({ id: s.id, name: s.name, color: s.color, count: s.papers.length })),
     total_papers: rows.length,
   };

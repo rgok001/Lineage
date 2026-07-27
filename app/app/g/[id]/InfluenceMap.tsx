@@ -19,6 +19,7 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
     narrows: "var(--edge-narrows)", renames: "var(--edge-renames)",
     contests: "var(--edge-contests)", merges: "var(--edge-merges)",
   };
+  const EDGE_KINDS = Object.keys(EC);
 
   const { bands, placed, yr0, yr1 } = useMemo(() => {
     const byStream = new Map<string, MapPaper[]>();
@@ -137,17 +138,40 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
             );
           })}
 
+          <defs>
+            {EDGE_KINDS.map((t) => (
+              <marker key={t} id={`ah-${t}`} viewBox="0 0 10 10" refX={9} refY={5}
+                markerWidth={5} markerHeight={5} orient="auto-start-reverse">
+                <path d="M0,1 L10,5 L0,9 z" fill={EC[t]} />
+              </marker>
+            ))}
+          </defs>
+
           {data.edges.map((e, k) => {
             const a = placed.get(e.from), b = placed.get(e.to);
             if (!a || !b) return null;
+            const on = hot && (e.from === hot || e.to === hot);
+            if (!on) return null;
             const x1 = x(a.p.year), y1 = py(e.from), x2 = x(b.p.year), y2 = py(e.to);
             const dx = (x2 - x1) * 0.42;
-            const on = hot && (e.from === hot || e.to === hot);
+            // stop the curve short of the target dot so the arrowhead sits clear of it
+            const r2 = rad(b.p) + 7;
+            const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+            const ex = x2 - ((x2 - x1) / len) * r2, ey = y2 - ((y2 - y1) / len) * r2;
+            const col = EC[e.type] ?? "var(--ink-faint)";
+            const mx = (x1 + ex) / 2, my = (y1 + ey) / 2;
             return (
-              <path key={k} d={`M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`}
-                fill="none" stroke={EC[e.type] ?? "var(--ink-faint)"} strokeWidth={e.verified ? 1.6 : 1.2}
-                strokeDasharray={e.verified ? undefined : "3 3"}
-                opacity={on ? 0.9 : 0} style={{ transition: "opacity .15s" }} />
+              <g key={k} style={{ pointerEvents: "none" }}>
+                <path d={`M${x1},${y1} C${x1 + dx},${y1} ${ex - dx},${ey} ${ex},${ey}`}
+                  fill="none" stroke={col} strokeWidth={e.verified ? 1.7 : 1.3}
+                  strokeDasharray={e.verified ? undefined : "3 3"}
+                  markerEnd={`url(#ah-${e.type})`} opacity={0.92} />
+                <text x={mx} y={my - 5} textAnchor="middle" fill={col} fontSize={10.5}
+                  fontFamily="var(--font-mono)"
+                  style={{ paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 4 }}>
+                  {e.type}
+                </text>
+              </g>
             );
           })}
 

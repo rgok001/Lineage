@@ -42,11 +42,15 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
           fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>
           {legend.map(([t, gloss]) => (
             <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: ".35rem" }}>
-              <span style={{ width: 16, borderTop: `2px solid var(--edge-${t})` }} />{t} · {gloss}
+              <span style={{ width: 16, borderTop: `2px solid var(--edge-${t})` }} />
+              <span style={{ color: `var(--edge-${t})` }}>▶</span>{t} · {gloss}
             </span>
           ))}
           <span style={{ display: "inline-flex", alignItems: "center", gap: ".35rem" }}>
             <span style={{ width: 10, height: 10, border: "2px solid var(--ink)", borderRadius: "50%" }} />turning point
+          </span>
+          <span style={{ color: "var(--ink-faint)" }}>
+            the arrow points at the newer paper, and names what it did to the older one’s idea
           </span>
         </div>
       </header>
