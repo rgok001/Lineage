@@ -101,8 +101,17 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
     }[];
     const boxes: { x: number; y: number; w: number }[] = [];
     const out = [];
-    for (const [k, e] of data.edges.entries()) {
-      if (e.from !== focusId && e.to !== focusId) continue;
+    const rel = data.edges
+      .map((e, k) => ({ e, k }))
+      .filter(({ e }) => e.from === focusId || e.to === focusId);
+
+    // Curves that share a focus and run to similar places would otherwise lie on
+    // top of each other, which no amount of label placement can rescue. Each is
+    // bowed sideways by a distinct amount so the bundle opens into a fan.
+    const n = rel.length;
+    const spread = Math.max(19, Math.min(30, 220 / Math.max(n, 1)));
+
+    for (const [i, { e, k }] of rel.entries()) {
       const a = placed.get(e.from), b = placed.get(e.to);
       if (!a || !b) continue;
       const x1 = x(a.p.year), y1 = py(e.from), x2 = x(b.p.year), y2 = py(e.to);
@@ -110,7 +119,9 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
       const r2 = rad(b.p) + 7;
       const len = Math.hypot(x2 - x1, y2 - y1) || 1;
       const ex = x2 - ((x2 - x1) / len) * r2, ey = y2 - ((y2 - y1) / len) * r2;
-      const c1x = x1 + dx, c1y = y1, c2x = ex - dx, c2y = ey;
+      const bow = (i - (n - 1) / 2) * spread;
+      const nx = -((ey - y1) / len) * bow, ny = ((ex - x1) / len) * bow;
+      const c1x = x1 + dx + nx, c1y = y1 + ny, c2x = ex - dx + nx, c2y = ey + ny;
       const at = (t: number) => {
         const u = 1 - t;
         return {
