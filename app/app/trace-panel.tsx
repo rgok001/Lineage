@@ -82,13 +82,15 @@ export default function TracePanel({
   }, [anyActive]);
 
   return (
-    <section style={{ marginTop: "2.2rem" }}>
-      <h2 style={{ fontSize: "1rem", color: "var(--ink)", margin: "0 0 .35rem" }}>Live traces</h2>
-      <p style={{ fontSize: ".8rem", color: "var(--ink-soft)", margin: "0 0 .9rem", lineHeight: 1.5 }}>
-        A trace reads up to 150 papers and takes about 15 minutes.{" "}
+    <section>
+      <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.15rem",
+        color: "var(--ink)", margin: "0 0 .35rem" }}>
+        {signedIn ? "Which concept?" : "Requests"}
+      </h2>
+      <p style={{ fontSize: ".85rem", color: "var(--ink-soft)", margin: "0 0 .9rem", lineHeight: 1.55 }}>
         {owner
-          ? "Your traces start automatically; visitor requests wait below for your approval."
-          : "Requests are reviewed by the curator before a trace runs."}
+          ? "Yours start straight away. Anyone else's waits here for your approval."
+          : "A curator reviews each request before it runs."}
       </p>
 
       {signedIn ? (
@@ -102,7 +104,7 @@ export default function TracePanel({
         >
           <input
             name="concept"
-            placeholder="Concept, e.g. “batch normalization”"
+            placeholder="A term, e.g. “batch normalization”"
             required
             maxLength={60}
             style={{ ...input, flex: "1 1 150px" }}
@@ -122,7 +124,7 @@ export default function TracePanel({
           />
           <input
             name="note"
-            placeholder="Why this concept? (optional)"
+            placeholder="Why you want it (optional)"
             maxLength={500}
             style={{ ...input, flex: "2 1 240px" }}
           />
@@ -139,7 +141,7 @@ export default function TracePanel({
             />
           )}
           <button type="submit" disabled={pending} style={btn}>
-            {pending ? "Submitting…" : owner ? "Queue trace" : "Request trace"}
+            {pending ? "Submitting…" : owner ? "Start mapping" : "Request it"}
           </button>
           {formState && (
             <span
@@ -154,7 +156,7 @@ export default function TracePanel({
         </form>
       ) : (
         <p style={{ fontSize: ".8rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
-          Sign in with GitHub to request a trace of a concept you care about.
+          Sign in with GitHub to request a concept. It is only used to attribute the request.
         </p>
       )}
 
@@ -204,7 +206,7 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
 
         {r.status === "complete" && r.genealogy_id && (
           <Link href={`/g/${r.genealogy_id}`} style={{ fontSize: ".8rem", color: "var(--edge-extends)" }}>
-            View genealogy ›
+            Open the map ›
           </Link>
         )}
         {owner && r.status === "requested" && (
@@ -268,8 +270,7 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
           )}
           {heartbeatStale && (
             <div style={{ fontSize: ".72rem", color: "var(--inferred)", marginTop: ".35rem" }}>
-              No progress for a few minutes. The trace is usually still working
-              through a quiet stage; if it stays here it may need a restart.
+              Quiet for a few minutes. Long stages often look like this; if it stays here it may need a restart.
             </div>
           )}
         </div>
@@ -291,7 +292,7 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
           </details>
         ) : (
           <div style={{ marginTop: ".45rem", fontSize: ".75rem", color: "var(--ink-soft)" }}>
-            This trace did not complete. It can be re-run at no extra cost for the work already done.
+            This run stopped early. Work already done is kept, so re-running costs only what is left.
           </div>
         )
       )}

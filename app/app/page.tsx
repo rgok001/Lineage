@@ -1,6 +1,5 @@
 import Link from "next/link";
 import SignInButton from "./signin-button";
-import TracePanel from "./trace-panel";
 import { getViewer, isOwner } from "../lib/authz";
 import { listGenealogies } from "../lib/genealogy";
 import { getArxivFields } from "../lib/openalex";
@@ -16,6 +15,8 @@ export default async function Home() {
     getArxivFields(),
     getViewer(),
   ]);
+
+  const active = traces.filter((t) => ["requested", "approved", "running"].includes(t.status)).length;
 
   return (
     <main style={{ maxWidth: 880, margin: "0 auto", padding: "2.5rem 1.5rem 4rem" }}>
@@ -40,7 +41,7 @@ export default async function Home() {
 
       {rows.length === 0 ? (
         <p style={{ color: "var(--ink-soft)" }}>
-          No concepts traced yet. Request a trace below to create the first one.
+          Nothing mapped yet. Map the first concept below.
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: ".7rem" }}>
@@ -73,7 +74,18 @@ export default async function Home() {
         </div>
       )}
 
-      <TracePanel initial={traces} initialNow={now} fields={fields} signedIn={!!viewer} owner={isOwner(viewer)} />
+      <Link href="/trace" style={{ display: "flex", alignItems: "center", gap: ".8rem", flexWrap: "wrap",
+        textDecoration: "none", marginTop: "1.6rem", background: "var(--card)",
+        border: "1px solid var(--line)", borderRadius: 10, padding: ".9rem 1.1rem" }}>
+        <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.05rem", color: "var(--ink)" }}>
+          Map a new concept →
+        </span>
+        <span style={{ fontSize: ".85rem", color: "var(--ink-soft)", marginLeft: "auto" }}>
+          {active > 0
+            ? `${active} being mapped right now`
+            : "name a term and Lineage reads the literature around it"}
+        </span>
+      </Link>
 
       <p style={{ marginTop: "2rem", fontSize: ".78rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
         Each account is drafted automatically from the papers themselves, then curated by hand.

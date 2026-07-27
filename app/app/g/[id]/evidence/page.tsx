@@ -91,13 +91,13 @@ function DangerZone({ genealogyId, concept }: { genealogyId: number; concept: st
   return (
     <details style={{ marginTop: "2.5rem", paddingTop: "1.2rem", borderTop: "1px solid var(--line)" }}>
       <summary style={{ cursor: "pointer", fontSize: ".85rem", color: "var(--inferred)" }}>
-        Danger zone: delete this genealogy
+        Danger zone: delete this map
       </summary>
       <div style={{ marginTop: ".8rem", border: "1px solid var(--inferred)", borderRadius: 8,
         background: "var(--card)", padding: "1rem 1.1rem" }}>
         <p style={{ fontSize: ".82rem", color: "var(--ink-soft)", margin: "0 0 .7rem", lineHeight: 1.5 }}>
-          Permanently removes this map and its relationships. Source papers and extracted evidence
-          are kept, and “{concept}” becomes available to trace again.
+          Permanently removes this map and its links. The papers and their extracted evidence are
+          kept, so “{concept}” can be mapped again cheaply.
         </p>
         <form action={deleteGenealogy} style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", alignItems: "center" }}>
           <input type="hidden" name="genealogyId" value={genealogyId} />
@@ -108,7 +108,7 @@ function DangerZone({ genealogyId, concept }: { genealogyId: number; concept: st
             style={inputStyle}
           />
           <button type="submit" style={{ ...btnStyle, color: "var(--inferred)", borderColor: "var(--inferred)" }}>
-            Delete genealogy
+            Delete map
           </button>
         </form>
       </div>
