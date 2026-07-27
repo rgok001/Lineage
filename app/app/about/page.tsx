@@ -171,7 +171,11 @@ export default function AboutPage() {
         </P>
       </Section>
 
-      <Section title="Where this method fails">
+      <Section title="Limitations and scope">
+        <P>
+          What a map covers, and what it does not. These are properties of the method rather than
+          defects to be patched, so they are worth knowing before you rely on one.
+        </P>
         <ul style={{ margin: 0, paddingLeft: "1.1rem", color: "var(--ink)", fontSize: ".92rem", lineHeight: 1.7 }}>
           <li>
             <strong>Coverage is arXiv-only.</strong> Fields that publish through journals, conferences
