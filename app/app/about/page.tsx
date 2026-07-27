@@ -20,19 +20,15 @@ const EDGE_COLORS: Record<string, string> = {
 
 export default function AboutPage() {
   return (
-    <main style={{ maxWidth: 780, margin: "0 auto", padding: "2rem 1.5rem 5rem" }}>
-      <Link href="/" style={{ fontSize: ".8rem", color: "var(--ink-soft)", textDecoration: "none" }}>
-        ‹ all concepts
-      </Link>
-
-      <header style={{ borderBottom: "2px solid var(--line)", padding: "1rem 0 1.3rem", marginBottom: "1.8rem" }}>
+    <main style={{ maxWidth: 780, margin: "0 auto", padding: "1rem 1.5rem 5rem" }}>
+      <header style={{ borderBottom: "2px solid var(--line)", padding: "0 0 1.3rem", marginBottom: "1.8rem" }}>
         <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2rem", margin: 0 }}>
           How Lineage works
         </h1>
         <p style={{ color: "var(--ink-soft)", margin: ".7rem 0 0", lineHeight: 1.6 }}>
           Written for someone deciding whether to rely on this. It sets out what a map claims, how
-          each claim is produced, which parts are machine judgment rather than fact, and where the
-          method fails. If you only read one section, read{" "}
+          each claim is produced, which parts are machine judgment rather than fact, and what the
+          method does not cover. If you only read one section, read{" "}
           <a href="#trust" style={{ color: "var(--edge-extends)" }}>what you can and cannot rely on</a>.
         </p>
       </header>
@@ -45,7 +41,7 @@ export default function AboutPage() {
         </P>
         <P>
           Three things are on it. <strong>Papers</strong>, drawn as dots, positioned by year and sized
-          by how much later work built on them <em>for this term</em>. <strong>Currents</strong>, the
+          by how much later work built on them <em>for this term</em>. <strong>Threads</strong>, the
           parallel lines of development the idea split into. And <strong>links</strong>, typed
           relationships between two specific papers, each carrying a sentence explaining what the
           later paper did to the earlier one’s idea.
@@ -79,11 +75,11 @@ export default function AboutPage() {
           use the term are recorded as such and excluded from the map. A negative answer is a finding,
           not a failure, and is cached like any other.
         </Step>
-        <Step n={4} name="Find the currents.">
+        <Step n={4} name="Find the threads.">
           The corpus is read as a whole to identify the distinct lines of development the term
           followed, grouped by what the papers say rather than by who cites whom. Two papers can
           define a term identically without ever citing each other, and a citation can cross between
-          currents; grouping by citation topology would produce a graph-theoretic artifact rather
+          threads; grouping by citation topology would produce a graph-theoretic artifact rather
           than a conceptual one.
         </Step>
         <Step n={5} name="Type the links between papers.">
@@ -162,7 +158,7 @@ export default function AboutPage() {
           <Tier
             label="Machine judgment"
             color="var(--edge-narrows)"
-            body="Link types, confidence scores, the current groupings, and any sentence labelled “the tool’s reading”. Generated from the evidence shown beside it. Treat as a well-informed starting point, never as a citable claim."
+            body="Link types, confidence scores, the thread groupings, and any sentence labelled “the tool’s reading”. Generated from the evidence shown beside it. Treat as a well-informed starting point, never as a citable claim."
           />
         </div>
         <P style={{ marginTop: ".9rem" }}>
@@ -199,7 +195,7 @@ export default function AboutPage() {
             unconnected rather than inventing a relationship.
           </li>
           <li>
-            <strong>The reading is a model’s.</strong> Link types, currents and contributions are
+            <strong>The reading is a model’s.</strong> Link types, threads and contributions are
             generated. They are grounded in quoted evidence and shown beside it, but they are not
             peer review, and the confidence scores are calibrated judgment rather than measurement.
           </li>
@@ -213,7 +209,7 @@ export default function AboutPage() {
 
       <Section title="Draft, then judgment">
         <P>
-          What the pipeline produces is a draft. A curator can rename a current, merge over-split
+          What the pipeline produces is a draft. A curator can rename a thread, merge over-split
           ones, delete weak groupings, and reclassify or remove links. Every such decision is appended
           to the map’s audit trail, so a curated map always carries the record of what a human changed
           and when. No edit rewrites a quote or changes a verification result: curation reorganises the

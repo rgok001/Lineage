@@ -1,5 +1,4 @@
 import Link from "next/link";
-import SignInButton from "../signin-button";
 import TracePanel from "../trace-panel";
 import { getViewer, isOwner } from "../../lib/authz";
 import { getArxivFields } from "../../lib/openalex";
@@ -18,15 +17,8 @@ export default async function TracePage() {
   ]);
 
   return (
-    <main style={{ maxWidth: 880, margin: "0 auto", padding: "2rem 1.5rem 5rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <Link href="/" style={{ fontSize: ".8rem", color: "var(--ink-soft)", textDecoration: "none" }}>
-          ‹ all concepts
-        </Link>
-        <SignInButton redirectTo="/trace" />
-      </div>
-
-      <header style={{ padding: "1.1rem 0 1.3rem" }}>
+    <main style={{ maxWidth: 880, margin: "0 auto", padding: "1rem 1.5rem 5rem" }}>
+      <header style={{ padding: "0 0 1.3rem" }}>
         <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2rem", margin: 0 }}>
           Map a new concept
         </h1>
@@ -41,7 +33,7 @@ export default async function TracePage() {
         {[
           ["1", "You name a term", "Say which field it belongs to, and what you mean by it if the word has more than one sense."],
           ["2", "It reads the papers", "Up to 150 of them, about fifteen minutes. You can watch the progress here."],
-          ["3", "You get the map", "The currents the idea split into, the papers that shaped it, and the evidence for each."],
+          ["3", "You get the map", "The threads the idea split into, the papers that shaped it, and the evidence for each."],
         ].map(([n, title, body]) => (
           <div key={n} style={{ flex: "1 1 210px", background: "var(--card)", border: "1px solid var(--line)",
             borderRadius: 10, padding: ".9rem 1rem" }}>

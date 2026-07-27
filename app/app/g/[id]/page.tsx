@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import SignInButton from "../../signin-button";
 import { getInfluenceMap } from "../../../lib/genealogy";
 import InfluenceMap from "./InfluenceMap";
 
@@ -16,13 +15,8 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
   ];
 
   return (
-    <main style={{ maxWidth: 1400, margin: "0 auto", padding: "2rem 1.5rem 4rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <Link href="/" style={{ fontSize: ".8rem", color: "var(--ink-soft)", textDecoration: "none" }}>‹ all concepts</Link>
-        <SignInButton />
-      </div>
-
-      <header style={{ padding: "1.1rem 0 1.2rem" }}>
+    <main style={{ maxWidth: 1400, margin: "0 auto", padding: "1rem 1.5rem 4rem" }}>
+      <header style={{ padding: "0 0 1.2rem" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", flexWrap: "wrap" }}>
           <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2.1rem", margin: 0, letterSpacing: "-.01em" }}>
             How “{data.concept}” evolved
@@ -60,7 +54,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
       <section style={{ marginTop: "1.6rem" }}>
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", letterSpacing: ".14em",
           textTransform: "uppercase", color: "var(--ink-faint)", margin: "0 0 .6rem" }}>
-          Read a current as an account
+          Read a thread as an account
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: ".45rem" }}>
           {data.streams.map((s) => (
@@ -94,7 +88,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
       <p style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-faint)",
         lineHeight: 1.8, marginTop: "1.8rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>
         Drafted automatically from the papers’ own words, then curated by hand; every curatorial change
-        is recorded. Scope is the corpus: broadening the source adds currents, each arriving with its
+        is recorded. Scope is the corpus: broadening the source adds threads, each arriving with its
         evidence attached.
       </p>
     </main>

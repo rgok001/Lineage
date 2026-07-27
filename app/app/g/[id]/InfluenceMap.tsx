@@ -5,9 +5,9 @@ import type { InfluenceMapData, MapPaper } from "../../../lib/genealogy";
 
 /** The influence map: every dot a paper, size = how much later work built on it
  *  for this term, a ring = it moved the term's meaning. Papers ride in visible
- *  current channels; typed lineage appears only on hover so the default view
+ *  thread channels; typed lineage appears only on hover so the default view
  *  stays a constellation, never a hairball. Click a paper → its dossier; click
- *  a channel name → that current's account. Scores select and size, and are
+ *  a channel name → that thread's account. Scores select and size, and are
  *  never shown as numbers. */
 export default function InfluenceMap({ id, data }: { id: number; data: InfluenceMapData }) {
   const router = useRouter();

@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import SignInButton from "../../../signin-button";
 import { deleteEdge, deleteGenealogy, reclassifyEdge } from "../../../../lib/actions";
 import { getViewer, isOwner } from "../../../../lib/authz";
 import { EDGE_MEANING, EDGE_TYPES, getGenealogy, type Edge, type RankedPaper, type Genealogy } from "../../../../lib/genealogy";
@@ -31,11 +30,8 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
   const verified = edges.filter((e) => e.verified).length;
 
   return (
-    <main style={{ maxWidth: 940, margin: "0 auto", padding: "2rem 1.5rem 5rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <Link href={`/g/${g.id}`} style={{ fontSize: ".8rem", color: "var(--ink-soft)" }}>‹ the river</Link>
-        <SignInButton />
-      </div>
+    <main style={{ maxWidth: 940, margin: "0 auto", padding: "1rem 1.5rem 5rem" }}>
+      <Link href={`/g/${g.id}`} style={{ fontSize: ".8rem", color: "var(--ink-soft)" }}>‹ the map</Link>
 
       <header style={{ borderBottom: "2px solid var(--line)", padding: "1rem 0 1.1rem", marginBottom: "1.5rem" }}>
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", letterSpacing: ".14em",
@@ -54,7 +50,7 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
         </p>
         <p style={{ color: "var(--ink-soft)", margin: ".5rem 0 0", fontSize: ".82rem", fontStyle: "italic" }}>
           The raw ranked papers and every typed relationship, with the evidence and the workbench.
-          The narrative view is the river.
+          The readable account is the map.
         </p>
       </header>
 

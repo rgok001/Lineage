@@ -1,5 +1,4 @@
 import Link from "next/link";
-import SignInButton from "./signin-button";
 import { getViewer, isOwner } from "../lib/authz";
 import { listGenealogies } from "../lib/genealogy";
 import { getArxivFields } from "../lib/openalex";
@@ -19,16 +18,13 @@ export default async function Home() {
   const active = traces.filter((t) => ["requested", "approved", "running"].includes(t.status)).length;
 
   return (
-    <main style={{ maxWidth: 880, margin: "0 auto", padding: "2.5rem 1.5rem 4rem" }}>
-      <header style={{ borderBottom: "2px solid var(--line)", paddingBottom: "1.1rem", marginBottom: "1.5rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2.1rem", margin: 0 }}>
-            Lineage
-          </h1>
-          <SignInButton />
-        </div>
+    <main style={{ maxWidth: 880, margin: "0 auto", padding: "1rem 1.5rem 4rem" }}>
+      <header style={{ paddingBottom: "1.1rem", marginBottom: "1.5rem" }}>
+        <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2.1rem", margin: 0 }}>
+          Read a concept’s development
+        </h1>
         <p style={{ color: "var(--ink-soft)", margin: ".45rem 0 0", lineHeight: 1.5 }}>
-          Read how an academic concept evolved: the currents it split into, how they fed each other,
+          Read how an academic concept evolved: the threads it split into, how they fed each other,
           and the papers that moved it, in order. Every claim is tied to a verbatim quote, verified
           against the source text.{" "}
           <Link href="/about" style={{ color: "var(--edge-extends)", whiteSpace: "nowrap" }}>
@@ -58,7 +54,7 @@ export default async function Home() {
                   <div style={{ fontSize: ".8rem", color: "var(--ink-soft)", marginTop: ".25rem" }}>
                     {g.paper_count} papers ·{" "}
                     {g.stream_count != null
-                      ? <>{g.stream_count} currents</>
+                      ? <>{g.stream_count} threads</>
                       : <>{g.edge_count} relationships</>} ·{" "}
                     <span style={{ color: "var(--verified)" }}>{g.verified_count} verified quotes</span>
                     {g.edit_count > 0 && <> · {g.edit_count} curatorial change(s)</>}

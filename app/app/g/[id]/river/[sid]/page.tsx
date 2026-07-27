@@ -16,7 +16,7 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
     <main style={{ padding: "2rem 1.5rem 5rem" }}>
       <div style={{ maxWidth: "42rem", margin: "0 auto" }}>
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>
-          <Link href={`/g/${id}`} style={{ color: c, textDecoration: "none" }}>‹ the river</Link>
+          <Link href={`/g/${id}`} style={{ color: c, textDecoration: "none" }}>‹ the map</Link>
           {" / "}<span style={{ color: "var(--ink)" }}>{s.name}</span>
         </div>
 
@@ -75,7 +75,7 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
 
         <p style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)",
           lineHeight: 1.9, marginTop: "1.4rem", paddingTop: "1.1rem", borderTop: "1px solid var(--line)" }}>
-          One current of the river, each claim pinned to the paper’s own words. A chatbot gives you the
+          One thread of the map, each claim pinned to the paper’s own words. A chatbot gives you the
           canon; this carries the papers in between, in order, with the evidence attached.
         </p>
       </div>
