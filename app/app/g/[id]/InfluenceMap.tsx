@@ -48,7 +48,7 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
     return { bands, placed, yr0, yr1 };
   }, [data]);
 
-  const W = 1100, m = { t: 22, r: 26, b: 34, l: 190 };
+  const W = 1320, m = { t: 22, r: 30, b: 34, l: 250 };
   const bandH = 78, H = m.t + bands.length * bandH + m.b;
   const x = (y: number) => m.l + ((y - yr0) / (yr1 - yr0)) * (W - m.l - m.r);
   const bandIdx = new Map(bands.map((b, i) => [b.sid, i]));
@@ -167,9 +167,9 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
 
   return (
     <div style={{ display: "flex", gap: "0.9rem", alignItems: "flex-start", flexWrap: "wrap" }}>
-      <div style={{ flex: "1 1 520px", minWidth: 0, overflowX: "auto", border: "1px solid var(--line)",
+      <div style={{ flex: "1 1 620px", minWidth: 0, overflowX: "auto", border: "1px solid var(--line)",
         borderRadius: 12, background: "var(--card)" }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", minWidth: 640 }}
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", minWidth: 820 }}
           role="img" aria-label={`Influence map of ${data.papers.length} pivotal ${data.concept} papers.`}>
           {ticks.map((y) => (
             <g key={y}>
@@ -187,10 +187,10 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
               <g key={b.sid}>
                 <rect x={x(b.minY) - 18} y={yTop} width={Math.max(x(b.maxY) - x(b.minY) + 36, 44)}
                   height={hh} rx={hh / 2} fill={b.color} opacity={0.14} />
-                <text x={m.l - 12} y={m.t + i * bandH + bandH / 2 + 3} textAnchor="end" fill={b.color}
+                <text x={m.l - 16} y={m.t + i * bandH + bandH / 2 + 3} textAnchor="end" fill={b.color}
                   fontSize={12} fontFamily="var(--font-mono)" opacity={0.95} style={{ cursor: "pointer" }}
                   onClick={() => router.push(`/g/${id}/river/${b.sid}`)}>
-                  {b.name.length > 26 ? b.name.slice(0, 25) + "…" : b.name} ›
+                  {b.name.length > 30 ? b.name.slice(0, 29) + "…" : b.name} ›
                 </text>
               </g>
             );

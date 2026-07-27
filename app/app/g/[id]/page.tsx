@@ -16,7 +16,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
   ];
 
   return (
-    <main style={{ maxWidth: 1140, margin: "0 auto", padding: "2rem 1.5rem 4rem" }}>
+    <main style={{ maxWidth: 1400, margin: "0 auto", padding: "2rem 1.5rem 4rem" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <Link href="/" style={{ fontSize: ".8rem", color: "var(--ink-soft)", textDecoration: "none" }}>‹ all concepts</Link>
         <SignInButton />
