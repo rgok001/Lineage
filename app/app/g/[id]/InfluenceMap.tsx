@@ -86,7 +86,6 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
       lx: number | null; ly: number;
     }[];
     const boxes: { x: number; y: number; w: number }[] = [];
-    const labelledTypes = new Set<string>();
     const out = [];
     for (const [k, e] of data.edges.entries()) {
       if (e.from !== focusId && e.to !== focusId) continue;
@@ -105,21 +104,21 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
           y: u * u * u * y1 + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * ey,
         };
       };
-      // Name each relationship type once. Repeating "extends" down a fan of
-      // parallel curves is noise; the colours carry the rest, and the panel
-      // gives the full breakdown.
+      // Every curve names itself. The curves converge on the focused paper and
+      // fan out towards the other end, so labels are placed near that far end
+      // where there is room, walking further out until clear of the labels
+      // already placed.
       const w = e.type.length * 6.4 + 8;
+      const outgoing = e.from === focusId;
+      const candidates = outgoing ? [0.74, 0.64, 0.84, 0.54, 0.92] : [0.26, 0.36, 0.16, 0.46, 0.08];
       let lx: number | null = null, ly = 0;
-      if (!labelledTypes.has(e.type)) {
-        for (const t of [0.5, 0.4, 0.6, 0.3, 0.7]) {
-          const pt = at(t);
-          const clash = boxes.some((bx) => Math.abs(bx.y - pt.y) < 20 && Math.abs(bx.x - pt.x) < (bx.w + w) / 2);
-          if (!clash) {
-            lx = pt.x; ly = pt.y - 5;
-            boxes.push({ x: pt.x, y: pt.y, w });
-            labelledTypes.add(e.type);
-            break;
-          }
+      for (const t of candidates) {
+        const pt = at(t);
+        const clash = boxes.some((bx) => Math.abs(bx.y - pt.y) < 15 && Math.abs(bx.x - pt.x) < (bx.w + w) / 2);
+        if (!clash) {
+          lx = pt.x; ly = pt.y - 5;
+          boxes.push({ x: pt.x, y: pt.y, w });
+          break;
         }
       }
       out.push({
