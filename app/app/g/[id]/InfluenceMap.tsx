@@ -43,19 +43,19 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
     }
     const placed = new Map<string, { p: MapPaper; dy: number }>();
     for (const g of groups.values())
-      g.forEach((p, i) => placed.set(p.arxiv, { p, dy: (i - (g.length - 1) / 2) * 19 }));
+      g.forEach((p, i) => placed.set(p.arxiv, { p, dy: (i - (g.length - 1) / 2) * 24 }));
     return { bands, placed, yr0, yr1 };
   }, [data]);
 
-  const W = 1000, m = { t: 20, r: 24, b: 30, l: 158 };
-  const bandH = 62, H = m.t + bands.length * bandH + m.b;
+  const W = 1100, m = { t: 22, r: 26, b: 34, l: 190 };
+  const bandH = 78, H = m.t + bands.length * bandH + m.b;
   const x = (y: number) => m.l + ((y - yr0) / (yr1 - yr0)) * (W - m.l - m.r);
   const bandIdx = new Map(bands.map((b, i) => [b.sid, i]));
   const py = (arxiv: string) => {
     const pl = placed.get(arxiv)!;
     return m.t + (bandIdx.get(pl.p.stream_id) ?? 0) * bandH + bandH / 2 + pl.dy;
   };
-  const rad = (p: MapPaper) => 4 + Math.sqrt(Math.max(p.attention, 0)) * 2.5;
+  const rad = (p: MapPaper) => 5 + Math.sqrt(Math.max(p.attention, 0)) * 2.8;
 
   const conn = useMemo(() => {
     const s = new Set<string>();
@@ -74,17 +74,17 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
   for (let y = Math.ceil(yr0); y <= yr1; y++) ticks.push(y);
 
   return (
-    <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "flex-start" }}>
-      <div style={{ flex: "1 1 620px", minWidth: 0, overflowX: "auto", border: "1px solid var(--line)",
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+      <div style={{ width: "100%", overflowX: "auto", border: "1px solid var(--line)",
         borderRadius: 12, background: "var(--card)" }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", minWidth: 760 }}
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", minWidth: 900 }}
           role="img" aria-label={`Influence map of ${data.papers.length} pivotal ${data.concept} papers.`}>
           {ticks.map((y) => (
             <g key={y}>
               <line x1={x(y)} y1={m.t} x2={x(y)} y2={H - m.b + 4} stroke="var(--line-soft)" strokeWidth={1} />
               {y % 2 === 0 && (
                 <text x={x(y)} y={H - m.b + 18} textAnchor="middle" fill="var(--ink-faint)"
-                  fontSize={10} fontFamily="var(--font-mono)">{y}</text>
+                  fontSize={12} fontFamily="var(--font-mono)">{y}</text>
               )}
             </g>
           ))}
@@ -96,9 +96,9 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
                 <rect x={x(b.minY) - 18} y={yTop} width={Math.max(x(b.maxY) - x(b.minY) + 36, 44)}
                   height={hh} rx={hh / 2} fill={b.color} opacity={0.14} />
                 <text x={m.l - 12} y={m.t + i * bandH + bandH / 2 + 3} textAnchor="end" fill={b.color}
-                  fontSize={10} fontFamily="var(--font-mono)" opacity={0.95} style={{ cursor: "pointer" }}
+                  fontSize={12} fontFamily="var(--font-mono)" opacity={0.95} style={{ cursor: "pointer" }}
                   onClick={() => router.push(`/g/${id}/river/${b.sid}`)}>
-                  {b.name.length > 24 ? b.name.slice(0, 23) + "…" : b.name} ›
+                  {b.name.length > 26 ? b.name.slice(0, 25) + "…" : b.name} ›
                 </text>
               </g>
             );
@@ -130,7 +130,7 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
                 )}
                 <circle cx={cx} cy={cyv} r={r} fill={p.color} stroke="var(--paper)" strokeWidth={1} opacity={0.95} />
                 {p.attention >= 4.5 && (
-                  <text x={cx + r + 4} y={cyv + 3.5} fill="var(--ink-soft)" fontSize={10}
+                  <text x={cx + r + 5} y={cyv + 4} fill="var(--ink)" fontSize={12.5}
                     fontFamily="var(--font-ui)" style={{ paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3 }}>
                     {p.title.length > 26 ? p.title.slice(0, 25) + "…" : p.title.split(":")[0]}
                   </text>
@@ -141,30 +141,30 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
         </svg>
       </div>
 
-      <aside style={{ flex: "0 1 250px", minWidth: 220, background: "var(--card)", border: "1px solid var(--line)",
-        borderRadius: 10, padding: ".9rem 1rem", position: "sticky", top: "1rem" }}>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: ".6rem", letterSpacing: ".14em",
-          textTransform: "uppercase", color: "var(--ink-faint)" }}>Reading panel</div>
+      <aside style={{ width: "100%", background: "var(--card)", border: "1px solid var(--line)",
+        borderRadius: 10, padding: ".85rem 1.1rem", minHeight: 88 }}>
         {shown ? (
-          <>
-            <h3 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.02rem",
-              lineHeight: 1.3, margin: ".35rem 0 .1rem" }}>{shown.title}</h3>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: ".64rem", color: "var(--ink-soft)", marginBottom: ".55rem" }}>
-              {shown.year} · <span style={{ color: shown.color }}>{shown.stream_name}</span>
-              {shown.displacement >= 0.25 && " · a turning point"}
+          <div style={{ display: "flex", gap: "1.2rem", alignItems: "flex-start", flexWrap: "wrap" }}>
+            <div style={{ flex: "0 1 340px" }}>
+              <h3 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.08rem",
+                lineHeight: 1.3, margin: 0 }}>{shown.title}</h3>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: ".7rem", color: "var(--ink-soft)", marginTop: ".25rem" }}>
+                {shown.year} · <span style={{ color: shown.color }}>{shown.stream_name}</span>
+                {shown.displacement >= 0.25 && " · a turning point"}
+              </div>
             </div>
-            <div style={{ fontSize: ".84rem", lineHeight: 1.5, color: "var(--ink-soft)" }}>
+            <div style={{ flex: "1 1 300px", fontSize: ".92rem", lineHeight: 1.55, color: "var(--ink-soft)" }}>
               {shown.contrib ?? "Open the dossier for what this paper did and its evidence."}
             </div>
             <button onClick={() => router.push(`/g/${id}/p/${encodeURIComponent(shown.arxiv)}`)}
-              style={{ marginTop: ".7rem", font: "inherit", fontSize: ".78rem", cursor: "pointer",
+              style={{ font: "inherit", fontSize: ".85rem", cursor: "pointer", alignSelf: "center",
                 background: "#1d3b31", color: "#bfe6d4", border: "1px solid #2f5f4d",
-                borderRadius: 8, padding: ".45rem .8rem" }}>
+                borderRadius: 8, padding: ".5rem .95rem", whiteSpace: "nowrap" }}>
               Read the dossier →
             </button>
-          </>
+          </div>
         ) : (
-          <div style={{ fontSize: ".84rem", lineHeight: 1.55, color: "var(--ink-soft)", marginTop: ".4rem" }}>
+          <div style={{ fontSize: ".92rem", lineHeight: 1.6, color: "var(--ink-soft)" }}>
             Bigger means more of the field built on it for this term. A ring marks a paper that moved
             the meaning. Hover a paper to trace its lineage; click it to read what it did, with the
             evidence. Click a current’s name to read that current as an account.

@@ -16,7 +16,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
   ];
 
   return (
-    <main style={{ maxWidth: 1060, margin: "0 auto", padding: "2rem 1.5rem 4rem" }}>
+    <main style={{ maxWidth: 1140, margin: "0 auto", padding: "2rem 1.5rem 4rem" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <Link href="/" style={{ fontSize: ".8rem", color: "var(--ink-soft)", textDecoration: "none" }}>‹ all concepts</Link>
         <SignInButton />
@@ -38,8 +38,8 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
             {data.through_line}
           </p>
         )}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: ".3rem 1.1rem", margin: ".9rem 0 0",
-          fontFamily: "var(--font-mono)", fontSize: ".64rem", color: "var(--ink-soft)" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: ".35rem 1.2rem", margin: ".9rem 0 0",
+          fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>
           {legend.map(([t, gloss]) => (
             <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: ".35rem" }}>
               <span style={{ width: 16, borderTop: `2px solid var(--edge-${t})` }} />{t} · {gloss}
