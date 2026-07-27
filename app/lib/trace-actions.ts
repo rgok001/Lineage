@@ -61,7 +61,7 @@ export async function requestTrace(
     SELECT id FROM genealogies WHERE concept = ${concept} LIMIT 1
   `) as { id: number }[];
   if (existing.length) {
-    return { ok: false, message: `“${concept}” has already been traced. Its genealogy is listed above.` };
+    return { ok: false, message: `“${concept}” is already mapped. You can open it from the home page.` };
   }
 
   if (!owner) {
@@ -109,11 +109,12 @@ export async function requestTrace(
   }
 
   revalidatePath("/");
+  revalidatePath("/trace");
   return {
     ok: true,
     message: owner
-      ? `Queued. “${concept}” will begin shortly.`
-      : `Request received. The curator reviews all requests before a trace runs; progress will appear here.`,
+      ? `Queued. “${concept}” starts shortly; progress appears below.`
+      : `Request received. A curator reviews each one before it runs; progress will appear below.`,
   };
 }
 
@@ -126,6 +127,7 @@ export async function approveTrace(formData: FormData) {
     WHERE id = ${id} AND status = 'requested'
   `;
   revalidatePath("/");
+  revalidatePath("/trace");
 }
 
 /** Rejects a pending request — or withdraws an approved one the worker has not
@@ -139,4 +141,12 @@ export async function rejectTrace(formData: FormData) {
     WHERE id = ${id} AND status IN ('requested', 'approved')
   `;
   revalidatePath("/");
+  revalidatePath("/trace");
+}
+
+/** Sign-in that returns you to the request page rather than the home page, so
+ *  the form you came for is the thing you land on. */
+export async function signInHere() {
+  const { signIn } = await import("../auth");
+  await signIn("github", { redirectTo: "/trace" });
 }

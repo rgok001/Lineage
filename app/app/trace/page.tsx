@@ -23,7 +23,7 @@ export default async function TracePage() {
         <Link href="/" style={{ fontSize: ".8rem", color: "var(--ink-soft)", textDecoration: "none" }}>
           ‹ all concepts
         </Link>
-        <SignInButton />
+        <SignInButton redirectTo="/trace" />
       </div>
 
       <header style={{ padding: "1.1rem 0 1.3rem" }}>

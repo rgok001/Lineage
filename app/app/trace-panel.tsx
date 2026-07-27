@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
-import { approveTrace, rejectTrace, requestTrace } from "../lib/trace-actions";
+import { approveTrace, rejectTrace, requestTrace, signInHere } from "../lib/trace-actions";
 import type { TraceRequest } from "../lib/traces";
 import type { ArxivField } from "../lib/openalex";
 
@@ -155,9 +155,19 @@ export default function TracePanel({
           )}
         </form>
       ) : (
-        <p style={{ fontSize: ".8rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
-          Sign in with GitHub to request a concept. It is only used to attribute the request.
-        </p>
+        <form action={signInHere}
+          style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 8,
+            padding: "1rem 1.1rem", marginBottom: "1rem" }}>
+          <p style={{ margin: "0 0 .8rem", fontSize: ".88rem", lineHeight: 1.6, color: "var(--ink-soft)" }}>
+            Sign in to name a concept. Your GitHub username is used only to attribute the request and
+            to keep one person from queuing the whole corpus.
+          </p>
+          <button type="submit"
+            style={{ font: "inherit", fontSize: ".85rem", cursor: "pointer", background: "#1d3b31",
+              color: "#bfe6d4", border: "1px solid #2f5f4d", borderRadius: 8, padding: ".55rem 1rem" }}>
+            Sign in with GitHub to continue →
+          </button>
+        </form>
       )}
 
       {rows.length > 0 && (

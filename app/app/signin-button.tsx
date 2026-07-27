@@ -7,7 +7,7 @@ import { getViewer, isOwner } from "../lib/authz";
  * Server Action (lib/authz.ts requireOwner), which is the only thing a caller
  * with curl cannot bypass.
  */
-export default async function SignInButton() {
+export default async function SignInButton({ redirectTo = "/" }: { redirectTo?: string } = {}) {
   const viewer = await getViewer();
   const owner = isOwner(viewer);
 
@@ -32,7 +32,7 @@ export default async function SignInButton() {
           </form>
         </>
       ) : (
-        <form action={async () => { "use server"; await signIn("github", { redirectTo: "/" }); }}>
+        <form action={async () => { "use server"; await signIn("github", { redirectTo }); }}>
           <button type="submit" style={btn}>Sign in with GitHub</button>
         </form>
       )}
