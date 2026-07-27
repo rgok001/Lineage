@@ -48,7 +48,21 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
     return { bands, placed, yr0, yr1 };
   }, [data]);
 
-  const W = 1320, m = { t: 22, r: 30, b: 34, l: 250 };
+  /** Channel names wrap rather than truncate: SVG text has no wrapping, so the
+   *  name is packed into lines and rendered as stacked tspans. */
+  const wrapLabel = (s: string, max = 21): string[] => {
+    const lines: string[] = [];
+    let cur = "";
+    for (const word of s.split(" ")) {
+      const next = cur ? `${cur} ${word}` : word;
+      if (next.length <= max) cur = next;
+      else { if (cur) lines.push(cur); cur = word; }
+    }
+    if (cur) lines.push(cur);
+    return lines.slice(0, 3);
+  };
+
+  const W = 1320, m = { t: 22, r: 30, b: 34, l: 186 };
   const bandH = 78, H = m.t + bands.length * bandH + m.b;
   const x = (y: number) => m.l + ((y - yr0) / (yr1 - yr0)) * (W - m.l - m.r);
   const bandIdx = new Map(bands.map((b, i) => [b.sid, i]));
@@ -186,11 +200,22 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
               <g key={b.sid}>
                 <rect x={x(b.minY) - 18} y={yTop} width={Math.max(x(b.maxY) - x(b.minY) + 36, 44)}
                   height={hh} rx={hh / 2} fill={b.color} opacity={0.14} />
-                <text x={m.l - 16} y={m.t + i * bandH + bandH / 2 + 3} textAnchor="end" fill={b.color}
-                  fontSize={12} fontFamily="var(--font-mono)" opacity={0.95} style={{ cursor: "pointer" }}
-                  onClick={() => router.push(`/g/${id}/river/${b.sid}`)}>
-                  {b.name.length > 30 ? b.name.slice(0, 29) + "…" : b.name} ›
-                </text>
+                {(() => {
+                  const lines = wrapLabel(b.name);
+                  const lh = 14, cyBand = m.t + i * bandH + bandH / 2;
+                  const y0 = cyBand + 4 - ((lines.length - 1) * lh) / 2;
+                  return (
+                    <text textAnchor="end" fill={b.color} fontSize={12} fontFamily="var(--font-mono)"
+                      opacity={0.95} style={{ cursor: "pointer" }}
+                      onClick={() => router.push(`/g/${id}/river/${b.sid}`)}>
+                      {lines.map((ln, k) => (
+                        <tspan key={k} x={m.l - 16} y={y0 + k * lh}>
+                          {ln}{k === lines.length - 1 ? " ›" : ""}
+                        </tspan>
+                      ))}
+                    </text>
+                  );
+                })()}
               </g>
             );
           })}
