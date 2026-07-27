@@ -107,10 +107,10 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
-      <div style={{ width: "100%", overflowX: "auto", border: "1px solid var(--line)",
+    <div style={{ display: "flex", gap: "0.9rem", alignItems: "flex-start", flexWrap: "wrap" }}>
+      <div style={{ flex: "1 1 520px", minWidth: 0, overflowX: "auto", border: "1px solid var(--line)",
         borderRadius: 12, background: "var(--card)" }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", minWidth: 900 }}
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", minWidth: 640 }}
           role="img" aria-label={`Influence map of ${data.papers.length} pivotal ${data.concept} papers.`}>
           {ticks.map((y) => (
             <g key={y}>
@@ -177,34 +177,49 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
         </svg>
       </div>
 
-      <aside style={{ width: "100%", background: "var(--card)", border: "1px solid var(--line)",
-        borderRadius: 10, padding: ".85rem 1.1rem", minHeight: 88 }}>
+      <aside style={{ flex: "0 1 268px", minWidth: 220, background: "var(--card)",
+        border: "1px solid var(--line)", borderRadius: 10, padding: "1rem 1.1rem",
+        position: "sticky", top: "1rem", alignSelf: "flex-start" }}>
         {shown ? (
-          <div style={{ display: "flex", gap: "1.2rem", alignItems: "flex-start", flexWrap: "wrap" }}>
-            <div style={{ flex: "0 1 340px" }}>
-              <h3 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.08rem",
-                lineHeight: 1.3, margin: 0 }}>{shown.title}</h3>
-              <div style={{ fontFamily: "var(--font-mono)", fontSize: ".7rem", color: "var(--ink-soft)", marginTop: ".25rem" }}>
-                {shown.year} · <span style={{ color: shown.color }}>{shown.stream_name}</span>
-                {shown.displacement >= 0.25 && " · a turning point"}
-              </div>
+          <>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", letterSpacing: ".12em",
+              textTransform: "uppercase", color: "var(--ink-faint)" }}>
+              {shown.displacement >= 0.25 ? "A turning point" : "Paper"}
             </div>
-            <div style={{ flex: "1 1 300px", fontSize: ".92rem", lineHeight: 1.55, color: "var(--ink-soft)" }}>
+            <h3 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.1rem",
+              lineHeight: 1.3, margin: ".4rem 0 .3rem" }}>{shown.title}</h3>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: ".7rem", color: "var(--ink-soft)" }}>
+              {shown.year} · <span style={{ color: shown.color }}>{shown.stream_name}</span>
+            </div>
+            <p style={{ fontSize: ".92rem", lineHeight: 1.6, color: "var(--ink-soft)", margin: ".8rem 0 0" }}>
               {shown.contrib ?? "Open the dossier for what this paper did and its evidence."}
-            </div>
+            </p>
             <button onClick={() => router.push(`/g/${id}/p/${encodeURIComponent(shown.arxiv)}`)}
-              style={{ font: "inherit", fontSize: ".85rem", cursor: "pointer", alignSelf: "center",
+              style={{ font: "inherit", fontSize: ".85rem", cursor: "pointer", marginTop: "1rem",
                 background: "#1d3b31", color: "#bfe6d4", border: "1px solid #2f5f4d",
-                borderRadius: 8, padding: ".5rem .95rem", whiteSpace: "nowrap" }}>
+                borderRadius: 8, padding: ".5rem .95rem", width: "100%" }}>
               Read the dossier →
             </button>
-          </div>
+          </>
         ) : (
-          <div style={{ fontSize: ".92rem", lineHeight: 1.6, color: "var(--ink-soft)" }}>
-            Bigger means more of the field built on it for this term. A ring marks a paper that moved
-            the meaning. Hover a paper to trace its lineage; click it to read what it did, with the
-            evidence. Click a current’s name to read that current as an account.
-          </div>
+          <>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", letterSpacing: ".12em",
+              textTransform: "uppercase", color: "var(--ink-faint)" }}>Hover a paper</div>
+            <p style={{ fontSize: ".88rem", lineHeight: 1.6, color: "var(--ink-soft)", margin: ".55rem 0 0" }}>
+              Its lineage lights up here, with what it contributed. Click through for the evidence.
+            </p>
+            <ul style={{ margin: "1rem 0 0", padding: 0, listStyle: "none", display: "flex",
+              flexDirection: "column", gap: ".45rem", fontSize: ".8rem", color: "var(--ink-soft)" }}>
+              <li style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
+                <span style={{ width: 14, height: 14, borderRadius: "50%", background: "var(--ink-faint)", flex: "none" }} />
+                size = how much the field built on it
+              </li>
+              <li style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
+                <span style={{ width: 14, height: 14, borderRadius: "50%", border: "2px solid var(--ink)", flex: "none" }} />
+                ring = it moved the meaning
+              </li>
+            </ul>
+          </>
         )}
       </aside>
     </div>
