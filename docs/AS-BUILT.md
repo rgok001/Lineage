@@ -1,6 +1,6 @@
 # Lineage: As-Built Documentation
 
-**As of commit `883671b`, 2026-07-26.**
+**As of commit `2f55099`, 2026-07-27.**
 
 This is the as-built record: a description of the system as it actually exists,
 including the deviations, incidents, and hard-won rules that shaped it. The
@@ -9,19 +9,22 @@ design intent lives in [CLAUDE.md](../CLAUDE.md) (product spec) and
 say what was planned, this one says what is true. When they disagree, trust
 this one, then update it.
 
-**What changed since 2026-07-19 (the river turn).** The product's face moved
-from a drift map (senses as the spine, a wall of typed relationships) to an
-**account**: a map opens as a "river" of the concept's parallel currents and how
-they fed each other, and you dive from there into a current's grounded narrative
-and then a single paper. Three things made that possible, all live: edges now
-keep the *basis* they used to discard (what each paper did and how, with the
-citing sentence, migration 010); every paper carries two magnitude scores that
-decide reading order (migration 011); and each map stores a generated river of
-conceptual streams with per-stream dive accounts (migration 012). The old
+**What changed since 2026-07-19 (the paper-centric turn).** The product's face
+moved twice in a week. It left the drift map (senses as the spine, a wall of
+typed relationships) for a "river" of the concept's parallel currents, then left
+the river metaphor as well: a map now opens on an **influence map** of the
+papers themselves, and a current is called a **thread**, the word researchers
+already use for a line of work and one that accommodates threads crossing. Four
+things made that possible, all live: edges now keep the *basis* they used to
+discard (what each paper did and how, with the citing sentence, migration 010);
+every paper carries two magnitude scores that decide which papers appear on the
+map and how large (migration 011); each map stores a generated set of threads
+with per-thread accounts (migration 012, still named `streams` in the schema and
+in `lib/genealogy.ts`); and a paper has its own dossier route. The old
 sense-taxonomy and the raw relationship list still exist, demoted to a secondary
-`/g/[id]/evidence` layer. See sections 3, 4b, and 6 for the detail, and section
-11 for the honest gap: the magnitude and river generation currently run as
-one-off scripts against the showcase map, not yet as committed pipeline stages.
+`/g/[id]/evidence` layer. See sections 3, 4, and 6 for the detail, and section
+11 for the honest gap: the magnitude and thread generation ran as one-off
+scripts against the showcase map and are not in the repository at all.
 
 ---
 
@@ -29,9 +32,10 @@ one-off scripts against the showcase map, not yet as committed pipeline stages.
 
 Lineage traces how an academic concept evolved across arXiv papers and
 publishes the result as an interactive, evidence-backed account. A map opens as
-a river of the concept's parallel currents (the account view); underneath it
-still holds the typed relationships between papers, each backed by verbatim
-quotes from both papers verified against the extracted source text. The
+an influence map: the pivotal papers placed by year, sized by how much later
+work built on them for that term, riding in the threads the idea split into.
+Underneath it still holds the typed relationships between papers, each backed by
+verbatim quotes from both papers verified against the extracted source text. The
 showcase map is "embedding" (`/g/10`, 134 papers, 305 relationships, 233
 verified); the earlier "dropout" map was deleted on 2026-07-26.
 
@@ -41,7 +45,7 @@ verified); the earlier "dropout" map was deleted on 2026-07-26.
 | Database | Neon serverless Postgres, pgvector 0.8 | Neon (Vercel-linked account) | free tier |
 | Pipeline | Python 3.12 CLI scripts | Anywhere with the repo and `.env` | LLM spend only |
 | Trace worker | Python 3.12, single process | Render Background Worker (declared in `render.yaml`; the owner's laptop until the Render console setup is done) | ~$8/mo |
-| LLM | Claude Sonnet (`claude-sonnet-5`) for extraction/classification; Claude Haiku (`claude-haiku-4-5`) for the cheaper post-pipeline scoring and river generation | n/a | ~$6 per 150-paper trace; +~$0.7 for magnitude + river on one map |
+| LLM | Claude Sonnet (`claude-sonnet-5`) for extraction/classification; Claude Haiku (`claude-haiku-4-5`) for the cheaper post-pipeline scoring and thread generation | n/a | ~$6 per 150-paper trace; +~$0.7 for magnitude + threads on one map |
 
 External data sources, all keyless: **arXiv** (paper source, LaTeX-first,
 throttled 1 request/3s), **OpenAlex** (corpus metadata and citation counts,
@@ -68,9 +72,12 @@ pipeline/            the five stages + auxiliaries (Python, CLI-first)
   db/migrations/     001..012
 worker/run.py        the trace worker (queue consumer)
 app/                 Next.js app (Vercel root directory is app/)
-  app/               routes: /, /about, /g/[id] (the river), /g/[id]/river/[sid]
-                     (a current's dive), /g/[id]/evidence (the old detailed view),
+  app/               routes: /, /trace (request a map), /about, /roadmap,
+                     /g/[id] (the influence map), /g/[id]/river/[sid] (a thread's
+                     account), /g/[id]/p/[arxiv] (a paper's dossier),
+                     /g/[id]/evidence (the old detailed view + workbench),
                      /api/traces, /api/auth
+                     layout.tsx + nav.tsx hold the one tab bar
   lib/               db.ts, authz.ts, genealogy.ts, traces.ts, actions
 data/                DATA_DIR (gitignored): raw papers, texts, exports, models
 ```
@@ -86,8 +93,8 @@ hold different `DATABASE_URL` values; see section 8.
 Six tables, migrations `001` through `012`, applied by
 `python pipeline/db/migrate.py` (tracked in `schema_migrations`). Migrations
 `008`-`009` are data fixes (paths relative to `DATA_DIR`; correcting future
-publication years OpenAlex mis-dated). `010`-`012` are the river turn and are
-described inline below.
+publication years OpenAlex mis-dated). `010`-`012` carry the paper-centric turn
+and are described inline below.
 
 **papers** (001, 002): one row per fetched arXiv paper. Notable columns:
 `raw_path` and `extracted_text_path` point into `DATA_DIR`;
@@ -98,7 +105,7 @@ paper. Real observed cases: arXiv 1810.04805 (BERT) and 1907.11692 (RoBERTa)
 both carried unrelated titles. Downstream stages must filter
 `text_title_match >= 0.5`.
 
-**definitions** (001, 003, 004): Stage B output, one row per
+**definitions** (001, 003, 004, 011): Stage B output, one row per
 (paper, concept, prompt_version). That triple is the cache key, deliberately
 excluding the model so a model switch does not re-bill an extracted corpus;
 `model` (004) records provenance instead. `defines_concept` (003) exists
@@ -106,29 +113,44 @@ because a negative verdict ("this paper does not define the concept") is a
 finding: before 003, negatives wrote no row, so every re-run re-paid the LLM
 for most of the corpus. `embedding vector(1024)` holds the Stage C embedding.
 `novelty_claims` (JSONB, from Stage B) lists what the paper claims it
-contributed; it was extracted from the start but only surfaced in the UI in the
-river turn. `attention` and `displacement` (REAL, migration 011) are the two
-per-paper magnitude scores that drive reading order (section 4b): attention is
-on-term weighted uptake (how much later work built on this paper *for this
-term*), displacement is how far the paper moved the term's meaning (embedding
-distance from the centroid of earlier definitions). Both are per
+contributed; it was extracted from the start and sat unused until the paper
+dossier surfaced it as "what it contributed". `attention` and `displacement`
+(REAL, migration 011) are the two per-paper magnitude scores that decide which
+papers reach the influence map and how large they sit there (section 4):
+attention is on-term weighted uptake (how much later work built on this paper
+*for this term*), displacement is how far the paper moved the term's meaning
+(embedding distance from the centroid of earlier definitions). Both are per
 (paper, concept, prompt_version) because magnitude is relative to the term
 being traced, and both are nullable (computed by a post-Stage-D job; the
 earliest paper has no earlier work to be displaced from).
 
-**genealogies** (001, 007): the map itself. `nodes` is JSONB (concept-states
-with members and year ranges), `user_edits` is the append-only curatorial audit
-trail, `spend_usd` accumulates cost, `status` is loosely one of
+**genealogies** (001, 007, 012): the map itself. `nodes` is JSONB
+(concept-states with members and year ranges), `user_edits` is the append-only
+curatorial audit trail, `spend_usd` accumulates cost, `status` is loosely one of
 pending/running/complete/failed/aborted_spend_cap. Migration 007 adds
 `UNIQUE (concept, prompt_version)`: Stage C now upserts on that key (stable id
 across re-runs, in place), where it used to DELETE then INSERT and mint a new
 id every run. That old pattern broke `/g/<id>` links on re-trace and orphaned a
 `running` row when a run crashed between Stage C and Stage E (see section 10,
-incident 4).
+incident 4). Migration 012 adds `streams` JSONB: the generated threads (a
+through-line, an array of threads each with its papers and a per-paper passage,
+and the cross-currents where one thread fed another). The column and the types
+in `lib/genealogy.ts` still carry the river vocabulary the interface has since
+dropped; the reader sees "threads". Null until the generation job has run for
+that map, and `/g/[id]` redirects to `/g/[id]/evidence` when it is null.
 
-**edges** (001): typed relationships between nodes, with FK to both papers,
+**edges** (001, 010): typed relationships between nodes, with FK to both papers,
 both verbatim quotes, `confidence`, and `verified` (the grounding verdict).
-`ON DELETE CASCADE` from genealogies.
+`ON DELETE CASCADE` from genealogies. Migration 010 adds `rationale` and
+`citation_context`: the *basis* of the edge. Stage D already generated a
+one-sentence rationale (what the newer paper did to the concept and how) and
+fetched the citing sentence from Semantic Scholar to make the classification,
+then discarded both, keeping only the type label. It now stores them. The
+rationale is model prose (labelled in the UI as the tool's reading, never
+verified); the citation context is a verbatim S2 sentence but from S2's PDF
+extraction, so it cannot pass our string-match grounding and is labelled
+"per Semantic Scholar, not string-verified". Neither wears the verified stamp
+the definition quotes carry.
 
 The request also carries a **subject field** and an optional **sense gloss**
 (migration 006): `field_id` (an OpenAlex field, default `fields/17` = Computer
@@ -241,6 +263,28 @@ invented prose.
 genealogies row and its edges from a JSON export and records the restoration
 in the audit trail. Written during incident 4 and kept as the recovery path.
 
+**Post-pipeline: magnitude and threads (not in the repository).**
+Two jobs run after Stage E and produce everything the front door reads:
+
+- *Magnitude* fills `definitions.attention` and `definitions.displacement`
+  (migration 011). Attention is on-term weighted uptake: not a raw citation
+  count, which rewards famous-but-incidental work, but each citation scored by
+  whether the citing sentence actually engages this paper's contribution to
+  *this* term. Displacement is the distance of a paper's definition embedding
+  from the centroid of earlier definitions, which marks turning points that
+  attention structurally misses (a paper that moves a term is cited by the
+  field it moved into, not by this corpus). The two were measured uncorrelated
+  on `/g/10` (Spearman +0.05), which is the point: they answer different
+  questions and neither substitutes for the other.
+- *Thread generation* fills `genealogies.streams` (migration 012) by reading
+  the corpus's content (definitions and novelty claims), not its citation
+  topology, which is why it is a stored artifact rather than something derived
+  at render time.
+
+Both ran as one-off scripts against the showcase map and neither was committed,
+so `pipeline/` has no way to produce them for a new map. This is the largest
+gap between this document and a reproducible system; see section 11.
+
 ---
 
 ## 5. The trace worker
@@ -290,23 +334,61 @@ requires a client component. Reads Postgres through the Neon HTTP driver
 (`lib/db.ts`), which wants the **pooled** endpoint: each query is a fetch,
 which suits serverless.
 
+One tab bar lives in `layout.tsx` (`nav.tsx`): Concepts, Map a new concept, How
+it works, Roadmap. A map, a thread and a paper all keep Concepts lit, so a
+reader deep in the evidence still knows where they are. Before it, navigation
+was a back-link in whatever corner each page happened to use.
+
 **Routes.**
-- `/` : genealogy list plus the Live traces panel (request form, queue,
-  progress). Server component fetches initial state; the panel
-  (`trace-panel.tsx`, client) polls `/api/traces` every 3 s while any trace is
-  active.
-- `/g/[id]` : the genealogy page. Timeline of concept-state cards, typed
-  relationship rows with evidence panels (both quotes, verification stamp,
-  confidence), workbench edit controls (owner only), audit trail, danger zone
-  (owner only). Meanings are grouped into citation-connected families
-  (`computeFamilies()`, union-find over edges): a term whose senses do not
-  cite each other (polysemy like "kernel") renders as separate families under
-  a disclosure banner, with citation-isolated meanings pulled into an
-  "Unconnected meanings" section. A single-family genealogy renders flat and
-  unchanged.
-- `/about` : the public methods page. Claims, pipeline steps, edge taxonomy
-  (rendered from the same `EDGE_MEANING` map the product uses, so it cannot
-  drift), curation model, and an explicit limitations section.
+- `/` : the map list, with a link to `/trace` showing how many runs are in
+  flight.
+- `/trace` : requesting a map. Three steps that set expectations (name a term,
+  it reads up to 150 papers in about fifteen minutes, you get the map), then
+  the form, the queue and live progress. The panel (`trace-panel.tsx`, client)
+  polls `/api/traces` every 3 s while any run is active. Sign-in returns to the
+  page you started on, and request/approve/reject revalidate `/trace` as well
+  as `/`, because a request that appears to vanish is worse than a slow one.
+- `/g/[id]` : the front door, an influence map (`InfluenceMap.tsx`, client).
+  `getInfluenceMap()` picks the top 20 papers by attention plus the 8 strongest
+  movers by displacement (gated at `attention >= 1` so outliers stay out); a dot
+  is a paper, its radius is `5 + sqrt(attention) * 2.8`, a ring means it moved
+  the term's meaning. Papers ride in visible per-thread channels ordered by
+  first year, same-year collisions are spread vertically, and typed lineage
+  appears only on hover or after a click pins it, so the resting state is a
+  constellation rather than a hairball. **The scores select and size, and are
+  never rendered as numbers.** Edges pointing backwards in time are dropped:
+  arXiv revisions let two papers cite each other and the stored year is the v1
+  date, so a reverse leg is a data artefact, not a lineage. Below the map: the
+  through-line, the thread list, and a link into the evidence layer.
+- `/g/[id]/river/[sid]` : a thread's account. Its arc, then its papers in the
+  order the idea moved, each with what it did, the grounded prose, and a
+  string-verified quote. (`/g/[id]/river` redirects to the map; the path is
+  kept working because it was the front door for a day.)
+- `/g/[id]/p/[arxiv]` : a paper's dossier. What it contributed (novelty claims,
+  labelled extracted rather than verbatim), how it defines the term with the
+  verified-or-inferred stamp, and its typed links in both directions ("what it
+  drew from", "what drew from it") each carrying the edge rationale labelled as
+  the tool's reading.
+- `/g/[id]/evidence` : the former genealogy page, now the evidence and
+  workbench layer. Timeline of concept-state cards, typed relationship rows
+  with evidence panels (both quotes, verification stamp, confidence), workbench
+  edit controls (owner only), audit trail, danger zone (owner only). Meanings
+  are grouped into citation-connected families (`computeFamilies()`, union-find
+  over edges): a term whose senses do not cite each other (polysemy like
+  "kernel") renders as separate families under a disclosure banner, with
+  citation-isolated meanings pulled into an "Unconnected meanings" section. A
+  single-family map renders flat and unchanged.
+- `/about` : the public methods page, written for a researcher deciding whether
+  to rely on this. What a map is, how one is built, how papers are ranked (and
+  why ranking on uptake alone hides the papers that moved a term), the six link
+  types (rendered from the same `EDGE_MEANING` map the product uses, so it
+  cannot drift), "What you can and cannot rely on" separating verified quotes
+  from sourced-but-unverified text from machine judgment, "Limitations and
+  scope", draft-then-judgment, and reproducibility.
+- `/roadmap` : built / working on next / under consideration / not planned,
+  so a researcher can judge whether the gap between this and what they need is
+  likely to close. "Not planned" is load-bearing: not a recommender, not a
+  search engine, not automatically curated.
 - `/api/traces` : read-only JSON: `{ now, rows }`. `now` is Postgres `now()`;
   the client computes its clock skew from it and measures elapsed time and
   heartbeat staleness against database time, never the viewer's clock.
@@ -333,7 +415,10 @@ while surviving reconnects and redeploys for free.
 **Copy rules.** No internal jargon in public view (worker, polls, prompt
 versions, databases), no cost talk aimed at visitors, "curator" language
 throughout, raw failure output visible to the owner only, and **no em dashes
-anywhere in user-facing content**.
+anywhere in user-facing content**. "Genealogy" and "trace" were internal words a
+first visitor cannot be expected to know: maps are maps, runs are runs, and
+buttons say what happens. The schema and `lib/` still use the old names, which
+is fine, and is why the mapping is recorded here.
 
 ---
 
@@ -413,7 +498,8 @@ backups; re-export after curating. Restore with
 not covered by exports; they live in Postgres and `DATA_DIR` and are cheap to
 regenerate except for LLM spend, which the caches mostly protect.
 
-**Observing a trace.** The UI's Live traces panel is the primary view.
+**Observing a trace.** The queue and progress panel on `/trace` is the primary
+view.
 Direct SQL: `SELECT id, concept, status, progress, updated_at FROM
 trace_requests ORDER BY id DESC`. A `running` row whose `updated_at` is
 minutes old means the worker died; the sweeper will mark it failed within 10
@@ -468,6 +554,19 @@ The why behind the load-bearing choices, in one place:
     shared DB can disagree with a per-machine disk, a stage can go silent for
     minutes. Each is now skipped, guarded or heartbeat-covered rather than
     aborting a whole run.
+15. **Two magnitude scores, and neither is ever displayed** (2026-07-26).
+    Ranking on uptake alone hides the papers that moved a term, so
+    displacement exists as its own axis rather than as a tiebreaker. Both then
+    stay behind the interface: they select which papers appear and how large
+    the dot is, and no number is shown. A number invites the reader to treat a
+    model's weighting as a measurement, which is the failure this tool exists
+    to avoid.
+16. **Three tiers of trust, never blended** (migration 010, `/about`). A
+    verified quote is string-matched against our own extraction. A citation
+    context is verbatim but from Semantic Scholar's PDF extraction, so it is
+    sourced and unverifiable here. A rationale is the model's reading. Each is
+    labelled as what it is, everywhere it appears; only the first wears the
+    verified stamp.
 
 ---
 
@@ -526,28 +625,43 @@ Recorded because the system's shape is partly their consequence.
 
 ## 11. Known limitations and open work
 
-Product limitations (also disclosed on `/about`): arXiv-only coverage; exact
-string matching fails closed to "inferred" when extraction mangles a passage;
-parallel discovery without citation appears as unconnected meanings; edge
-types and confidences are model judgment, mitigated by the quotes being shown.
+Product limitations (also disclosed on `/about` under "Limitations and scope",
+and shaped for the reader on `/roadmap`): arXiv-only coverage; a bounded corpus,
+so the map is the scope of what was read and not of the field; exact string
+matching fails closed to "inferred" when extraction mangles a passage; parallel
+discovery without citation appears as unconnected meanings; edge types,
+confidences and rationales are model judgment, mitigated by the quotes being
+shown and the judgment being labelled.
 
 Done since first draft: Render worker deployed and verified live
 (2026-07-21); Stage C genealogy upsert (migration 007, stable id); account
 Anthropic billing cap (owner, confirmed set); topic picker + sense gloss
-(item 8 below); family grouping on the genealogy page.
+(item 7 below); family grouping on the evidence page; the showcase "embedding"
+map traced and curated (`/g/10`); the influence-map front door, thread accounts
+and paper dossiers; requests moved to their own page; one tab bar and a public
+roadmap.
 
 Open engineering work, in priority order:
 
-1. Pick and trace a showcase concept the owner cares about (attention was
-   deleted; only dropout exists). The one demo-facing blocker; owner decision.
-2. Curate the dropout genealogy (12 draft nodes want merging to ~5).
-3. Proper 403s instead of fail-closed 500s on unauthorised writes.
-4. Some notification when a stranger's request lands (currently visible only
+1. **The magnitude and thread jobs are not in the repository.** Both ran as
+   one-off scripts against `/g/10` (section 4). Until they are committed as
+   pipeline stages the worker calls, a newly traced map lands with
+   `attention`, `displacement` and `streams` all null, which means `/g/[id]`
+   redirects it straight to `/evidence` and the product's front door simply
+   does not exist for it. This is the one gap that makes the current pipeline
+   unable to reproduce the current showcase.
+2. Proper 403s instead of fail-closed 500s on unauthorised writes.
+3. Some notification when a stranger's request lands (currently visible only
    by visiting the site).
-5. `genealogies.status` semantics are loose and partly vestigial.
-6. Optional: a free OpenAlex pre-flight probe at approval time (show the
-   curator the would-be corpus before they approve).
-8. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
+4. `genealogies.status` semantics are loose and partly vestigial.
+5. Optional: a free OpenAlex pre-flight probe at approval time (show the
+   curator the would-be corpus before they approve). This is also promised
+   publicly on `/roadmap` as "a preview before a run".
+6. The public roadmap commits to two further items this document should track
+   when they start: sources beyond arXiv (DOI-resolved open access), and
+   claim-level verification so every assertion in an account carries its own
+   matched span rather than the paragraph resting on the definition quote.
+7. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
    OpenAlex field picker (populated live from a `group_by` of arXiv works,
    `lib/openalex.ts`), and corpus selection scopes to the chosen field. A
    sense gloss was shipped alongside it (polysemy prevention at intake). Both
