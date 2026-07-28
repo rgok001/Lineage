@@ -19,6 +19,8 @@ const SHIPPED: Item[] = [
     body: "What a paper contributed, how it defines the term, what it drew from and what drew from it, with the reasoning behind each link shown as the tool's reading rather than as fact." },
   { title: "Curation with an audit trail",
     body: "A curator can rename, merge, reclassify and remove. Every change is recorded, so a map shows how much human judgment it has had." },
+  { title: "Export for writing",
+    body: "Take a map, or a single thread of it, into your draft as a Markdown scaffold with the quotes and the citations attached, plus BibTeX for exactly the papers it cites. The structure and the evidence are real; the argument is yours to write." },
 ];
 
 const NEXT: Item[] = [
@@ -26,8 +28,6 @@ const NEXT: Item[] = [
     body: "The single biggest limit on who this is useful to. Resolving open-access copies through DOIs, and biomedical full text, would open fields that do not preprint to arXiv." },
   { title: "Claim-level verification",
     body: "Today the verified quote is each paper's definition. The goal is for every assertion in an account to carry its own matched span, so the prose is auditable sentence by sentence rather than paragraph by paragraph." },
-  { title: "Export for writing",
-    body: "A related-work skeleton and BibTeX from a curated map, carrying the verified quotes through, so what you read here can be used where you write." },
   { title: "A preview before a run",
     body: "Showing the candidate papers, the year span and the cost before a map is built, so you can judge the corpus before spending on it." },
 ];

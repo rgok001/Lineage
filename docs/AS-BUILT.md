@@ -361,9 +361,23 @@ was a back-link in whatever corner each page happened to use.
   date, so a reverse leg is a data artefact, not a lineage. Below the map: the
   through-line, the thread list, and a link into the evidence layer.
 - `/g/[id]/river/[sid]` : a thread's account. Its arc, then its papers in the
-  order the idea moved, each with what it did, the grounded prose, and a
-  string-verified quote. (`/g/[id]/river` redirects to the map; the path is
-  kept working because it was the front door for a day.)
+  order the idea moved, each with what it did, the grounded prose, and the
+  paper's own definition quote carrying its true verdict. The quote comes from
+  `definitions.verbatim_quote`, not from the river's own `quote` field, which
+  is generated summary rather than a passage from the paper (section 10,
+  incident 8). (`/g/[id]/river` redirects to the map; the path is kept working
+  because it was the front door for a day.)
+- `/g/[id]/export` : the writing scaffold, built by `lib/export.ts`.
+  `?thread=<id>` scopes it to one thread, `?format=bib` returns the BibTeX
+  instead of the Markdown. Two formats rather than one archive: no zip
+  dependency, and a `.bib` wants to land in a reference manager while the `.md`
+  wants to land in a draft. The document keeps the three tiers apart, because
+  this text is going into someone's paper: the definition quote is stamped
+  verified or inferred from `quote_verified`, and the river's "what it did" and
+  prose lines are labelled the tool's reading. Papers with no author metadata
+  are named as incomplete citations at the point of use, not only in the `.bib`.
+  The CLI export (`export_related_work.py`) still writes the older sense-shaped
+  document, and is kept because the pipeline is CLI-first.
 - `/g/[id]/p/[arxiv]` : a paper's dossier. What it contributed (novelty claims,
   labelled extracted rather than verbatim), how it defines the term with the
   verified-or-inferred stamp, and its typed links in both directions ("what it
@@ -620,6 +634,20 @@ Recorded because the system's shape is partly their consequence.
    environment.** Two wrong diagnoses along the way (blaming instance size,
    then model file size) were corrected only by measuring rather than
    reasoning; the batch-size measurement in fresh processes was decisive.
+8. **Generated paraphrase wearing the verified stamp (2026-07-28).** Building
+   the export surfaced it: migration 012 specifies that each river paper's
+   `quote` is a string-verified span, and the generation wrote a summary of the
+   paper instead. All 102 were checked against the definition spans Stage E
+   actually matched, and **none** was a passage from its paper. The thread page
+   had been rendering them under a green "verified" check since the river
+   shipped. Both the page and the export now read `definitions.verbatim_quote`
+   with its real `quote_verified` verdict, the same source the dossier already
+   used. **Lesson: a stamp must be derived from the check, never from the
+   field's documented intent.** The contract said verified; nothing verified it.
+   The generated prose was never the problem: it is honest as an account and
+   stays, labelled as the tool's reading. The problem was one field claiming a
+   grounding it never had, in the one place the product cannot afford to be
+   wrong.
 
 ---
 
@@ -636,10 +664,11 @@ shown and the judgment being labelled.
 Done since first draft: Render worker deployed and verified live
 (2026-07-21); Stage C genealogy upsert (migration 007, stable id); account
 Anthropic billing cap (owner, confirmed set); topic picker + sense gloss
-(item 7 below); family grouping on the evidence page; the showcase "embedding"
+(item 8 below); family grouping on the evidence page; the showcase "embedding"
 map traced and curated (`/g/10`); the influence-map front door, thread accounts
 and paper dossiers; requests moved to their own page; one tab bar and a public
-roadmap.
+roadmap; export for writing (`/g/[id]/export`, whole map or one thread) with
+the author backfill run over the showcase corpus so its citations resolve.
 
 Open engineering work, in priority order:
 
@@ -657,11 +686,16 @@ Open engineering work, in priority order:
 5. Optional: a free OpenAlex pre-flight probe at approval time (show the
    curator the would-be corpus before they approve). This is also promised
    publicly on `/roadmap` as "a preview before a run".
-6. The public roadmap commits to two further items this document should track
+6. `enrich_authors.py` is a manual step nothing calls. The showcase corpus had
+   97 of 113 papers with no author metadata, which the export exposed as
+   unresolvable citations. It is filled now (117/117), but the next traced map
+   arrives in the same state unless the worker runs the backfill.
+7. The public roadmap commits to two further items this document should track
    when they start: sources beyond arXiv (DOI-resolved open access), and
    claim-level verification so every assertion in an account carries its own
    matched span rather than the paragraph resting on the definition quote.
-7. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
+   Incident 8 is the argument for the second one.
+8. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
    OpenAlex field picker (populated live from a `group_by` of arXiv works,
    `lib/openalex.ts`), and corpus selection scopes to the chosen field. A
    sense gloss was shipped alongside it (polysemy prevention at intake). Both

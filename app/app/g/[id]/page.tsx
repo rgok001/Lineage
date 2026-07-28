@@ -85,6 +85,20 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
         </span>
       </Link>
 
+      <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap",
+        marginTop: ".6rem", padding: ".65rem .9rem", borderRadius: 8, border: "1px dashed var(--line)" }}>
+        <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: ".95rem", color: "var(--ink)" }}>
+          Take it to your draft
+        </span>
+        <span style={{ fontSize: ".8rem", color: "var(--ink-soft)" }}>
+          every thread, in order, with the quotes and the citations
+        </span>
+        <span style={{ marginLeft: "auto", display: "flex", gap: ".7rem", fontFamily: "var(--font-mono)", fontSize: ".72rem" }}>
+          <a href={`/g/${id}/export`} style={{ color: "var(--edge-extends)" }}>Markdown</a>
+          <a href={`/g/${id}/export?format=bib`} style={{ color: "var(--edge-extends)" }}>BibTeX</a>
+        </span>
+      </div>
+
       <p style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-faint)",
         lineHeight: 1.8, marginTop: "1.8rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>
         Drafted automatically from the papers’ own words, then curated by hand; every curatorial change

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { sql } from "../../../../../lib/db";
 import { getRiver } from "../../../../../lib/genealogy";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,24 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
   const s = data.river.streams.find((x) => x.id === sid);
   if (!s) notFound();
   const c = s.color;
+
+  /* The evidence is the paper's own definition span, the one Stage E matched
+     against the extracted source. The river's generated "quote" field is NOT
+     shown: it is a summary of the paper, not a passage from it, and rendering
+     it under a verified stamp claimed a grounding it never had. Same source as
+     the dossier route, so a reader meets one quote per paper, not two. */
+  const g = (await sql`SELECT concept, prompt_version FROM genealogies WHERE id = ${Number(id)}`) as
+    { concept: string; prompt_version: string }[];
+  const arxivs = s.papers.map((p) => p.arxiv);
+  const quoteRows = (arxivs.length && g.length
+    ? await sql`
+        SELECT p.arxiv_id AS arxiv, d.verbatim_quote AS quote, d.quote_verified AS verified
+        FROM definitions d JOIN papers p ON p.id = d.paper_id
+        WHERE p.arxiv_id = ANY(${arxivs}) AND d.concept = ${g[0].concept}
+          AND d.prompt_version = ${g[0].prompt_version} AND d.defines_concept = true
+      `
+    : []) as { arxiv: string; quote: string | null; verified: boolean | null }[];
+  const evidence = new Map(quoteRows.map((r) => [r.arxiv, r]));
 
   return (
     <main style={{ padding: "2rem 1.5rem 5rem" }}>
@@ -28,7 +47,7 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
         )}
         <p style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)",
           margin: "1.3rem 0 0", paddingTop: ".9rem", borderTop: "1px solid var(--line)" }}>
-          {s.papers.length} papers, in the order the idea moved · every quote string-verified against source
+          {s.papers.length} papers, in the order the idea moved · each quote is the paper’s own definition, marked verified or inferred
         </p>
 
         <div style={{ position: "relative", marginTop: "2.4rem" }}>
@@ -36,7 +55,9 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
           {s.papers.map((p) => {
             const move = typeof p.move === "string" ? p.move : "";
             const prose = typeof p.prose === "string" ? p.prose : "";
-            const quote = (typeof p.quote === "string" ? p.quote : "").replace(/\s+/g, " ").trim();
+            const ev = evidence.get(p.arxiv);
+            const quote = (typeof ev?.quote === "string" ? ev.quote : "").replace(/\s+/g, " ").trim();
+            const verified = ev?.verified === true;
             return (
             <section key={p.arxiv} style={{ position: "relative", padding: "0 0 2.2rem 2rem" }}>
               <span style={{ position: "absolute", left: 0, top: 5, width: 12, height: 12, borderRadius: "50%",
@@ -57,20 +78,35 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
               )}
               {quote && (
                 <div style={{ margin: ".7rem 0 0", padding: ".55rem .8rem", background: "var(--card)",
-                  borderLeft: "2px solid var(--verified)", borderRadius: "0 6px 6px 0" }}>
+                  borderLeft: `2px solid var(--${verified ? "verified" : "inferred"})`, borderRadius: "0 6px 6px 0" }}>
                   <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontStyle: "italic",
                     fontSize: ".92rem", lineHeight: 1.5, color: "var(--ink)" }}>
                     “{quote}”
                   </blockquote>
                   <span style={{ display: "block", marginTop: ".35rem", fontFamily: "var(--font-mono)",
-                    fontSize: ".64rem", color: "var(--verified)", letterSpacing: ".04em" }}>
-                    ✓ verified · {p.title.length > 40 ? p.title.slice(0, 40) + "…" : p.title}, {p.year}
+                    fontSize: ".64rem", color: `var(--${verified ? "verified" : "inferred"})`, letterSpacing: ".04em" }}>
+                    {verified ? "✓ verified" : "○ inferred"} · {p.title.length > 40 ? p.title.slice(0, 40) + "…" : p.title}, {p.year}
                   </span>
                 </div>
               )}
             </section>
             );
           })}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap",
+          marginTop: "1.4rem", padding: ".65rem .9rem", borderRadius: 8, border: "1px dashed var(--line)" }}>
+          <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: ".95rem", color: "var(--ink)" }}>
+            Take this thread to your draft
+          </span>
+          <span style={{ fontSize: ".8rem", color: "var(--ink-soft)" }}>
+            these papers only, with their quotes and citations
+          </span>
+          <span style={{ marginLeft: "auto", display: "flex", gap: ".7rem",
+            fontFamily: "var(--font-mono)", fontSize: ".72rem" }}>
+            <a href={`/g/${id}/export?thread=${encodeURIComponent(s.id)}`} style={{ color: c }}>Markdown</a>
+            <a href={`/g/${id}/export?thread=${encodeURIComponent(s.id)}&format=bib`} style={{ color: c }}>BibTeX</a>
+          </span>
         </div>
 
         <p style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)",
