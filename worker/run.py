@@ -6,6 +6,12 @@ one atomically, then runs the pipeline stages as subprocesses in order:
 
     corpus_select -> fetch_papers -> extract_text
         -> stage_b_extract -> stage_c_cluster -> stage_d_edges -> stage_e_ground
+        -> stage_f_magnitude -> stage_g_threads
+
+The last two run after grounding and are what the map's front door reads. A map
+without them still exists and is still correct, but `/g/[id]` has nothing to
+open on and falls through to the evidence view, so they are part of a finished
+trace rather than an optional extra.
 
 The pipeline stays CLI-first: the worker adds nothing to the stages, it just
 orchestrates them and streams their stdout into trace_requests.progress so the
@@ -68,6 +74,8 @@ def stages_for(concept: str, corpus_limit: int, field: str,
         ("cluster concept-states", py + ["pipeline/stage_c_cluster.py", concept]),
         ("classify edges", py + ["pipeline/stage_d_edges.py", concept]),
         ("ground & assemble", py + ["pipeline/stage_e_ground.py", concept]),
+        ("score magnitude", py + ["pipeline/stage_f_magnitude.py", concept]),
+        ("compose threads", py + ["pipeline/stage_g_threads.py", concept]),
     ]
 
 

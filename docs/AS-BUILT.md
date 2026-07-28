@@ -1,6 +1,6 @@
 # Lineage: As-Built Documentation
 
-**As of commit `2f55099`, 2026-07-27.**
+**As of 2026-07-29.**
 
 This is the as-built record: a description of the system as it actually exists,
 including the deviations, incidents, and hard-won rules that shaped it. The
@@ -23,8 +23,9 @@ with per-thread accounts (migration 012, still named `streams` in the schema and
 in `lib/genealogy.ts`); and a paper has its own dossier route. The old
 sense-taxonomy and the raw relationship list still exist, demoted to a secondary
 `/g/[id]/evidence` layer. See sections 3, 4, and 6 for the detail, and section
-11 for the honest gap: the magnitude and thread generation ran as one-off
-scripts against the showcase map and are not in the repository at all.
+11 for what remains. Magnitude and thread generation ran as one-off scripts
+against the showcase map until 2026-07-29; they are now stages F and G, and the
+worker runs them, so a requested map arrives with a front door.
 
 ---
 
@@ -66,7 +67,7 @@ CLAUDE.md            product spec and non-negotiable rules
 README.md            setup and CLI usage
 render.yaml          Render blueprint for the trace worker
 docs/                ARCHITECTURE.md (design), AS-BUILT.md (this file)
-pipeline/            the five stages + auxiliaries (Python, CLI-first)
+pipeline/            the seven stages + auxiliaries (Python, CLI-first)
   common.py          env loading, polite HTTP session, data_dir()
   db/migrate.py      ordered SQL migrations, schema_migrations table
   db/migrations/     001..012
@@ -171,7 +172,7 @@ database level because app-level checks can be raced by simultaneous submits.
 
 ## 4. The pipeline
 
-Five stages plus auxiliaries, each a standalone CLI script reading root
+Seven stages plus auxiliaries, each a standalone CLI script reading root
 `.env`. The pipeline is CLI-first by rule: the worker orchestrates these same
 commands and adds nothing to them.
 
@@ -263,27 +264,38 @@ invented prose.
 genealogies row and its edges from a JSON export and records the restoration
 in the audit trail. Written during incident 4 and kept as the recovery path.
 
-**Post-pipeline: magnitude and threads (not in the repository).**
-Two jobs run after Stage E and produce everything the front door reads:
+**Stage F: magnitude** (`stage_f_magnitude.py <concept> [--prompt-version PV]`).
+Fills `definitions.attention` and `definitions.displacement` (migration 011),
+which is what the influence map selects and sizes by. Attention is on-term
+weighted uptake: not a raw citation count, which rewards famous-but-incidental
+work, but each corpus-internal citation scored 0-2 by the model for whether the
+citing sentence engages that paper's contribution to *this* term, weighted by
+S2's citation intent. It reads the S2 cache Stage D populates, so it must run
+after D. Displacement is the cosine distance of a paper's definition embedding
+from the centroid of every earlier definition, marking turning points that
+attention structurally misses (a paper that moves a term is cited by the field
+it moved into, not by this corpus). The two were measured uncorrelated on
+`/g/10` (Spearman +0.05), which is the point: they answer different questions
+and neither substitutes for the other. Every paper gets an attention number
+including zero, because the map selects on `attention IS NOT NULL` and a null
+would drop a paper off the map rather than rank it last. Displacement is null
+for the earliest paper, which has nothing to be displaced from.
 
-- *Magnitude* fills `definitions.attention` and `definitions.displacement`
-  (migration 011). Attention is on-term weighted uptake: not a raw citation
-  count, which rewards famous-but-incidental work, but each citation scored by
-  whether the citing sentence actually engages this paper's contribution to
-  *this* term. Displacement is the distance of a paper's definition embedding
-  from the centroid of earlier definitions, which marks turning points that
-  attention structurally misses (a paper that moves a term is cited by the
-  field it moved into, not by this corpus). The two were measured uncorrelated
-  on `/g/10` (Spearman +0.05), which is the point: they answer different
-  questions and neither substitutes for the other.
-- *Thread generation* fills `genealogies.streams` (migration 012) by reading
-  the corpus's content (definitions and novelty claims), not its citation
-  topology, which is why it is a stored artifact rather than something derived
-  at render time.
+**Stage G: threads** (`stage_g_threads.py <concept> [--prompt-version PV]`).
+Fills `genealogies.streams` (migration 012) in two phases: detect 6-9 threads
+and assign every paper to one, then compose each thread's account. It reads the
+corpus's content (definitions and novelty claims), not its citation topology,
+which is why it is a stored artifact rather than something derived at render
+time. **It generates no quotes.** An earlier version asked for a verbatim
+fragment per paper and stored it, and the model returned paraphrase, which the
+thread page then rendered under a verified stamp (section 10, incident 8).
+Evidence is not regenerated: the app reads `definitions.verbatim_quote`, the
+span Stage E actually matched.
 
-Both ran as one-off scripts against the showcase map and neither was committed,
-so `pipeline/` has no way to produce them for a new map. This is the largest
-gap between this document and a reproducible system; see section 11.
+Both were one-off scripts hardcoded to the showcase map until 2026-07-29, which
+meant no other map could have a front door. They are stages now, the worker runs
+them after Stage E, and both were proven on a second concept (`attention`,
+`/g/13`) before being committed.
 
 ---
 
@@ -664,38 +676,47 @@ shown and the judgment being labelled.
 Done since first draft: Render worker deployed and verified live
 (2026-07-21); Stage C genealogy upsert (migration 007, stable id); account
 Anthropic billing cap (owner, confirmed set); topic picker + sense gloss
-(item 8 below); family grouping on the evidence page; the showcase "embedding"
+(item 9 below); family grouping on the evidence page; the showcase "embedding"
 map traced and curated (`/g/10`); the influence-map front door, thread accounts
 and paper dossiers; requests moved to their own page; one tab bar and a public
 roadmap; export for writing (`/g/[id]/export`, whole map or one thread) with
-the author backfill run over the showcase corpus so its citations resolve.
+the author backfill run over the showcase corpus so its citations resolve;
+magnitude and threads promoted from one-off scripts to stages F and G, which the
+worker now runs, giving a second map (`attention`, `/g/13`) a real front door.
 
 Open engineering work, in priority order:
 
-1. **The magnitude and thread jobs are not in the repository.** Both ran as
-   one-off scripts against `/g/10` (section 4). Until they are committed as
-   pipeline stages the worker calls, a newly traced map lands with
-   `attention`, `displacement` and `streams` all null, which means `/g/[id]`
-   redirects it straight to `/evidence` and the product's front door simply
-   does not exist for it. This is the one gap that makes the current pipeline
-   unable to reproduce the current showcase.
-2. Proper 403s instead of fail-closed 500s on unauthorised writes.
-3. Some notification when a stranger's request lands (currently visible only
+1. Stage B is a sequential loop: one LLM call per paper, awaited before the
+   next. On a 118-paper corpus that is most of the wall-clock time of a trace,
+   and every paper is independent with a per-paper cache, so it parallelises
+   cleanly. The two things wanting care are `TRACE_SPEND_CAP_USD`, which
+   currently aborts cleanly mid-loop and would overshoot slightly, and the API
+   rate limit.
+2. Extraction cost varies more than it should: `embedding` cost about a cent
+   per paper on 2026-07-22 and `attention` about four cents on 2026-07-28, on
+   the same model and prompt version, with attention getting *more* cache help.
+   That points at how much extracted text Stage B sends per paper. Worth
+   measuring, because it is the largest single lever on what a trace costs.
+3. Proper 403s instead of fail-closed 500s on unauthorised writes.
+4. Some notification when a stranger's request lands (currently visible only
    by visiting the site).
-4. `genealogies.status` semantics are loose and partly vestigial.
-5. Optional: a free OpenAlex pre-flight probe at approval time (show the
+5. `genealogies.status` semantics are loose and partly vestigial. The failed
+   `attention` run left genealogy 13 at `running` with a `failed` request
+   pointing nowhere, which is harmless but says nothing true.
+6. Optional: a free OpenAlex pre-flight probe at approval time (show the
    curator the would-be corpus before they approve). This is also promised
    publicly on `/roadmap` as "a preview before a run".
-6. `enrich_authors.py` is a manual step nothing calls. The showcase corpus had
-   97 of 113 papers with no author metadata, which the export exposed as
-   unresolvable citations. It is filled now (117/117), but the next traced map
-   arrives in the same state unless the worker runs the backfill.
-7. The public roadmap commits to two further items this document should track
+7. `enrich_authors.py` is a manual step nothing calls, and it is now the only
+   one left: the showcase corpus had 97 of 113 papers with no author metadata,
+   which the export exposed as unresolvable citations. It is filled (117/117),
+   but the next traced map arrives in the same state unless the worker runs the
+   backfill, and its export's citations will not resolve.
+8. The public roadmap commits to two further items this document should track
    when they start: sources beyond arXiv (DOI-resolved open access), and
    claim-level verification so every assertion in an account carries its own
    matched span rather than the paragraph resting on the definition quote.
    Incident 8 is the argument for the second one.
-8. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
+9. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
    OpenAlex field picker (populated live from a `group_by` of arXiv works,
    `lib/openalex.ts`), and corpus selection scopes to the chosen field. A
    sense gloss was shipped alongside it (polysemy prevention at intake). Both
