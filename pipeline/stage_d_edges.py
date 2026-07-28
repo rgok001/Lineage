@@ -44,7 +44,9 @@ class EdgeClass(BaseModel):
         description="How the newer (descendant) paper's treatment relates to the older one."
     )
     confidence: float = Field(description="0–1 confidence in this classification.")
-    rationale: str = Field(description="One sentence justifying the type from the evidence.")
+    rationale: str = Field(
+        description="One sentence of at most 35 words justifying the type from the evidence."
+    )
 
 
 SYSTEM = """You classify the relationship between two papers' treatments of a \
@@ -181,9 +183,19 @@ def main() -> None:
                            src_label=label_of[e["src_node"]], src_def=src["definition"],
                            dst_label=label_of[e["dst_node"]], dst_def=dst["definition"],
                            contexts=ctx_text)
-        resp = client.messages.parse(model=args.model, max_tokens=500, system=SYSTEM,
-                                     messages=[{"role": "user", "content": user}],
-                                     output_format=EdgeClass)
+        # 500 was sized when this response held only {edge_type, confidence}.
+        # Migration 010 added the rationale to the same call, and a long one runs
+        # the JSON into the ceiling: it truncates mid-string and the parse raises.
+        # A single unclassifiable edge must never cost a whole trace (decision 14),
+        # so the failure is caught here and that edge skipped.
+        try:
+            resp = client.messages.parse(model=args.model, max_tokens=1200, system=SYSTEM,
+                                         messages=[{"role": "user", "content": user}],
+                                         output_format=EdgeClass)
+        except Exception as exc:
+            print(f"  {e['src']} -> {e['dst']}: classification failed, skipped "
+                  f"({type(exc).__name__})")
+            continue
         spend += cost_usd(args.model, resp.usage.input_tokens, resp.usage.output_tokens)
         ec = resp.parsed_output
         if ec is None:
