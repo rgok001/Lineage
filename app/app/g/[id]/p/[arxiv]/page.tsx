@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "../../../../../lib/db";
-import { getRiver, EDGE_MEANING, readableQuote } from "../../../../../lib/genealogy";
+import { getRiver, EDGE_MEANING, readableQuote, TURNING_QUANTILE } from "../../../../../lib/genealogy";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +44,16 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
   const river = await getRiver(Number(id));
   const stream = river?.river.streams.find((s) => s.papers.some((p) => p.arxiv === arxiv));
   const claims = (d.novelty ?? []).filter((c) => c && c.trim());
-  const turning = (d.displacement ?? 0) >= 0.25;
+  // Judged against this concept's own spread, not a fixed number: displacement
+  // is a distance from a moving centroid, so a cut that marks a tenth of one
+  // corpus marks half of another (lib/genealogy.ts, TURNING_QUANTILE).
+  const cut = (await sql`
+    SELECT percentile_cont(${TURNING_QUANTILE}) WITHIN GROUP (ORDER BY displacement) AS c
+    FROM definitions
+    WHERE concept = ${g[0].concept} AND prompt_version = ${g[0].prompt_version}
+      AND defines_concept = true AND displacement > 0
+  `) as { c: number | null }[];
+  const turning = cut[0]?.c != null && (d.displacement ?? 0) >= Number(cut[0].c);
 
   const EdgeLine = ({ l, dir }: { l: (typeof links)[number]; dir: "in" | "out" }) => {
     const other = dir === "in" ? { a: l.src, t: l.src_title, y: l.src_year } : { a: l.dst, t: l.dst_title, y: l.dst_year };

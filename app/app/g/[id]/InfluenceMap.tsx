@@ -266,7 +266,7 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
                 {pinned && (
                   <circle cx={cx} cy={cyv} r={r + 7} fill="none" stroke={p.color} strokeWidth={1.2} opacity={0.55} />
                 )}
-                {p.displacement >= 0.25 && (
+                {p.turning && (
                   <circle cx={cx} cy={cyv} r={r + 3.5} fill="none" stroke="var(--ink)" strokeWidth={1.3} opacity={0.7} />
                 )}
                 <circle cx={cx} cy={cyv} r={r} fill={p.color} stroke="var(--paper)" strokeWidth={1} opacity={0.95} />
@@ -292,7 +292,7 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
           <>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", letterSpacing: ".12em",
               textTransform: "uppercase", color: "var(--ink-faint)" }}>
-              {shown.displacement >= 0.25 ? "A turning point" : "Paper"}
+              {shown.turning ? "A turning point" : "Paper"}
             </div>
             <h3 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.1rem",
               lineHeight: 1.3, margin: ".4rem 0 .3rem" }}>{shown.title}</h3>

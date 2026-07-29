@@ -391,7 +391,11 @@ was a back-link in whatever corner each page happened to use.
   from the rest; every thread is then guaranteed its strongest paper, so the
   channels and the thread list below cannot disagree. A dot is a paper, its
   radius is `5 + sqrt(attention) * 2.8`, a ring means it moved the term's
-  meaning. Papers ride in visible per-thread channels ordered by
+  meaning: the top 15% of the scored corpus by displacement (`TURNING_QUANTILE`),
+  judged against the whole corpus rather than the handful drawn, and relative
+  rather than absolute. A fixed `>= 0.25` ringed 9% of embedding's papers and
+  44% of attention's, so one legend meant two things on two pages. The dossier
+  asks Postgres for the same percentile so both surfaces agree. Papers ride in visible per-thread channels ordered by
   first year, same-year collisions are spread vertically, and typed lineage
   appears only on hover or after a click pins it, so the resting state is a
   constellation rather than a hairball. **The scores select and size, and are

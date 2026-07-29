@@ -59,9 +59,26 @@ export type Genealogy = {
 export type MapPaper = {
   arxiv: string; year: number; title: string;
   attention: number; displacement: number;
+  turning: boolean;                 // see TURNING_QUANTILE
   contrib: string | null;           // first novelty claim, the one-liner
   stream_id: string; stream_name: string; color: string;
 };
+
+/**
+ * A paper is a turning point if it sits in the top slice of its own corpus by
+ * displacement. Relative, not absolute: displacement is a distance from the
+ * centroid of earlier definitions, so its scale depends on how far a corpus
+ * spreads. A fixed `>= 0.25` ringed 9% of embedding's papers and 44% of
+ * attention's, which made the same legend mean two different things on two
+ * pages (section 10, incident 9 is the same fault in the mover rule).
+ */
+export const TURNING_QUANTILE = 0.85; // the top 15% moved this term most
+
+export function turningCutoff(values: number[]): number {
+  const xs = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (!xs.length) return Infinity;
+  return xs[Math.min(xs.length - 1, Math.floor(TURNING_QUANTILE * xs.length))];
+}
 export type MapEdge = { from: string; to: string; type: string; verified: boolean };
 export type InfluenceMapData = {
   concept: string;
@@ -145,12 +162,18 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
     .filter((e) => e.to_year >= e.from_year)
     .map(({ from, to, type, verified }) => ({ from, to, type, verified }));
 
+  // Judged against the whole scored corpus, not against the handful that reached
+  // the map, so being a turning point is a property of the paper rather than of
+  // who else got drawn.
+  const cutoff = turningCutoff(rows.map((r) => Number(r.displacement)).filter((v) => v > 0));
+
   const papers: MapPaper[] = arxivs.map((a) => {
     const r = picked.get(a)!;
     const st = streamOf.get(a) ?? { id: "other", name: "Other", color: "#7f8c94" };
     return {
       arxiv: a, year: r.year, title: r.title,
       attention: Number(r.attention), displacement: Number(r.displacement ?? 0),
+      turning: Number(r.displacement ?? 0) >= cutoff,
       contrib: r.novelty?.find((c) => c && c.trim()) ?? null,
       stream_id: st.id, stream_name: st.name, color: st.color,
     };
