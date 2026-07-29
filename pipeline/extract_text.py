@@ -93,14 +93,75 @@ def inline_inputs(main: str, texs: dict[str, str]) -> str:
     return expand(texs[main], set(), 0)
 
 
+# Citation and cross-reference macros. pylatexenc knows \cite and renders it
+# `<cit.>`, but it does not know natbib and friends, and an unknown macro is
+# dropped silently: the citation vanishes and its surrounding punctuation stays,
+# so "as shown by \citep{x}, the model" extracted as "as shown by , the model"
+# and a paper read as ungrammatical when the fault was ours. Every one of these
+# now leaves the same mark, which downstream renders as an elision.
+CITE_MACROS = [
+    "cite", "citep", "citet", "citealp", "citealt", "citeauthor", "citeyear",
+    "citeyearpar", "shortcite", "shortcites", "citen", "citenum", "onlinecite",
+    "parencite", "textcite", "autocite", "footcite", "fullcite", "nocite",
+]
+REF_MACROS = ["ref", "autoref", "cref", "Cref", "eqref", "pageref", "vref", "nameref"]
+
+
+# The list above is the fast path, not the guarantee. Papers define their own
+# citation macros (\newcommand{\mycite}...), packages invent more, and an
+# unknown macro is dropped silently, which is the failure this whole fix exists
+# to stop. Any macro whose name contains "cite" is normalised to \cite before
+# parsing, so the rule covers the names nobody has thought of yet. Matching is
+# case-insensitive and the arguments are consumed with it.
+# Case-insensitive, because \Citet and \Cref are as common as their lowercase
+# forms. The whitespace allowance sits INSIDE each optional argument group: put
+# it outside and a macro with no arguments eats the space after it, welding the
+# mark to the next word.
+UNKNOWN_CITE_RE = re.compile(
+    r"\\[a-zA-Z@]*cite[a-zA-Z@*]*(?:\s*\[[^\]]*\]){0,2}(?:\s*\{[^{}]*\})?",
+    re.IGNORECASE,
+)
+
+
+def normalise_cite_macros(latex: str) -> str:
+    return UNKNOWN_CITE_RE.sub(r"\\cite{x}", latex)
+
+
+def _latex_context():
+    from pylatexenc.latex2text import get_default_latex_context_db, MacroTextSpec
+    db = get_default_latex_context_db()
+    db.add_context_category(
+        "lineage-citations",
+        prepend=True,
+        macros=[MacroTextSpec(m, simplify_repl="<cit.>") for m in CITE_MACROS]
+        + [MacroTextSpec(m, simplify_repl="<ref>") for m in REF_MACROS],
+    )
+    return db
+
+
+def tidy_marks(text: str) -> str:
+    """Punctuation left stranded once a citation is reduced to a mark: a tie
+    (`~`) that used to bind the citation to the word before it, the empty
+    brackets a `(\\cite{x})` leaves behind, and the space that opens up in front
+    of the comma. Cosmetic only, and applied at extraction so the text a quote is
+    matched against is the text a reader sees."""
+    text = re.sub(r"~\s*(<cit\.>|<ref>)", r" \1", text)
+    text = re.sub(r"[(\[]\s*(<cit\.>|<ref>)\s*[)\]]", r"\1", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"[(\[]\s*[)\]]", "", text)
+    return re.sub(r"[ \t]{2,}", " ", text)
+
+
 def latex_to_text(latex: str) -> str:
     from pylatexenc.latex2text import LatexNodes2Text
+    latex = normalise_cite_macros(latex)
     try:
-        text = LatexNodes2Text(math_mode="text", strict_latex_spaces=False).latex_to_text(latex)
+        text = LatexNodes2Text(latex_context=_latex_context(), math_mode="text",
+                               strict_latex_spaces=False).latex_to_text(latex)
     except Exception as e:  # pylatexenc can choke on exotic macros; degrade, don't die
         print(f"    (pylatexenc fell back to raw strip: {e})", file=sys.stderr)
         text = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?(\{[^}]*\})?", " ", latex)
-    return normalize(text)
+    return normalize(tidy_marks(text))
 
 
 def pdf_to_text(source) -> str:

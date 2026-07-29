@@ -34,7 +34,7 @@ import psycopg
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import REPO_ROOT, data_dir, env  # noqa: E402
+from common import quote_is_grounded, REPO_ROOT, data_dir, env  # noqa: E402
 
 DEFAULT_MODEL = "claude-opus-4-8"
 
@@ -272,7 +272,7 @@ def main() -> None:
         verified = False
         if ex.defines_concept and ex.verbatim_quote:
             full = (data_dir() / text_path_by_id[aid]).read_text(encoding="utf-8")
-            verified = ex.verbatim_quote in full
+            verified = quote_is_grounded(full, ex.verbatim_quote)
 
         # Always record the verdict — "does not define it" is a finding worth
         # caching, not an absence of one. Without a row, every re-run re-pays

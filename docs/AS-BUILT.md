@@ -37,8 +37,10 @@ an influence map: the pivotal papers placed by year, sized by how much later
 work built on them for that term, riding in the threads the idea split into.
 Underneath it still holds the typed relationships between papers, each backed by
 verbatim quotes from both papers verified against the extracted source text. The
-showcase map is "embedding" (`/g/10`, 134 papers, 305 relationships, 233
-verified); the earlier "dropout" map was deleted on 2026-07-26.
+showcase map is "embedding" (`/g/10`, 134 papers, 305 relationships, 286
+verified); "attention" (`/g/13`, 85 papers, 287 relationships, all verified) is
+the second, and the first built end to end by the worker. The earlier "dropout"
+map was deleted on 2026-07-26.
 
 | Component | Technology | Where it runs | Cost |
 |---|---|---|---|
@@ -201,7 +203,13 @@ ranked corpus JSON.
 **Acquisition** (`fetch_papers.py <corpus.json>`, `extract_text.py`).
 LaTeX source preferred, PDF fallback, 1 request per 3 seconds against arXiv.
 Gotcha: some arXiv "LaTeX" source is really a PDF inside an `\includepdf`
-stub; the extractor detects and unwraps this. Extraction uses pylatexenc for
+stub; the extractor detects and unwraps this. Citation and cross-reference
+macros are normalised before parsing: pylatexenc knows `\cite` but not natbib,
+biblatex or a paper's own `
+ewcommand`, and an unknown macro is dropped in
+silence, taking the citation with it and stranding the punctuation around it
+(section 10, incident 10). Any macro whose name contains "cite", in any case,
+is folded to one mark first, so the rule covers names nobody has listed. Extraction uses pylatexenc for
 LaTeX and pymupdf with de-hyphenation for PDF, computes `text_title_match`,
 and warns loudly below the 0.5 guard.
 
@@ -243,7 +251,15 @@ target.
 
 **Stage E: grounding and assembly** (`stage_e_ground.py <concept>`).
 The mandatory grounding check: an edge is `verified` (rendered solid) iff both
-quotes are found verbatim in the extracted source text; otherwise it renders
+quotes are found verbatim in the extracted source text. The comparison
+(`quote_is_grounded` in `common.py`, shared with Stage B) folds away exactly two
+things, both of them ours rather than the paper's: whitespace, which is an
+artifact of line wrapping, and citation marks, which stand where the paper had a
+citation. Nothing else is folded, so a paraphrase, a dropped word or an altered
+figure still fails. A raw substring test was rejecting roughly a quarter of
+good quotes on where a line happened to break, and a rejection renders as
+"inferred", which tells a reader the tool cannot stand behind a passage it
+copied correctly; otherwise it renders
 dotted and is labelled inferred, never upgraded, never hidden. Writes the
 genealogy JSON export to `data/genealogy_<concept>_<pv>.json` and marks the
 genealogy complete. **These exports are the de-facto backups** (section 10,
@@ -689,6 +705,30 @@ Recorded because the system's shape is partly their consequence.
    paper and the rule that came out of it was rank, never threshold. The rule was
    right and was not applied here, because the flaw is invisible on the corpus
    you tune against and only appears on the second one.
+10. **The extractor ate the citations, and the papers looked illiterate
+    (2026-07-29).** pylatexenc knows `\cite` and renders it `<cit.>`. It does
+    not know natbib, biblatex, or a paper's own `
+ewcommand`, and an unknown
+    macro is dropped in silence: the citation vanished and its punctuation
+    stayed, so a stored quote read "a model should, detect the objects, and ,
+    segment them" and the paper wore the blame for our parser. Found by the
+    owner reading a quote on a thread page. The fix is a rule, not a list: any
+    macro whose name contains "cite" is folded to one mark before parsing, so
+    names nobody has enumerated are covered too. **The knock-on was the
+    interesting part.** Cleaning the text would have un-grounded every quote
+    copied out of the dirty text, and re-grounding would have reported a
+    collapse in verified counts as the result of a fix. 66 definition quotes and
+    367 edge-quote copies were re-anchored to their new spans instead: an exact
+    match modulo whitespace and citation marks, never a guess, leaving anything
+    not confidently located untouched. But re-anchoring makes the later check
+    pass by construction, so the check was moved to where it belongs:
+    `quote_is_grounded` now folds whitespace and citation marks itself, and the
+    grounding is honest without any repair step. Verified edges went from 233 to
+    286 of 305 on embedding and 211 to 287 of 287 on attention, most of which
+    was never a quoting problem at all: it was where a line happened to break.
+    **Lesson: when a check fails on things that are yours rather than the
+    source's, it is the check that is wrong, and repairing the data to satisfy
+    it hides that.**
 
 ---
 
@@ -705,7 +745,7 @@ shown and the judgment being labelled.
 Done since first draft: Render worker deployed and verified live
 (2026-07-21); Stage C genealogy upsert (migration 007, stable id); account
 Anthropic billing cap (owner, confirmed set); topic picker + sense gloss
-(item 8 below); family grouping on the evidence page; the showcase "embedding"
+(item 9 below); family grouping on the evidence page; the showcase "embedding"
 map traced and curated (`/g/10`); the influence-map front door, thread accounts
 and paper dossiers; requests moved to their own page; one tab bar and a public
 roadmap; export for writing (`/g/[id]/export`, whole map or one thread) with
@@ -726,21 +766,28 @@ Open engineering work, in priority order:
    the same model and prompt version, with attention getting *more* cache help.
    That points at how much extracted text Stage B sends per paper. Worth
    measuring, because it is the largest single lever on what a trace costs.
-3. Proper 403s instead of fail-closed 500s on unauthorised writes.
-4. Some notification when a stranger's request lands (currently visible only
+3. Maths is the next artifact family, and the reason 19 of embedding's 305
+   edges are still inferred. 17 of them trace to one paper, *Attention Is All
+   You Need*, whose quote reads "vectors of dimension ." because `$d_{model}$`
+   extracted to nothing. Unlike a citation, a symbol is content, so it cannot be
+   folded away in the comparison the way whitespace and citation marks are, and
+   grounding correctly refuses to verify a sentence missing part of itself.
+   Found the same way incident 10 was: by reading a quote that looked wrong.
+4. Proper 403s instead of fail-closed 500s on unauthorised writes.
+5. Some notification when a stranger's request lands (currently visible only
    by visiting the site).
-5. `genealogies.status` semantics are loose and partly vestigial. The failed
+6. `genealogies.status` semantics are loose and partly vestigial. The failed
    `attention` run left genealogy 13 at `running` with a `failed` request
    pointing nowhere, which is harmless but says nothing true.
-6. Optional: a free OpenAlex pre-flight probe at approval time (show the
+7. Optional: a free OpenAlex pre-flight probe at approval time (show the
    curator the would-be corpus before they approve). This is also promised
    publicly on `/roadmap` as "a preview before a run".
-7. The public roadmap commits to two further items this document should track
+8. The public roadmap commits to two further items this document should track
    when they start: sources beyond arXiv (DOI-resolved open access), and
    claim-level verification so every assertion in an account carries its own
    matched span rather than the paragraph resting on the definition quote.
    Incident 8 is the argument for the second one.
-8. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
+9. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
    OpenAlex field picker (populated live from a `group_by` of arXiv works,
    `lib/openalex.ts`), and corpus selection scopes to the chosen field. A
    sense gloss was shipped alongside it (polysemy prevention at intake). Both

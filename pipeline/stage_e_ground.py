@@ -20,7 +20,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import REPO_ROOT, data_dir, env  # noqa: E402
+from common import quote_is_grounded, REPO_ROOT, data_dir, env  # noqa: E402
 
 
 def main() -> None:
@@ -54,7 +54,7 @@ def main() -> None:
             return False
         if path not in text_cache:
             text_cache[path] = (data_dir() / path).read_text(encoding="utf-8")
-        return quote in text_cache[path]
+        return quote_is_grounded(text_cache[path], quote)
 
     print(f'Grounding {len(edges)} edges for "{args.concept}" (prompt {prompt_version})…\n')
     assembled_edges = []

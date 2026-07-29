@@ -138,3 +138,32 @@ def data_dir() -> Path:
     raw = os.environ.get("DATA_DIR", "./data")
     p = Path(raw)
     return p if p.is_absolute() else REPO_ROOT / p
+
+
+# ── grounding comparison ────────────────────────────────────────────────────
+
+import re as _re
+_MATCH_MARK = _re.compile(r"<(?:cit\.?|ref)>")
+
+
+def _fold(s: str) -> str:
+    """Whitespace and citation marks removed. These are the two things that are
+    ours rather than the paper's: line wrapping is an artifact of extraction, and
+    a citation mark stands where the paper had a citation. Nothing else is folded,
+    so a paraphrase, a dropped word or an altered figure still fails."""
+    return _MATCH_MARK.sub("", "".join(s.split())).lower()
+
+
+def quote_is_grounded(text: str, quote: str) -> bool:
+    """Is this quote genuinely a span of that text?
+
+    A raw substring test was failing roughly a quarter of good quotes on where
+    the line wrapped or whether a citation left a mark, and a failure renders as
+    "inferred", which tells a reader the tool could not stand behind a passage it
+    had copied correctly. Folding those two away makes the check test what it
+    claims to test. It is not fuzzy matching: every other character must be
+    identical and in order.
+    """
+    if not text or not quote:
+        return False
+    return _fold(quote) in _fold(text)
