@@ -256,7 +256,10 @@ same operations via Server Actions.
 `enrich_authors.py`: fills author lists, arXiv first and OpenAlex only as
 fallback, because a stored openalex_id can be wrong while the arxiv_id was
 proven by the title-match guard. Missing authors are omitted from BibTeX, not
-guessed.
+guessed. No longer optional: the worker runs it with `--concept` after Stage E,
+because nothing upstream needs authors and the export needs them absolutely. A
+corpus that skips it produces a document whose `\cite` keys do not resolve, which
+is how the attention map's first export came out with 14 entries for 85 papers.
 `export_related_work.py`: related-work skeleton (Markdown) + BibTeX from a
 curated genealogy. Real structure, real citations, real verified quotes, no
 invented prose.
@@ -676,7 +679,7 @@ shown and the judgment being labelled.
 Done since first draft: Render worker deployed and verified live
 (2026-07-21); Stage C genealogy upsert (migration 007, stable id); account
 Anthropic billing cap (owner, confirmed set); topic picker + sense gloss
-(item 9 below); family grouping on the evidence page; the showcase "embedding"
+(item 8 below); family grouping on the evidence page; the showcase "embedding"
 map traced and curated (`/g/10`); the influence-map front door, thread accounts
 and paper dossiers; requests moved to their own page; one tab bar and a public
 roadmap; export for writing (`/g/[id]/export`, whole map or one thread) with
@@ -706,17 +709,12 @@ Open engineering work, in priority order:
 6. Optional: a free OpenAlex pre-flight probe at approval time (show the
    curator the would-be corpus before they approve). This is also promised
    publicly on `/roadmap` as "a preview before a run".
-7. `enrich_authors.py` is a manual step nothing calls, and it is now the only
-   one left: the showcase corpus had 97 of 113 papers with no author metadata,
-   which the export exposed as unresolvable citations. It is filled (117/117),
-   but the next traced map arrives in the same state unless the worker runs the
-   backfill, and its export's citations will not resolve.
-8. The public roadmap commits to two further items this document should track
+7. The public roadmap commits to two further items this document should track
    when they start: sources beyond arXiv (DOI-resolved open access), and
    claim-level verification so every assertion in an account carries its own
    matched span rather than the paragraph resting on the definition quote.
    Incident 8 is the argument for the second one.
-9. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
+8. ~~Topic-scoped traces~~ **DONE (2026-07-21).** The request form now has an
    OpenAlex field picker (populated live from a `group_by` of arXiv works,
    `lib/openalex.ts`), and corpus selection scopes to the chosen field. A
    sense gloss was shipped alongside it (polysemy prevention at intake). Both

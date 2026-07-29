@@ -6,7 +6,7 @@ one atomically, then runs the pipeline stages as subprocesses in order:
 
     corpus_select -> fetch_papers -> extract_text
         -> stage_b_extract -> stage_c_cluster -> stage_d_edges -> stage_e_ground
-        -> stage_f_magnitude -> stage_g_threads
+        -> enrich_authors -> stage_f_magnitude -> stage_g_threads
 
 The last two run after grounding and are what the map's front door reads. A map
 without them still exists and is still correct, but `/g/[id]` has nothing to
@@ -74,6 +74,13 @@ def stages_for(concept: str, corpus_limit: int, field: str,
         ("cluster concept-states", py + ["pipeline/stage_c_cluster.py", concept]),
         ("classify edges", py + ["pipeline/stage_d_edges.py", concept]),
         ("ground & assemble", py + ["pipeline/stage_e_ground.py", concept]),
+        # Authors are needed by nothing upstream and by the export absolutely: a
+        # citation without them is omitted from the BibTeX rather than guessed,
+        # so a corpus that skips this produces a document whose \cite keys do not
+        # resolve. It runs scoped to this concept's map (far fewer requests than
+        # the whole papers table) and costs no LLM spend, only arXiv politeness.
+        ("fill author metadata", py + ["pipeline/enrich_authors.py",
+                                       "--concept", concept]),
         ("score magnitude", py + ["pipeline/stage_f_magnitude.py", concept]),
         ("compose threads", py + ["pipeline/stage_g_threads.py", concept]),
     ]
