@@ -9,6 +9,9 @@ import type { InfluenceMapData, MapPaper } from "../../../lib/genealogy";
  *  stays a constellation, never a hairball. Click a paper → its dossier; click
  *  a channel name → that thread's account. Scores select and size, and are
  *  never shown as numbers. */
+const STEP = 24;      // vertical gap between papers sharing a thread and a year
+const MIN_BAND = 78;  // a lane is never shorter than this, however sparse
+
 export default function InfluenceMap({ id, data }: { id: number; data: InfluenceMapData }) {
   const router = useRouter();
   const [hot, setHot] = useState<string | null>(null);
@@ -21,7 +24,7 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
   };
   const EDGE_KINDS = Object.keys(EC);
 
-  const { bands, placed, yr0, yr1 } = useMemo(() => {
+  const { bands, placed, tallest, yr0, yr1 } = useMemo(() => {
     const byStream = new Map<string, MapPaper[]>();
     for (const p of data.papers) {
       if (!byStream.has(p.stream_id)) byStream.set(p.stream_id, []);
@@ -43,9 +46,13 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
       groups.get(k)!.push(p);
     }
     const placed = new Map<string, { p: MapPaper; dy: number }>();
-    for (const g of groups.values())
-      g.forEach((p, i) => placed.set(p.arxiv, { p, dy: (i - (g.length - 1) / 2) * 24 }));
-    return { bands, placed, yr0, yr1 };
+    const tallest = new Map<string, number>();
+    for (const g of groups.values()) {
+      g.forEach((p, i) => placed.set(p.arxiv, { p, dy: (i - (g.length - 1) / 2) * STEP }));
+      const sid = g[0].stream_id;
+      tallest.set(sid, Math.max(tallest.get(sid) ?? 1, g.length));
+    }
+    return { bands, placed, tallest, yr0, yr1 };
   }, [data]);
 
   /** Channel names wrap rather than truncate: SVG text has no wrapping, so the
@@ -63,12 +70,27 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
   };
 
   const W = 1320, m = { t: 22, r: 30, b: 34, l: 186 };
-  const bandH = 78, H = m.t + bands.length * bandH + m.b;
+  /* Lanes are sized to hold their tallest same-year column. A fixed 78 was
+     right for the corpus it was chosen against and wrong for the next one: six
+     papers from 2020 in one thread stack 120px, so dots left their own lane and
+     read as belonging to the neighbour, which is the one thing the lanes are
+     there to say. Squeezing the step instead would keep the layout tidy and put
+     dots on top of each other, trading a visible fault for a hidden one. */
+  // Clearance is measured, not chosen: the biggest dot on this map is as big as
+  // its most-built-on paper, which differs per corpus (19px on attention, 15 on
+  // embedding). A constant here would be the same mistake one layer down.
+  const maxR = Math.max(...data.papers.map((p) => 5 + Math.sqrt(Math.max(p.attention, 0)) * 2.8), 8);
+  const pad = 2 * (maxR + 5);
+  const bandH = (sid: string) => Math.max(MIN_BAND, ((tallest.get(sid) ?? 1) - 1) * STEP + pad);
+  const bandTop = new Map<string, number>();
+  let acc = m.t;
+  for (const b of bands) { bandTop.set(b.sid, acc); acc += bandH(b.sid); }
+  const H = acc + m.b;
   const x = (y: number) => m.l + ((y - yr0) / (yr1 - yr0)) * (W - m.l - m.r);
-  const bandIdx = new Map(bands.map((b, i) => [b.sid, i]));
   const py = (arxiv: string) => {
     const pl = placed.get(arxiv)!;
-    return m.t + (bandIdx.get(pl.p.stream_id) ?? 0) * bandH + bandH / 2 + pl.dy;
+    const sid = pl.p.stream_id;
+    return (bandTop.get(sid) ?? m.t) + bandH(sid) / 2 + pl.dy;
   };
   const rad = (p: MapPaper) => 5 + Math.sqrt(Math.max(p.attention, 0)) * 2.8;
 
@@ -205,15 +227,16 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
             </g>
           ))}
 
-          {bands.map((b, i) => {
-            const yTop = m.t + i * bandH + 5, hh = bandH - 10;
+          {bands.map((b) => {
+            const bh = bandH(b.sid);
+            const yTop = (bandTop.get(b.sid) ?? m.t) + 5, hh = bh - 10;
             return (
               <g key={b.sid}>
                 <rect x={x(b.minY) - 18} y={yTop} width={Math.max(x(b.maxY) - x(b.minY) + 36, 44)}
                   height={hh} rx={hh / 2} fill={b.color} opacity={0.14} />
                 {(() => {
                   const lines = wrapLabel(b.name);
-                  const lh = 14, cyBand = m.t + i * bandH + bandH / 2;
+                  const lh = 14, cyBand = (bandTop.get(b.sid) ?? m.t) + bh / 2;
                   const y0 = cyBand + 4 - ((lines.length - 1) * lh) / 2;
                   return (
                     <text textAnchor="end" fill={b.color} fontSize={12} fontFamily="var(--font-mono)"
