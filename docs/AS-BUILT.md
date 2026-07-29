@@ -284,9 +284,15 @@ including zero, because the map selects on `attention IS NOT NULL` and a null
 would drop a paper off the map rather than rank it last. Displacement is null
 for the earliest paper, which has nothing to be displaced from.
 
-**Stage G: threads** (`stage_g_threads.py <concept> [--prompt-version PV]`).
-Fills `genealogies.streams` (migration 012) in two phases: detect 6-9 threads
-and assign every paper to one, then compose each thread's account. It reads the
+**Stage G: threads** (`stage_g_threads.py <concept> [--prompt-version PV]
+[--threads N]`). Fills `genealogies.streams` (migration 012) in two phases:
+detect the threads and assign every paper to one, then compose each thread's
+account. The target count scales with the corpus (`papers / 18`, clamped to
+4..9) and is a guide rather than a range: a hardcoded "6-9" asked the model to
+fill a quota and it returned 9 every time, which was right for embedding's 134
+papers and too many for attention's 85. The prompt also refuses a thread for
+work *about* the concept (surveys, interpretability) as opposed to development
+*of* it. It reads the
 corpus's content (definitions and novelty claims), not its citation topology,
 which is why it is a stored artifact rather than something derived at render
 time. **It generates no quotes.** An earlier version asked for a verbatim
@@ -365,9 +371,11 @@ was a back-link in whatever corner each page happened to use.
   as `/`, because a request that appears to vanish is worse than a slow one.
 - `/g/[id]` : the front door, an influence map (`InfluenceMap.tsx`, client).
   `getInfluenceMap()` picks the top 20 papers by attention plus the 8 strongest
-  movers by displacement (gated at `attention >= 1` so outliers stay out); a dot
-  is a paper, its radius is `5 + sqrt(attention) * 2.8`, a ring means it moved
-  the term's meaning. Papers ride in visible per-thread channels ordered by
+  movers by displacement, preferring movers that have some uptake and topping up
+  from the rest; every thread is then guaranteed its strongest paper, so the
+  channels and the thread list below cannot disagree. A dot is a paper, its
+  radius is `5 + sqrt(attention) * 2.8`, a ring means it moved the term's
+  meaning. Papers ride in visible per-thread channels ordered by
   first year, same-year collisions are spread vertically, and typed lineage
   appears only on hover or after a click pins it, so the resting state is a
   constellation rather than a hairball. **The scores select and size, and are
@@ -663,6 +671,19 @@ Recorded because the system's shape is partly their consequence.
    stays, labelled as the tool's reading. The problem was one field claiming a
    grounding it never had, in the one place the product cannot afford to be
    wrong.
+9. **An absolute threshold silenced the signal it was guarding (2026-07-29).**
+   The influence map added "movers" by displacement but only from papers with
+   `attention >= 1`. Displacement exists to catch papers the citation graph
+   misses, so gating it behind a citation-derived score was self-defeating, and
+   the number 1 is meaningless across corpora of different citation density. On
+   the second map ever built (`attention`, 85 papers) exactly 20 papers cleared
+   the bar and all 20 were already selected, so no mover was ever added and four
+   of nine threads had no paper on the map while still being listed beneath it.
+   Caught by the owner counting channels against the list. **Lesson: this is
+   decision 3 again.** A cosine threshold once deleted the field's most important
+   paper and the rule that came out of it was rank, never threshold. The rule was
+   right and was not applied here, because the flaw is invisible on the corpus
+   you tune against and only appears on the second one.
 
 ---
 

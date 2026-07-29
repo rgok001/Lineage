@@ -99,10 +99,34 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
   const byAtt = [...rows].sort((a, b) => Number(b.attention) - Number(a.attention));
   const picked = new Map<string, typeof rows[number]>();
   for (const r of byAtt.slice(0, 20)) picked.set(r.arxiv, r);
-  const movers = rows
-    .filter((r) => r.displacement !== null && Number(r.attention) >= 1 && !picked.has(r.arxiv))
-    .sort((a, b) => Number(b.displacement) - Number(a.displacement));
-  for (const r of movers.slice(0, 8)) picked.set(r.arxiv, r);
+
+  // Movers are ranked, never thresholded. An `attention >= 1` gate used to stand
+  // here and it silenced the very signal it was guarding: displacement exists to
+  // catch papers the citation graph misses, so gating it behind a citation score
+  // means a sparse corpus loses its turning points. On /g/13 exactly 20 papers
+  // cleared that bar and all 20 were already picked, so no mover was ever added.
+  // Same lesson as the Stage A cosine cutoff (decision 3): rank, do not threshold,
+  // because an absolute cut on a density-dependent score travels badly.
+  const byDisp = (a: typeof rows[number], b: typeof rows[number]) =>
+    Number(b.displacement) - Number(a.displacement);
+  const candidates = rows.filter((r) => r.displacement !== null && !picked.has(r.arxiv));
+  const withUptake = candidates.filter((r) => Number(r.attention) > 0).sort(byDisp);
+  const without = candidates.filter((r) => !(Number(r.attention) > 0)).sort(byDisp);
+  for (const r of [...withUptake, ...without].slice(0, 8)) picked.set(r.arxiv, r);
+
+  // Every thread gets at least its strongest paper. The channels are drawn from
+  // what the map selected, so a thread with nothing above the cut vanished from
+  // the map while still being listed below it, which reads as a bug to anyone
+  // who counts.
+  for (const s of river.streams) {
+    const members = s.papers.map((p) => p.arxiv);
+    if (members.some((a) => picked.has(a))) continue;
+    const best = rows
+      .filter((r) => members.includes(r.arxiv))
+      .sort((a, b) => Number(b.attention) - Number(a.attention) ||
+                      Number(b.displacement ?? 0) - Number(a.displacement ?? 0))[0];
+    if (best) picked.set(best.arxiv, best);
+  }
 
   const arxivs = [...picked.keys()];
   const rawEdges = (await sql`

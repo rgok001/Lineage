@@ -58,6 +58,8 @@ def main() -> None:
     ap.add_argument("concept")
     ap.add_argument("--prompt-version", default=env("PROMPT_VERSION", "v1"))
     ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--threads", type=int, default=None,
+                    help="roughly how many threads to look for; default scales with corpus size")
     args = ap.parse_args()
     concept, pv = args.concept, args.prompt_version
 
@@ -108,9 +110,17 @@ def main() -> None:
     # ── phase 1: detect the threads and assign every paper ───────────────────
     digest = "\n".join(f'[{i}] {p["year"]} {p["title"][:66]} | {p["def"][:110]} | {p["nov"][:110]}'
                        for i, p in enumerate(P))
+    # A hardcoded "6-9" asked the model to fill a quota rather than read the
+    # corpus, and it duly returned 9 every time: 9 was right for the 134-paper
+    # embedding corpus this was tuned on and too many for attention's 85. The
+    # target now scales with the corpus and is a guide, not a range to fill.
+    target = args.threads or max(4, min(9, round(len(P) / 18)))
     sys1 = (
-        f"Map how the concept '{concept}' evolved across this corpus. Identify 6-9 conceptual "
-        "STREAMS (parallel lines of how the idea itself developed, from CONTENT not citations). "
+        f"Map how the concept '{concept}' evolved across this corpus. Identify the conceptual "
+        f"STREAMS (parallel lines of how the idea itself developed, from CONTENT not citations). "
+        f"Aim for about {target}, but return the number the corpus actually supports: do not split "
+        "one line of work that shares a formulation, and do not create a stream for work ABOUT the "
+        "concept (analysis, surveys, interpretability) rather than development OF it. "
         "Assign EVERY paper to exactly one primary stream. Return ONLY JSON: "
         '{"through_line":str, "streams":[{"name":str,"tagline":str,"arc":str(2-3 sentences),'
         '"members":[int paper indices, earliest-first]}], "cross_currents":[{"from":stream_name,'
