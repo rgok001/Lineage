@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "../../../../../lib/db";
-import { getRiver } from "../../../../../lib/genealogy";
+import { getRiver, readableQuote } from "../../../../../lib/genealogy";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +56,7 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
             const move = typeof p.move === "string" ? p.move : "";
             const prose = typeof p.prose === "string" ? p.prose : "";
             const ev = evidence.get(p.arxiv);
-            const quote = (typeof ev?.quote === "string" ? ev.quote : "").replace(/\s+/g, " ").trim();
+            const quote = readableQuote((typeof ev?.quote === "string" ? ev.quote : "").replace(/\s+/g, " ").trim());
             const verified = ev?.verified === true;
             return (
             <section key={p.arxiv} style={{ position: "relative", padding: "0 0 2.2rem 2rem" }}>

@@ -1,5 +1,5 @@
 import { sql } from "./db";
-import { getRiver, type River, type RiverStream } from "./genealogy";
+import { getRiver, readableQuote, type River, type RiverStream } from "./genealogy";
 
 /**
  * Export for writing: the thread account as a related-work scaffold, plus the
@@ -200,7 +200,7 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
       // string-matched against the extracted source. The river's own "quote"
       // field is NOT used: it is generated paraphrase, and nothing that has not
       // passed the string match may leave here wearing a verified stamp.
-      const quote = clean(m?.quote);
+      const quote = readableQuote(clean(m?.quote));
       // A paper with no author metadata has no BibTeX entry, so its key would
       // not resolve. Say so where the citation is, not only in the .bib.
       const dangling = m?.authors.length ? "" : "  *(citation incomplete: no author metadata for this paper)*";

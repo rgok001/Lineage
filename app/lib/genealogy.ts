@@ -166,6 +166,18 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
   };
 }
 
+/**
+ * Our LaTeX extractor leaves `<cit.>` where the paper had a \cite{...}, and
+ * `<ref>` for a cross-reference. They are genuinely in the text the quote was
+ * string-matched against, so the verification claim is untouched, but they are
+ * our machinery showing in public and they travel into a reader's draft. Shown
+ * as an elision, which is what a scholar already writes for a citation dropped
+ * from a quotation. Display only: the stored span stays byte-identical to the
+ * one Stage E matched.
+ */
+export const readableQuote = (s: string) =>
+  s.replace(/\s*<(?:cit\.?|ref)>/g, " […]").replace(/(\s*\[…\])+/g, " […]").trim();
+
 export const EDGE_TYPES = [
   "extends",
   "contests",

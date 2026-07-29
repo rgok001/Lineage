@@ -121,7 +121,14 @@ def main() -> None:
         f"Aim for about {target}, but return the number the corpus actually supports: do not split "
         "one line of work that shares a formulation, and do not create a stream for work ABOUT the "
         "concept (analysis, surveys, interpretability) rather than development OF it. "
-        "Assign EVERY paper to exactly one primary stream. Return ONLY JSON: "
+        "Assign EVERY paper to exactly one primary stream. "
+        # The JSON keys are the schema and cannot change, but the model writes its
+        # prose in whatever vocabulary the prompt uses, and "stream" is a word the
+        # interface dropped: every arc of the first map built this way said "this
+        # stream" to a reader who had only ever seen "thread".
+        'IMPORTANT: in the prose you write ("through_line", "tagline", "arc"), never '
+        'use the words "stream", "current" or "river" for these groupings. Call one a '
+        '"thread" or a "line of work". The JSON keys stay as given. Return ONLY JSON: '
         '{"through_line":str, "streams":[{"name":str,"tagline":str,"arc":str(2-3 sentences),'
         '"members":[int paper indices, earliest-first]}], "cross_currents":[{"from":stream_name,'
         '"to":stream_name,"year":int,"label":str(<=4 words)}]}. '
@@ -152,7 +159,8 @@ def main() -> None:
             f'You write the account of ONE line of work ("{st.get("name", "")}") in how "{concept}" '
             "evolved. For each paper, in developmental order, say how it moved this line on from the "
             "one before, USING ONLY the provided facts. Do not quote: quotations are attached "
-            'separately from verified source text. Return ONLY JSON: {"passages":[{"idx":int,'
+            'separately from verified source text. Never call this grouping a "stream", '
+            '"current" or "river"; it is a thread or a line of work. Return ONLY JSON: {"passages":[{"idx":int,'
             '"move":str(<=12 words),"prose":str(1-2 sentences)}]}.'
         )
         user = ("PAPERS (earliest first):\n\n" + "\n\n".join(lines)

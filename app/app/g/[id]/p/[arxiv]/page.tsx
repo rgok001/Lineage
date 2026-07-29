@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "../../../../../lib/db";
-import { getRiver, EDGE_MEANING } from "../../../../../lib/genealogy";
+import { getRiver, EDGE_MEANING, readableQuote } from "../../../../../lib/genealogy";
 
 export const dynamic = "force-dynamic";
 
@@ -133,7 +133,7 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
             <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontStyle: "italic",
               fontSize: ".95rem", lineHeight: 1.55, borderLeft: `2px solid var(--${d.quote_verified === false ? "inferred" : "verified"})`,
               padding: ".55rem .85rem", background: "var(--card)", borderRadius: "0 6px 6px 0" }}>
-              “{d.verbatim_quote.length > 500 ? d.verbatim_quote.slice(0, 500) + "…" : d.verbatim_quote}”
+              “{readableQuote(d.verbatim_quote).length > 500 ? readableQuote(d.verbatim_quote).slice(0, 500) + "…" : readableQuote(d.verbatim_quote)}”
             </blockquote>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", marginTop: ".35rem",
               color: d.quote_verified === false ? "var(--inferred)" : "var(--verified)" }}>

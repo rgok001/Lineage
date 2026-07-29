@@ -388,7 +388,12 @@ was a back-link in whatever corner each page happened to use.
   paper's own definition quote carrying its true verdict. The quote comes from
   `definitions.verbatim_quote`, not from the river's own `quote` field, which
   is generated summary rather than a passage from the paper (section 10,
-  incident 8). (`/g/[id]/river` redirects to the map; the path is kept working
+  incident 8). Quotes render through `readableQuote()`, which shows the LaTeX
+  extractor's `<cit.>` and `<ref>` markers as `[…]`, the elision a scholar
+  already writes for a citation dropped from a quotation. Display only: about one
+  quote in five carries a marker, the stored span stays byte-identical to the one
+  Stage E matched, and the same helper is used by the dossier and the export so a
+  reader meets one rendering everywhere. (`/g/[id]/river` redirects to the map; the path is kept working
   because it was the front door for a day.)
 - `/g/[id]/export` : the writing scaffold, built by `lib/export.ts`.
   `?thread=<id>` scopes it to one thread, `?format=bib` returns the BibTeX
