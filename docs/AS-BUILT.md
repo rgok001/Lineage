@@ -778,8 +778,26 @@ Open engineering work, in priority order:
    grounding correctly refuses to verify a sentence missing part of itself.
    Found the same way incident 10 was: by reading a quote that looked wrong.
 4. Proper 403s instead of fail-closed 500s on unauthorised writes.
-5. Some notification when a stranger's request lands (currently visible only
-   by visiting the site).
+5. **Notifications, both directions.** Nothing tells anyone anything: a
+   stranger's request is visible only if the owner happens to visit, and the
+   requester has no way to learn their map was built short of returning to
+   check. Three events, each fired where the state already changes: a request
+   landing (app, `requestTrace`) to the owner; approval or rejection (app,
+   `approveTrace` / `rejectTrace`) to the requester; completion or failure
+   (worker, where it stamps the row) to the requester. Migration 013 would add
+   `requester_email` (the session carries it from GitHub already and it is
+   simply not stored) plus `owner_notified_at` and `requester_notified_at`. The
+   timestamps are load-bearing, not decoration: the worker requeues jobs, and
+   without them a retry sends the same mail twice.
+   **The blocker is not code.** Sending to a stranger requires a verified
+   sending domain, and `lineage-green.vercel.app` cannot be verified. Every
+   reputable provider will deliver to the owner's own address immediately and
+   refuse third parties until a domain is proven, so the owner half is an hour's
+   work and the requester half waits on a domain (about $15 a year plus DNS
+   records). A researcher would bin mail from a Vercel subdomain anyway.
+   Cheap fallback that needs no domain: show a signed-in visitor the status of
+   their own requests on `/trace`, which is also the right behaviour for anyone
+   whose email bounces.
 6. `genealogies.status` semantics are loose and partly vestigial. The failed
    `attention` run left genealogy 13 at `running` with a `failed` request
    pointing nowhere, which is harmless but says nothing true.
