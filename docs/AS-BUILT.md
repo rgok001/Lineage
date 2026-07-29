@@ -390,7 +390,15 @@ was a back-link in whatever corner each page happened to use.
   movers by displacement, preferring movers that have some uptake and topping up
   from the rest; every thread is then guaranteed its strongest paper, so the
   channels and the thread list below cannot disagree. A dot is a paper, its
-  radius is `5 + sqrt(attention) * 2.8`, a ring means it moved the term's
+  radius is `5 + sqrt(attention) * 2.8`. Papers sharing a thread and a year sit
+  at the same x, because x is the year and nothing else, so they fan vertically
+  24px apart and **the lane is sized to hold its tallest such column** rather
+  than being a fixed height. Six papers from 2020 in one attention thread stack
+  120px and broke out of the old 78px lane, and a dot outside its tinted band
+  reads as belonging to the neighbouring thread, which is the one thing the
+  lanes exist to say. Clearance around a column is measured from the largest dot
+  on that map rather than chosen, since dot size scales with a corpus's own
+  uptake: 19px on attention, 15px on embedding. A ring means it moved the term's
   meaning: the top 15% of the scored corpus by displacement (`TURNING_QUANTILE`),
   judged against the whole corpus rather than the handful drawn, and relative
   rather than absolute. A fixed `>= 0.25` ringed 9% of embedding's papers and
