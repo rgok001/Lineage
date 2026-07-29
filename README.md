@@ -101,3 +101,20 @@ this repo; Render reads `render.yaml` and prompts for the three secrets
 (DATABASE_URL = the DIRECT/unpooled Neon string, ANTHROPIC_API_KEY,
 OPENALEX_MAILTO). First build downloads the embedding models to the disk;
 later restarts reuse them. Pushes to master auto-deploy the worker.
+
+## Extraction audit
+
+Everything the grounding check guarantees rests on the extracted text under
+`DATA_DIR`. This scans it for the marks damage leaves behind (macros the parser
+drops in silence, residue from a degraded parse, symbols that left no trace,
+sections that vanished). No model, no network, no cost.
+
+```sh
+python pipeline/check_extraction.py                          # every extracted paper
+python pipeline/check_extraction.py --concept "embedding"    # one corpus
+python pipeline/check_extraction.py --concept "embedding" --sample 8
+python pipeline/check_extraction.py --json data/extraction_audit.json
+```
+
+It is a lower bound: it finds damage that leaves a mark, and the worst damage
+leaves none. Papers it flags are papers worth opening on arXiv.

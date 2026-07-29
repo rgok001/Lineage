@@ -780,11 +780,23 @@ Open engineering work, in priority order:
    measuring, because it is the largest single lever on what a trace costs.
 3. Maths is the next artifact family, and the reason 19 of embedding's 305
    edges are still inferred. 17 of them trace to one paper, *Attention Is All
-   You Need*, whose quote reads "vectors of dimension ." because `$d_{model}$`
-   extracted to nothing. Unlike a citation, a symbol is content, so it cannot be
-   folded away in the comparison the way whitespace and citation marks are, and
-   grounding correctly refuses to verify a sentence missing part of itself.
-   Found the same way incident 10 was: by reading a quote that looked wrong.
+   You Need*, whose quote reads "vectors of dimension .". Unlike a citation, a
+   symbol is content, so it cannot be folded away in the comparison the way
+   whitespace and citation marks are, and grounding correctly refuses to verify
+   a sentence missing part of itself. Found the same way incident 10 was: by
+   reading a quote that looked wrong.
+   **The diagnosis recorded here was wrong, and the correction matters more than
+   the bug.** This said the cause was `$d_{model}$` extracting to nothing. It
+   does not: `$d_{model}$` extracts correctly to `d_model`, measured against the
+   extractor we run. What extracts to nothing is `$\dmodel$`, where the paper
+   wrote `\newcommand{\dmodel}{d_{model}}` in its preamble. pylatexenc does not
+   know the macro, and an unknown macro is dropped in silence along with its
+   content. **That is incident 10 exactly, one class wider.** The rule that came
+   out of incident 10 covered every macro whose name contains "cite"; the
+   general case is every macro a paper defines for itself, and the fix has the
+   same shape: expand `\newcommand` and `\def` definitions before parsing rather
+   than enumerating names. Until then `check_extraction.py` reports which papers
+   are affected and which macros they lose.
 4. Proper 403s instead of fail-closed 500s on unauthorised writes.
 5. **Notifications, both directions.** Nothing tells anyone anything: a
    stranger's request is visible only if the owner happens to visit, and the
