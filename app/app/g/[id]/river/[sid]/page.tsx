@@ -55,6 +55,7 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
           {s.papers.map((p) => {
             const move = typeof p.move === "string" ? p.move : "";
             const prose = typeof p.prose === "string" ? p.prose : "";
+            const claims = Array.isArray(p.claims) ? p.claims.filter((c) => c?.text) : [];
             const ev = evidence.get(p.arxiv);
             const quote = readableQuote((typeof ev?.quote === "string" ? ev.quote : "").replace(/\s+/g, " ").trim());
             const verified = ev?.verified === true;
@@ -73,18 +74,46 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
                 <h3 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.14rem",
                   lineHeight: 1.3, margin: ".35rem 0 .5rem" }}>{move}</h3>
               )}
-              {prose && (
+              {/* Claim-level evidence where Stage H has run: each sentence carries
+                  the passage that shows it, or says plainly that it carries none.
+                  Falls back to the paragraph, which is one label for several
+                  assertions and only as good as the reader's care. */}
+              {claims.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: ".7rem" }}>
+                  {claims.map((cl, i) => (
+                    <div key={i} style={{ borderLeft: `2px solid var(--${cl.verified ? "verified" : "line"})`,
+                      paddingLeft: ".7rem" }}>
+                      <p style={{ margin: 0, fontSize: "1rem", lineHeight: 1.55, color: "var(--ink)" }}>
+                        {cl.text}
+                      </p>
+                      {cl.verified && cl.quote ? (
+                        <blockquote style={{ margin: ".35rem 0 0", fontFamily: "var(--font-display)",
+                          fontStyle: "italic", fontSize: ".88rem", lineHeight: 1.5, color: "var(--ink-soft)" }}>
+                          “{readableQuote(cl.quote)}”
+                          <span style={{ display: "block", marginTop: ".2rem", fontStyle: "normal",
+                            fontFamily: "var(--font-mono)", fontSize: ".6rem", color: "var(--verified)",
+                            letterSpacing: ".04em" }}>
+                            ✓ the paper’s own words
+                          </span>
+                        </blockquote>
+                      ) : (
+                        <span style={{ display: "block", marginTop: ".2rem", fontFamily: "var(--font-mono)",
+                          fontSize: ".6rem", color: "var(--ink-faint)" }}>
+                          the tool’s reading · no passage in the paper was matched to this
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : prose ? (
                 <p style={{ margin: 0, fontSize: "1rem", lineHeight: 1.65, color: "var(--ink)" }}>
                   {prose}
-                  {/* The verified stamp below belongs to the quote, not to this
-                      paragraph. Unlabelled, the layout lends it the quote's
-                      authority; the dossier and the export already say this. */}
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: ".6rem",
                     color: "var(--ink-faint)", marginLeft: ".45rem", whiteSpace: "nowrap" }}>
                     the tool’s reading
                   </span>
                 </p>
-              )}
+              ) : null}
               {quote && (
                 <div style={{ margin: ".7rem 0 0", padding: ".55rem .8rem", background: "var(--card)",
                   borderLeft: `2px solid var(--${verified ? "verified" : "inferred"})`, borderRadius: "0 6px 6px 0" }}>

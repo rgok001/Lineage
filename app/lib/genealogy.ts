@@ -239,7 +239,15 @@ export async function listGenealogies() {
   }[];
 }
 
-export type RiverPaper = { arxiv: string; year: number; title: string; move: string; prose: string; quote: string };
+/** A claim carries its own evidence: the passage from the paper that shows it,
+ *  checked by the same comparison Stage E uses, or null when nothing in the
+ *  paper's text supported it. Written by Stage H; absent on maps built before
+ *  it, which fall back to the paragraph. */
+export type RiverClaim = { text: string; quote: string | null; verified: boolean };
+export type RiverPaper = {
+  arxiv: string; year: number; title: string; move: string; prose: string;
+  quote?: string; claims?: RiverClaim[];
+};
 export type RiverStream = {
   id: string; name: string; tagline: string; arc: string; color: string;
   origin_year: number | null; papers: RiverPaper[];
