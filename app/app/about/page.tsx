@@ -226,6 +226,16 @@ export default function AboutPage() {
           audit a claim, each paper links to its arXiv source and the passage is quoted, so the check
           takes seconds.
         </P>
+        <P>
+          The whole thing is open:{" "}
+          <a href="https://github.com/rgok001/Lineage" target="_blank" rel="noopener noreferrer"
+            style={{ color: "var(--edge-extends)" }}>
+            github.com/rgok001/Lineage
+          </a>
+          . The pipeline that chooses the corpus, reads the papers and checks the quotes is there to
+          be read, alongside an as-built record of what the system does, where it has failed, and
+          what those failures changed. A method you cannot inspect is one you have to take on trust.
+        </P>
       </Section>
 
       <Section title="Requesting a map">
