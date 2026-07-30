@@ -74,7 +74,16 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
                   lineHeight: 1.3, margin: ".35rem 0 .5rem" }}>{move}</h3>
               )}
               {prose && (
-                <p style={{ margin: 0, fontSize: "1rem", lineHeight: 1.65, color: "var(--ink)" }}>{prose}</p>
+                <p style={{ margin: 0, fontSize: "1rem", lineHeight: 1.65, color: "var(--ink)" }}>
+                  {prose}
+                  {/* The verified stamp below belongs to the quote, not to this
+                      paragraph. Unlabelled, the layout lends it the quote's
+                      authority; the dossier and the export already say this. */}
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: ".6rem",
+                    color: "var(--ink-faint)", marginLeft: ".45rem", whiteSpace: "nowrap" }}>
+                    the tool’s reading
+                  </span>
+                </p>
               )}
               {quote && (
                 <div style={{ margin: ".7rem 0 0", padding: ".55rem .8rem", background: "var(--card)",
