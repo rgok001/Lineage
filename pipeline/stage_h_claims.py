@@ -36,7 +36,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import data_dir, env, quote_is_grounded  # noqa: E402
 from stage_b_extract import cost_usd  # noqa: E402
 
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+# Sonnet, not Haiku, and this one was measured rather than assumed. On thread
+# s0 of attention, six papers and the same prompt: Haiku got 16 of 22 passages
+# to check out, Sonnet got 22 of 22. One paper (2111.07624) went from 0 of 4
+# to 4 of 4, so its whole account had rested on prose with nothing under it.
+# The failure is the model paraphrasing when told to copy, which is precisely
+# what the grounding check exists to catch, and the check was catching it all
+# along. ~3.7c a paper against ~1.2c: about $2 more per map, for the
+# difference between 78% and 100% of claims carrying evidence, on a product
+# whose whole premise is that a claim carries evidence.
+DEFAULT_MODEL = "claude-sonnet-5"
 # Enough of a paper to cover its contribution without paying for its appendices.
 TEXT_BUDGET = 24_000
 

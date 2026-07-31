@@ -48,7 +48,7 @@ map was deleted on 2026-07-26.
 | Database | Neon serverless Postgres, pgvector 0.8 | Neon (Vercel-linked account) | free tier |
 | Pipeline | Python 3.12 CLI scripts | Anywhere with the repo and `.env` | LLM spend only |
 | Trace worker | Python 3.12, single process | Render Background Worker (declared in `render.yaml`; the owner's laptop until the Render console setup is done) | ~$8/mo |
-| LLM | Claude Sonnet (`claude-sonnet-5`) for extraction/classification; Claude Haiku (`claude-haiku-4-5`) for the cheaper post-pipeline scoring and thread generation | n/a | ~$6 per 150-paper trace; +~$0.7 magnitude and threads; +~$4-6 claim checking (stage H reads every paper again) |
+| LLM | Claude Sonnet (`claude-sonnet-5`) for extraction, classification and claim evidence; Claude Haiku (`claude-haiku-4-5`) for magnitude scoring and thread generation | n/a | ~$6 per 150-paper trace; +~$0.7 magnitude and threads; +~$3 claim checking on Sonnet (decision 17) |
 
 External data sources, all keyless: **arXiv** (paper source, LaTeX-first,
 throttled 1 request/3s), **OpenAlex** (corpus metadata and citation counts,
@@ -765,6 +765,17 @@ The why behind the load-bearing choices, in one place:
     the dot is, and no number is shown. A number invites the reader to treat a
     model's weighting as a measurement, which is the failure this tool exists
     to avoid.
+17. **Sonnet for claim evidence, measured not assumed** (2026-07-31). Stage H
+    ran on Haiku because it was the cheap post-pipeline stage. On thread s0 of
+    attention, same prompt and same papers, Haiku got 16 of 22 passages to check
+    out and Sonnet got 22 of 22; one paper went from 0 of 4 to 4 of 4, meaning
+    its entire account had rested on prose with nothing under it. ~3.7c a paper
+    against ~1.2c, so roughly $2 more per map. The mirror of decision 2: there,
+    a cheaper model gave identical verdicts and was the right call; here it does
+    not, and the difference is only visible because every passage is checked.
+    **A model that paraphrases when told to copy fails silently in any system
+    that does not verify, and this one verifies.**
+
 16. **Three tiers of trust, never blended** (migration 010, `/about`). A
     verified quote is string-matched against our own extraction. A citation
     context is verbatim but from Semantic Scholar's PDF extraction, so it is
