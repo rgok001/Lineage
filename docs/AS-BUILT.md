@@ -384,6 +384,13 @@ is how the attention map's first export came out with 14 entries for 85 papers.
 `export_related_work.py`: related-work skeleton (Markdown) + BibTeX from a
 curated genealogy. Real structure, real citations, real verified quotes, no
 invented prose.
+`snapshot_map.py`: the whole of one map to a timestamped JSON, before anything
+rewrites it. Stage E's export is the documented backup and holds `nodes` and
+`edges`; it does not hold `streams` (threads and their claims), `user_edits` (the
+curatorial audit trail), or the definitions the edges quote, which a repair
+overwrites in place. Incident 4 was recovered from that export with its audit
+trail lost, which is the same gap. Restoring is deliberately not automated: the
+file is plain JSON and a restore is a decision.
 `restore_genealogy.py`: the inverse of Stage E's export; re-inserts a
 genealogies row and its edges from a JSON export and records the restoration
 in the audit trail. Written during incident 4 and kept as the recovery path.
