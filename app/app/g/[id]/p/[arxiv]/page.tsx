@@ -19,16 +19,25 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
 
   const defs = (await sql`
     SELECT p.id AS pid, p.year, p.title, d.definition, d.verbatim_quote, d.quote_verified,
-           d.section, d.novelty_claims AS novelty, d.displacement,
-           p.extraction_verdict, p.extraction_signals
+           d.section, d.novelty_claims AS novelty, d.displacement
     FROM definitions d JOIN papers p ON p.id = d.paper_id
     WHERE p.arxiv_id = ${arxiv} AND d.concept = ${g[0].concept}
       AND d.prompt_version = ${g[0].prompt_version} AND d.defines_concept = true
   `) as { pid: number; year: number; title: string; definition: string | null; verbatim_quote: string | null;
-          quote_verified: boolean | null; section: string | null; novelty: string[] | null; displacement: number | null;
-          extraction_verdict: string | null; extraction_signals: string[] | null }[];
+          quote_verified: boolean | null; section: string | null; novelty: string[] | null; displacement: number | null }[];
   if (!defs.length) notFound();
   const d = defs[0];
+
+  // Asked separately, and allowed to fail. The app deploys the moment master
+  // moves, and migration 013 is applied by hand against a different endpoint, so
+  // there is a window where this column does not exist yet. Folding it into the
+  // query above would turn that window into a broken page for every paper.
+  // Failing to unknown is honest as well as safe: this note only ever appears
+  // when a scan found something, and no scan has run means nothing to say.
+  const quality = await sql`
+    SELECT extraction_verdict FROM papers WHERE arxiv_id = ${arxiv}
+  `.then((r) => (r as { extraction_verdict: string | null }[])[0]?.extraction_verdict ?? null)
+   .catch(() => null);
 
   const links = (await sql`
     SELECT sp.arxiv_id AS src, sp.title AS src_title, sp.year AS src_year,
@@ -156,11 +165,11 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
                 guarantee and an overstated one. Reported only when something was
                 found: a clean scan means no evidence of damage, which is not the
                 same as evidence of none, so it makes no claim here. */}
-            {d.extraction_verdict && d.extraction_verdict !== "clean" && (
+            {quality && quality !== "clean" && (
               <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", marginTop: ".3rem",
                 color: "var(--ink-soft)", lineHeight: 1.5 }}>
                 ◐ our reading of this paper lost some of its text
-                {d.extraction_verdict === "damaged" ? " in more than one place" : ""}, so
+                {quality === "damaged" ? " in more than one place" : ""}, so
                 this passage may be missing symbols or wording the paper had. Worth
                 checking against the source before quoting.
               </div>
