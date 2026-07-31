@@ -37,7 +37,10 @@ an influence map: the pivotal papers placed by year, sized by how much later
 work built on them for that term, riding in the threads the idea split into.
 Underneath it still holds the typed relationships between papers, each backed by
 verbatim quotes from both papers verified against the extracted source text. The
-showcase map is "embedding" (`/g/10`, 134 papers, 305 relationships, 286
+showcase map is "embedding" (`/g/10`, 27 concept-states, 187 definitions, 305
+relationships, 286 verified before the 2026-07-31 repair, 9 threads, 476 claims;
+**never curated: `user_edits` is empty**, and earlier drafts of this document
+said otherwise because that was the plan rather than the record), 134 papers, 286
 verified); "attention" (`/g/13`, 85 papers, 287 relationships, all verified) is
 the second, and the first built end to end by the worker. The earlier "dropout"
 map was deleted on 2026-07-26.
@@ -938,7 +941,7 @@ Done since first draft: Render worker deployed and verified live
 (2026-07-21); Stage C genealogy upsert (migration 007, stable id); account
 Anthropic billing cap (owner, confirmed set); topic picker + sense gloss
 (item 9 below); family grouping on the evidence page; the showcase "embedding"
-map traced and curated (`/g/10`); the influence-map front door, thread accounts
+map traced (`/g/10`; not curated, see section 1); the influence-map front door, thread accounts
 and paper dossiers; requests moved to their own page; one tab bar and a public
 roadmap; export for writing (`/g/[id]/export`, whole map or one thread) with
 the author backfill run over the showcase corpus so its citations resolve;
@@ -965,7 +968,9 @@ Open engineering work, in priority order:
    a paper's own macros; `check_extraction.py` measures what still escapes.
    **The repair of the existing maps is deliberately not done**, and the reason
    is worth stating: re-extracting changes the text under stored quotes, and the
-   showcase map is hand-curated. The safe path exists (`stage_b_extract.py
+   showcase map was believed to be hand-curated and is not: its `user_edits` is
+   empty, so nothing on it is hand work and a full rebuild costs only money.
+   The safe path exists anyway (`stage_b_extract.py
    --refresh`, then `stage_c_cluster.py --embed-only`, then Stage E) and should
    be exercised on `attention` (`/g/13`, uncurated) before it goes near `/g/10`.
    The affected quotes stay as they are, labelled, until then. What must never
