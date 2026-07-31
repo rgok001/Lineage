@@ -34,6 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import env, get_json, data_dir  # noqa: E402
 from stage_b_extract import cost_usd  # noqa: E402
 
+# Enough failures to prove it is the call and not the edge.
+CONSECUTIVE_FAILURE_LIMIT = 10
+
 S2 = "https://api.semanticscholar.org/graph/v1"
 S2_PAUSE_S = 1.1  # polite spacing on the shared unauthenticated pool
 EST_OUTPUT_TOKENS = 200
@@ -172,9 +175,24 @@ def main() -> None:
     conn.close()
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
 
-    conn.execute("DELETE FROM edges WHERE genealogy_id=%s", (gen_id,))
+    # The old edges are NOT deleted yet. This used to clear them here, before a
+    # single classification had been attempted, on the reasonable assumption that
+    # the run would produce replacements. On 2026-07-31 the account ran out of
+    # credit, all 305 classifications returned 400, and the map was left with 27
+    # concept-states and no edges at all: the delete had already happened and
+    # there was nothing to put back.
+    #
+    # Deletion now waits for the first successful classification, so a run that
+    # cannot classify anything leaves the previous map exactly as it found it.
+    # Destroy nothing until you can replace something.
+    edges_cleared = False
     spend = 0.0
     written = 0
+    # A run where nothing at all classifies is a broken call, not broken
+    # data, and this stage has already DELETEd the map's edges by the time
+    # it finds out. Stopping early keeps the log short enough to read and
+    # says plainly that the edges need rebuilding.
+    failures = 0
     print()
     for e in candidates:
         src, dst = papers[e["src"]], papers[e["dst"]]
@@ -193,8 +211,19 @@ def main() -> None:
                                          messages=[{"role": "user", "content": user}],
                                          output_format=EdgeClass)
         except Exception as exc:
+            # The message, not just the class. A whole run of these printing only
+            # "BadRequestError" says an edge failed and nothing about why, and
+            # 305 of them in a row is a systematic fault (a bad key, an exhausted
+            # balance, a rejected schema) wearing the costume of 305 unlucky
+            # edges. Decision 14 says one bad edge must not cost a trace; it does
+            # not say the reason should be thrown away.
+            failures += 1
             print(f"  {e['src']} -> {e['dst']}: classification failed, skipped "
-                  f"({type(exc).__name__})")
+                  f"({type(exc).__name__}: {str(exc)[:200]})")
+            if failures == CONSECUTIVE_FAILURE_LIMIT and written == 0:
+                sys.exit(f"\nAborting: {failures} classifications in a row failed and not one "
+                         f"succeeded. This is the call failing, not the edges. The map's "
+                         f"existing edges have NOT been touched; fix the cause and re-run.")
             continue
         spend += cost_usd(args.model, resp.usage.input_tokens, resp.usage.output_tokens)
         ec = resp.parsed_output
@@ -211,6 +240,10 @@ def main() -> None:
         # ever wear the verified stamp; the app renders both as unverified context.
         target_quote = dst["quote"]
         citation_context = "\n\n".join(e["contexts"]) or None
+        if not edges_cleared:
+            # First success: now it is safe to replace what was there.
+            conn.execute("DELETE FROM edges WHERE genealogy_id=%s", (gen_id,))
+            edges_cleared = True
         conn.execute("""
             INSERT INTO edges (genealogy_id, source_node, target_node, edge_type,
                                source_paper_id, target_paper_id, source_quote,

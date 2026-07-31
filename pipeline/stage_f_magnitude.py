@@ -125,6 +125,7 @@ def main() -> None:
 
     spend = 0.0
     total_batches = (len(cites) + BATCH - 1) // BATCH
+    failed_batches = 0
     for bi, start in enumerate(range(0, len(cites), BATCH), start=1):
         batch = cites[start:start + BATCH]
         lines = [f'{j}. CITED: "{title[it["cited"]][:80]}"\n   SENTENCE: {it["ctx"] or "(no sentence)"}'
@@ -139,8 +140,19 @@ def main() -> None:
             sc = r.parsed_output.scores if r.parsed_output else []
         except Exception as exc:
             # A batch that will not score is a batch of neutral citations, not a
-            # reason to abandon the run (decision 14).
-            print(f"  batch {bi} failed, scored neutral ({type(exc).__name__})")
+            # reason to abandon the run (decision 14). That holds for ONE batch.
+            # When every batch fails the call is broken, and scoring every citation
+            # neutral writes a uniform, plausible-looking number over the real
+            # ranking: on 2026-07-31 an exhausted credit balance did exactly that
+            # to 533 citations, and what got persisted looked like data rather than
+            # like the absence of it.
+            failed_batches += 1
+            print(f"  batch {bi} failed, scored neutral "
+                  f"({type(exc).__name__}: {str(exc)[:160]})")
+            if failed_batches == bi and bi >= 3:
+                sys.exit(f"\nAborting: all {bi} batches failed and nothing has been "
+                         f"persisted, so the existing scores stand. Neutral for "
+                         f"everything is not a measurement.")
             sc = []
         if len(sc) != len(batch):
             sc = (sc + [1] * len(batch))[:len(batch)]

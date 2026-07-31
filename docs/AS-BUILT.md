@@ -925,6 +925,29 @@ ewcommand` as a thing pylatexenc does not know, and the fix that followed
     Consequence: `expand_own_macros`, and `check_extraction.py`, which exists
     because none of this was visible from inside the system. Every quote passed.
 
+12. **An empty credit balance rebuilt the showcase map into nothing
+    (2026-07-31).** Mid-repair of `embedding`, the Anthropic balance ran out. Every
+    call returned `400 invalid_request_error: Your credit balance is too low`, and
+    four stages in a row treated that as ordinary per-item failure, because each
+    had been written to survive one bad item (decision 14). Stage B's refresh died.
+    Stage D **deleted all 305 edges before classifying a single one**, classified
+    none, and left the map with 27 concept-states and no edges. Stage E dutifully
+    grounded zero edges. Stage F scored all 533 citations neutral and **persisted
+    them**, overwriting the real uptake ranking with a uniform number that looks
+    like data. Stage G crashed, which is the only one that behaved well, because
+    it is the only one that did not have a fallback.
+    **Three lessons, and the third is the general one.** Destroy nothing until you
+    can replace something: Stage D now defers its DELETE until the first successful
+    classification, so a run that classifies nothing leaves the previous map
+    untouched. A per-item fallback needs a global sanity check: "one failure is
+    neutral" is right, "every failure is neutral" is a broken call wearing a
+    result's clothes, so Stage D and Stage F now abort when nothing at all has
+    succeeded. And an error swallowed to its class name is not a log: 305 lines
+    reading `BadRequestError` said nothing, while one line of `str(exc)` would have
+    named the cause immediately. All three now print the message.
+    Recovery is from `snapshot_map.py`, taken minutes earlier, which is the only
+    reason this is an incident rather than a loss.
+
 ---
 
 ## 11. Known limitations and open work
