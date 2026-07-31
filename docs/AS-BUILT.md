@@ -390,7 +390,11 @@ rewrites it. Stage E's export is the documented backup and holds `nodes` and
 curatorial audit trail), or the definitions the edges quote, which a repair
 overwrites in place. Incident 4 was recovered from that export with its audit
 trail lost, which is the same gap. Restoring is deliberately not automated: the
-file is plain JSON and a restore is a decision.
+file is plain JSON and a restore is a decision. It prints the curatorial edits
+rather than counting them, because `user_edits` records what changed and when
+and **not who**: the web workbench is owner-only, but `workbench.py`
+authenticates nobody, so an edit can come from any process holding the `.env`.
+An owner who does not recognise an edit has only its timestamp to go on.
 `restore_genealogy.py`: the inverse of Stage E's export; re-inserts a
 genealogies row and its edges from a JSON export and records the restoration
 in the audit trail. Written during incident 4 and kept as the recovery path.

@@ -97,6 +97,13 @@ def main() -> None:
                  for p in s.get("papers", []))
     print(f'Snapshot of "{args.concept}" (genealogy {gen_id}) -> {out}')
     print(f"  {len(genealogy['nodes'])} concept-states, {len(genealogy['user_edits'])} curatorial edits")
+    # Printed, not just counted. The trail records what changed and when and not
+    # who: the web workbench is owner-only, but workbench.py authenticates
+    # nobody, so an edit here may have come from any process holding the .env.
+    # When the owner does not recognise an edit, the timestamp is the only thread
+    # to pull, so it should not require opening the file to find it.
+    for e in genealogy["user_edits"] or []:
+        print(f"    {e.get('at', '?')}  {e.get('op', '?')}  {e.get('detail', '')}")
     print(f"  {len(payload['edges'])} edges ({verified} verified)")
     print(f"  {len(payload['definitions'])} definitions with their quotes and verdicts")
     print(f"  {threads} threads carrying {claims} claims")
