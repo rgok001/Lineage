@@ -276,6 +276,18 @@ same patterns find every real case from the corpus and score zero on wrapped,
 indented, list-bearing text. **Whitespace that spans a line break is layout;
 only whitespace inside a line can be a hole where a token stood.**
 
+The fourth run answered the question the first three were really asking. The
+marks that kept firing were fed back through the current extractor, and it
+removes every one of them: it closes a space before punctuation, collapses runs
+of spaces, deletes an emptied bracket pair. **A file containing them was
+therefore not written by the current extractor.** The corpus on the Render disk
+is text an older pipeline produced and nothing has re-extracted, so the audit
+was not crying wolf and the thresholds were not the problem: it was reporting,
+in the only vocabulary it had, that the fixes have never reached these files.
+That is now its own signal, kept out of the verdict, because the answer to it is
+re-extraction and that is a decision about the corpus rather than a warning
+about a paper.
+
 The counts never changed through any of this; only what the tool is willing to
 call damage did. **Thresholds guessed against a synthetic sample are a
 hypothesis, and the first real corpus is the test.** Twice now the corpus has

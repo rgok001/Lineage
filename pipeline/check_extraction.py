@@ -42,17 +42,17 @@ assumed:
                   circular \\input is dropped in silence (extract_text.py:91),
                   so a whole section can leave without a word about it.
   gaps            punctuation standing where a token used to be, detected by
-                  shape and never by vocabulary. The first version guessed at
-                  words that "never" take a following comma, and the first real
-                  corpus answered: it flagged "the batch size.", "And," and "a
-                  fixed number of dimensions." as damage, drove 73% of papers to
-                  suspect, and would have warned a reader about ordinary English.
-                  What survives is structural and checkable: a space before
-                  punctuation, an empty group, a group missing its front, two
-                  marks with nothing between them. Those found "vectors of
-                  dimension .", "a neural ranking model ().", "( 200 dimensions)"
-                  and "extracting  features" in real stored quotes. Still only
-                  ever "suspect", and the excerpt is still printed for a human.
+                  shape and never by vocabulary. Guessing at words that "never"
+                  take a following comma flagged "the batch size." and "And,";
+                  writing the shapes with `\s` made every indented line a gap.
+                  What is left is anchored to word characters and literal spaces.
+  stale text      the useful half of what those attempts kept finding. "dimension
+                  .", "extracting  features" and "model ()." were fed back
+                  through the current extractor and it removes all three, so a
+                  file containing them was not written by it. That is not damage
+                  in the pipeline, it is a file the fixes never reached, and the
+                  answer is re-extraction rather than a warning. Reported, and
+                  deliberately kept out of the verdict.
   bad decode      U+FFFD, from the "replace" decode in read_archive.
   no structure    neither a references nor an introduction heading survived.
 
@@ -155,16 +155,22 @@ RATIO_SUSPECT = 0.18
 # lines, so "\s{2,}" quietly meant "any indented line" and reported 892 gaps in a
 # paper that had a handful. Whitespace that spans a line break is layout; only
 # whitespace inside a line can be a hole where a token stood.
-GAP_STRONG = re.compile(
+# Marks TODAY'S EXTRACTOR CANNOT MAKE. tidy_marks closes the space before
+# punctuation, collapses runs of spaces, and deletes an emptied bracket pair;
+# each was fed back through it and verified gone. So finding one is not evidence
+# of damage in the current pipeline. It is proof that this text was written by an
+# older one and never re-extracted, which is a different and more useful finding:
+# the fix exists and this file has not had it.
+STALE_MARKS = re.compile(
     r"\w\x20+[.,;:]"       # "vectors of dimension ."
-    r"|\(\x20*[)\]]"       # nothing left inside: "a neural ranking model ()."
-    r"|\[\x20*\]"
-    r"|\(\x20+\S"          # the front of a group left: "( 200 dimensions)"
-    r"|[,;:]\x20*[.,;:]"   # two marks with nothing between them
-    r"|\w\x20{2,}\w")      # "extracting  features"; tidy_marks collapses runs of
-                           # spaces, so one that survived opened up after it ran.
-                           # Anchored on \w at both ends, which also excludes the
-                           # double space some authors put after a full stop.
+    r"|\w\x20{2,}\w"       # "extracting  features"
+    r"|\(\x20*[)\]]"       # "a neural ranking model ()."
+    r"|\[\x20*\]")
+
+# Damage the current extractor still can leave. tidy_marks does not touch either.
+GAP_STRONG = re.compile(
+    r"\(\x20+\S"           # the front of a group left: "( 200 dimensions)"
+    r"|[,;:]\x20*[.,;:]")  # two marks with nothing between them
 GAP_WEAK = re.compile(r"(?!)")  # nothing: see the note above
 GAP_SUSPECT = 3
 
@@ -323,11 +329,17 @@ def scan_paper(row: dict) -> dict:
     elif bad >= REPLACEMENT_SUSPECT:
         out["signals"].append(("suspect", f"undecodable bytes x{bad}"))
 
-    strong, weak = len(GAP_STRONG.findall(text)), len(GAP_WEAK.findall(text))
-    out["gap_hits"] = strong + weak
+    stale = len(STALE_MARKS.findall(text))
+    out["stale_marks"] = stale
+    if stale:
+        out["signals"].append(("stale", f"text predates the current extractor "
+                                        f"({stale} marks it can no longer make)"))
+
+    strong = len(GAP_STRONG.findall(text))
+    out["gap_hits"] = strong
     out["gap_examples"] = [m.group(0) for m in list(GAP_STRONG.finditer(text))[:4]]
-    if strong + weak >= GAP_SUSPECT:
-        out["signals"].append(("suspect", f"gaps where a token was x{strong + weak}"))
+    if strong >= GAP_SUSPECT:
+        out["signals"].append(("suspect", f"gaps where a token was x{strong}"))
 
     if not any(p.search(text) for p in SECTION_HINTS):
         out["signals"].append(("suspect", "no references or introduction heading"))
@@ -365,7 +377,11 @@ def scan_paper(row: dict) -> dict:
                 elif rate >= SYMBOL_LOSS_SUSPECT:
                     out["signals"].append(("suspect", f"{missing}/{checked} symbols left no trace"))
 
-    levels = {s[0] for s in out["signals"]}
+    # "stale" says which extractor made this file, not how good the file is, so
+    # it is reported and then kept out of the verdict. Re-extracting is the
+    # answer to it, and that is a decision about the corpus rather than a
+    # warning about a paper.
+    levels = {s[0] for s in out["signals"]} - {"stale"}
     out["verdict"] = "damaged" if "damaged" in levels else "suspect" if levels else "clean"
     return out
 
@@ -376,7 +392,8 @@ def scan_paper(row: dict) -> dict:
 QUOTE_TELLS = (
     ("undecodable bytes", lambda q: REPLACEMENT in q),
     ("latex residue", lambda q: bool(LATEX_RESIDUE.search(OUR_MARKS.sub("", q)))),
-    ("gap where a token was", lambda q: bool(GAP_STRONG.search(q) or GAP_WEAK.search(q))),
+    ("gap where a token was", lambda q: bool(GAP_STRONG.search(q))),
+    ("copied from text the extractor has since fixed", lambda q: bool(STALE_MARKS.search(q))),
 )
 
 
@@ -495,6 +512,10 @@ def main() -> None:
         # What the macro fix was worth, measured rather than argued. This is the
         # number for the write-up: it is the size of a silent failure that no
         # grounding check could have caught, because both sides agreed.
+        stale_papers = sum(1 for p in group if p.get("stale_marks", 0))
+        if stale_papers:
+            print(f"           text predating the current extractor: {stale_papers} papers "
+                  f"({stale_papers / n:.0%}); re-extract to apply the fixes")
         was = sum(p.get("own_macro_uses_before_fix", 0) for p in group)
         was_papers = sum(1 for p in group if p.get("own_macro_uses_before_fix", 0) >= OWN_SUSPECT)
         if was:
