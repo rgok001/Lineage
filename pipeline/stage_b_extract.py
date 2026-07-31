@@ -12,7 +12,8 @@ Three things make this the pipeline's semantic gate and cost centre:
   definition, and fall out here.
 - Every extraction carries a verbatim quote, string-verified against the
   extracted text on arrival (`quote_verified`). A paraphrase is flagged at the
-  moment it is created, not at display time.
+  moment it is created, not at display time. `--reground` re-answers that same
+  question later, for nothing, when the text has moved underneath the stamp.
 - This is where money is spent. --dry-run estimates cost without calling the
   model; a hard spend cap aborts the run cleanly.
 
@@ -23,6 +24,7 @@ Usage:
   python pipeline/stage_b_extract.py "attention" --dry-run
   python pipeline/stage_b_extract.py "attention" --limit 5
   python pipeline/stage_b_extract.py "attention" --model claude-haiku-4-5
+  python pipeline/stage_b_extract.py "attention" --reground --dry-run
 """
 
 import argparse
@@ -195,6 +197,140 @@ WHERE p.extracted_text_path IS NOT NULL
 {{corpus_filter}}{{arxiv_filter}}ORDER BY p.cited_by_count DESC NULLS LAST
 """
 
+# --reground re-answers the grounding question for definitions that already
+# exist, against the text on disk now. It exists because `quote_verified` was the
+# one stamp in the system with no way back: Stage E re-grounds every edge on
+# every run and Stage H's --recheck re-grounds every claim, both free, while a
+# definition's stamp could only be refreshed by paying for a fresh extraction. A
+# stamp that cannot be recomputed outlives the check that made it, and on
+# `embedding` it did: its papers were re-extracted on 2026-07-31 and its
+# definitions were not, so its quotes were copied out of a document no longer on
+# disk while their stamps still said the text had been searched for them.
+#
+# No TITLE_MATCH_MIN guard and no NOT NULL test on the text path, unlike the two
+# queries above. Those guards exist to stop money being spent against the wrong
+# paper's text. Here the row already exists and its stamp is already on a page,
+# so excluding it would only hide it from the count this flag exists to make
+# visible; a definition whose paper has no text path is reported as unchecked
+# instead.
+SELECT_DEFS_REGROUND = """
+SELECT d.id, p.arxiv_id, p.extracted_text_path, d.verbatim_quote,
+       d.quote_verified, d.defines_concept
+FROM definitions d
+JOIN papers p ON p.id = d.paper_id
+WHERE d.concept = %(concept)s
+  AND d.prompt_version = %(prompt_version)s
+{corpus_filter}{arxiv_filter}ORDER BY p.arxiv_id
+"""
+
+# The stamp, and nothing else. `verbatim_quote` is what the model returned and is
+# not ours to edit here: incident 10's lesson is that repairing the data to
+# satisfy a check hides what the check found. The embedding is left alone too,
+# unlike REFRESH_DEF, which nulls it — there the definition text changed, here
+# only our verdict about it did.
+#
+# Scoped by concept and prompt version as well as by id, though the id alone is
+# already unique. `definitions` is shared across every concept ever traced, and
+# an UPDATE in this file that is wrong about its scope rewrites another map's
+# stamps in silence.
+REGROUND_DEF = """
+UPDATE definitions SET quote_verified = %(quote_verified)s
+WHERE id = %(def_id)s AND concept = %(concept)s
+  AND prompt_version = %(prompt_version)s
+"""
+
+
+def reground(conn, concept: str, prompt_version: str, params: dict,
+             corpus_filter: str, arxiv_filter: str, dry_run: bool) -> None:
+    """Re-check every stored definition quote against the text on disk now.
+
+    Costs nothing: no model, no network, no key, disk reads only. Mirrors
+    stage_h_claims.py --recheck deliberately, down to keeping the payload and
+    moving only the stamp, and it calls the same `quote_is_grounded` every other
+    stage calls. One comparison function is why "verified" means one thing
+    across this system.
+    """
+    rows = conn.execute(
+        SELECT_DEFS_REGROUND.format(corpus_filter=corpus_filter,
+                                    arxiv_filter=arxiv_filter), params).fetchall()
+    if not rows:
+        print(f'No definitions to re-check for "{concept}" at prompt {prompt_version}.')
+        return
+
+    if dry_run:
+        print("[dry-run] Re-checking every stamp. Nothing will be written.\n")
+    dd = data_dir()
+    total = len(rows)
+    before = sum(1 for r in rows if r[4])
+    checked = gained = lost = 0
+    unchecked: list[tuple[str, bool]] = []
+
+    for i, (def_id, arxiv, tpath, quote, was, defines) in enumerate(rows, 1):
+        was = bool(was)
+        stamp = "verified" if was else "unverified"
+        tfile = (dd / tpath) if tpath else None
+        if tfile is None or not tfile.exists():
+            # The open question, answered the only way a script is entitled to
+            # answer it. `quote_verified` is NOT NULL DEFAULT false, so there is
+            # no "unknown" to write: leaving it true perpetuates the stale claim
+            # this flag exists to kill, and writing false asserts a check that
+            # never ran and would mass-flip every stamp on a worker whose disk is
+            # incomplete. Both are decisions about the product, so neither is
+            # taken here. The stamp stands and the count is printed loudly.
+            unchecked.append((arxiv, was))
+            why = "no extracted text recorded" if tpath is None else "no extracted text on this disk"
+            print(f"  [{i}/{total}] {arxiv}: {why}, stamp left as {stamp}", flush=True)
+            continue
+        try:
+            # The same read Stage B does when it creates the stamp. A recompute
+            # that reads the file differently from the compute is not a recompute.
+            text = tfile.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            unchecked.append((arxiv, was))
+            print(f"  [{i}/{total}] {arxiv}: text unreadable ({exc}), "
+                  f"stamp left as {stamp}", flush=True)
+            continue
+
+        checked += 1
+        # `defines_concept` is in the test because it is in the test at creation
+        # (see the extract loop below). A row that says the paper does not define
+        # the concept has no definition quote to stand behind, whatever string
+        # happens to sit in the column.
+        ok = bool(defines) and bool(quote) and quote_is_grounded(text, quote)
+        if ok == was:
+            print(f"  [{i}/{total}] {arxiv}: still {stamp}", flush=True)
+            continue
+
+        gained += ok
+        lost += not ok
+        if not dry_run:
+            conn.execute(REGROUND_DEF, {"def_id": def_id, "concept": concept,
+                                        "prompt_version": prompt_version,
+                                        "quote_verified": ok})
+        moved = ("not found before, found in the text now" if ok
+                 else "NO LONGER FOUND in the text")
+        print(f"  [{i}/{total}] {arxiv}: {moved}", flush=True)
+
+    after = before - lost + gained
+    print(f'\n"{concept}" at prompt {prompt_version}: {total} definitions, '
+          f"{checked} re-checked against the text on disk.")
+    print(f"  verified before: {before}")
+    print(f"  verified after:  {after}  ({gained} newly verified, "
+          f"{lost} no longer found in the text)")
+    if unchecked:
+        still = sum(1 for _, was in unchecked if was)
+        print(f"\n  Could NOT be checked, the paper's extracted text is not on this "
+              f"disk: {len(unchecked)} of {total}")
+        print(f"  Of those, still stamped verified with nothing here to prove it: {still}")
+        print("  Their stamps were left exactly as they were. Whether an unprovable "
+              "stamp should stand or fall is a decision about the product, not one "
+              "for this script.")
+        shown = ", ".join(a for a, _ in unchecked[:20])
+        print(f"    {shown}{', and more' if len(unchecked) > 20 else ''}")
+    if dry_run:
+        print("\n[dry-run] Nothing was written. Re-run without --dry-run to move "
+              "the stamps.")
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Stage B: extract per-paper concept definitions.")
@@ -206,7 +342,8 @@ def main() -> None:
     ap.add_argument("--thinking", action="store_true",
                     help="enable adaptive thinking (better reasoning, more output tokens)")
     ap.add_argument("--dry-run", action="store_true",
-                    help="estimate cost across models; makes no billable call")
+                    help="estimate cost across models; makes no billable call. "
+                         "With --reground, report the counts and write nothing")
     ap.add_argument("--corpus", metavar="JSON",
                     help="restrict to the arxiv_ids in this corpus JSON "
                          "(from corpus_select --json); without it, ALL extracted papers")
@@ -220,7 +357,23 @@ def main() -> None:
     ap.add_argument("--only", metavar="ARXIV_ID", nargs="+",
                     help="restrict to these arxiv ids (use with --refresh to redo "
                          "just the papers an audit flagged)")
+    ap.add_argument("--reground", action="store_true",
+                    help="re-check the definition quotes already stored against the "
+                         "extracted text as it is now, and rewrite quote_verified "
+                         "only. For when the text changed underneath a stamp: the "
+                         "stamp was computed against the old text and a stamp must "
+                         "never outlive the check that made it. Costs nothing and "
+                         "needs no API key")
     args = ap.parse_args()
+
+    if args.reground and args.refresh:
+        sys.exit("--reground and --refresh are different jobs: --reground re-checks the "
+                 "definitions you already have and spends nothing, --refresh buys new "
+                 "ones. Run them one at a time.")
+    if args.reground and args.limit:
+        sys.exit("--reground reports the verified count for the whole concept, and "
+                 "--limit would make that count describe a subset of it. Use --only "
+                 "or --corpus to scope which papers are checked.")
 
     sense = SENSE.format(gloss=args.gloss) if args.gloss else ""
     params: dict = {"concept": args.concept}
@@ -241,6 +394,16 @@ def main() -> None:
     cap = float(env("TRACE_SPEND_CAP_USD", "10"))
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
     params["prompt_version"] = prompt_version
+
+    # Ahead of everything that costs or needs a key, because this path must stay
+    # runnable on a machine with no Anthropic credit. That is the state the map
+    # that needs it most is in.
+    if args.reground:
+        reground(conn, args.concept, prompt_version, params,
+                 corpus_filter, arxiv_filter, args.dry_run)
+        conn.close()
+        return
+
     query = SELECT_PAPERS_REFRESH if args.refresh else SELECT_PAPERS
     rows = conn.execute(query.format(corpus_filter=corpus_filter,
                                      arxiv_filter=arxiv_filter), params).fetchall()

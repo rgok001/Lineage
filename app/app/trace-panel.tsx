@@ -258,7 +258,10 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
       {r.status === "running" && (
         <div style={{ marginTop: ".55rem" }}>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink)" }}>
-            stage {p.stage_no ?? "?"}/{p.stages ?? 7} · {p.stage ?? "…"}
+            {/* The worker always writes `stages`; the fallback only covers a row
+                whose progress predates it, and it still has to track what
+                stages_for() returns, or a live run reads as "stage 13 of 7". */}
+            stage {p.stage_no ?? "?"}/{p.stages ?? 13} · {p.stage ?? "…"}
             {p.current != null && p.total != null && <> · {p.current} of {p.total}</>}
           </div>
           {p.message && (
