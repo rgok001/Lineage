@@ -67,6 +67,12 @@ def main() -> None:
     ap.add_argument("--prompt-version", default=env("PROMPT_VERSION", "v1"))
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--thread", help="only this thread id, e.g. s0")
+    ap.add_argument("--recheck", action="store_true",
+                    help="re-ground the claim quotes already stored, without asking "
+                         "the model for new ones. For when the extracted text changed "
+                         "underneath them: the stamps were computed against the old "
+                         "text and a stamp must never outlive the check that made it. "
+                         "Costs nothing")
     args = ap.parse_args()
 
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
@@ -79,8 +85,10 @@ def main() -> None:
     paths = {r[0]: r[1] for r in conn.execute("SELECT arxiv_id, extracted_text_path FROM papers").fetchall()}
     dd = data_dir()
 
-    import anthropic
-    client = anthropic.Anthropic()
+    client = None
+    if not args.recheck:
+        import anthropic
+        client = anthropic.Anthropic()
     spend = 0.0
     done = kept = unverified = skipped = 0
     targets = [s for s in river["streams"] if not args.thread or s["id"] == args.thread]
@@ -96,6 +104,28 @@ def main() -> None:
             if not text:
                 skipped += 1
                 continue
+            if args.recheck:
+                # Re-ground what is already stored. A claim that stops checking out
+                # keeps its text and loses its stamp and its quote, exactly as it
+                # would have on first generation: the prose is an honest reading
+                # either way, and only the passage was ever the claim to evidence.
+                claims = []
+                for cl in p.get("claims") or []:
+                    q = (cl.get("quote") or "").strip()
+                    ok = bool(q) and quote_is_grounded(text, q)
+                    claims.append({"text": cl.get("text", ""), "quote": q if ok else None,
+                                   "verified": ok})
+                    kept += 1
+                    unverified += (not ok)
+                was = sum(1 for cl in (p.get("claims") or []) if cl.get("verified"))
+                now = sum(1 for cl in claims if cl["verified"])
+                p["claims"] = claims
+                if claims:
+                    moved = "" if now == was else f"  (was {was})"
+                    print(f"  [{done}/{total}] {p['arxiv']}: {now}/{len(claims)} still check "
+                          f"out{moved}", flush=True)
+                continue
+
             user = (f'CONCEPT: {args.concept}\nPAPER: {p.get("title","")} ({p.get("year","")})\n\n'
                     f"TEXT:\n{text[:TEXT_BUDGET]}")
             try:
