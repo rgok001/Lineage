@@ -1,5 +1,5 @@
 import { sql } from "./db";
-import { getRiver, readableQuote, type River, type RiverStream } from "./genealogy";
+import { editActor, getRiver, readableQuote, type River, type RiverStream, type UserEdit } from "./genealogy";
 
 /**
  * Export for writing: the thread account as a related-work scaffold, plus the
@@ -63,6 +63,46 @@ const clean = (s: unknown) => (typeof s === "string" ? s.replace(/\s+/g, " ").tr
 const slug = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "thread";
 
+// Authenticated, then asserted, then the entries carrying neither. Highest
+// evidence first, so a reader who stops at the first clause has read the
+// strongest claim rather than the largest one.
+const BASIS_RANK: Record<string, number> = {
+  "signed in": 0,
+  "from the command line, name not verified": 1,
+};
+
+/**
+ * One line about who curated this map, for a document going into a paper.
+ *
+ * This used to read "Curated by hand: N workbench edit(s) applied", which claims
+ * human agency from a count that cannot support it — the same claim the as-built
+ * had to retract about the embedding map, travelling into somebody else's
+ * manuscript. The count is a count; what carries the claim is the actors, each
+ * with the basis on which its name is known, and where no actor is recorded the
+ * line says so rather than implying one.
+ */
+export function curationNote(edits: UserEdit[]): string {
+  const head = `> ${edits.length} workbench edit(s) applied`;
+  const tally = new Map<string, { name: string; basis: string; count: number }>();
+  let unattributed = 0;
+  for (const e of edits) {
+    const { name, basis } = editActor(e);
+    if (!name) { unattributed++; continue; }
+    const key = JSON.stringify([basis, name]);
+    const seen = tally.get(key);
+    if (seen) seen.count++;
+    else tally.set(key, { name, basis, count: 1 });
+  }
+  const known = [...tally.values()].sort(
+    (a, b) => (BASIS_RANK[a.basis] ?? 9) - (BASIS_RANK[b.basis] ?? 9) ||
+              b.count - a.count || a.name.localeCompare(b.name),
+  );
+  if (!known.length) return `${head}. No actor is recorded for any of them.`;
+  const parts = known.map((k) => `${k.count} by ${k.name} (${k.basis})`);
+  if (unattributed) parts.push(`${unattributed} with no actor recorded`);
+  return `${head}: ${parts.join(", ")}.`;
+}
+
 const span = (s: RiverStream) => {
   const years = s.papers.map((p) => p.year).filter((y): y is number => typeof y === "number");
   if (!years.length) return "";
@@ -83,9 +123,9 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
   const { concept, river } = data;
 
   const g = (await sql`
-    SELECT concept, prompt_version, jsonb_array_length(COALESCE(user_edits, '[]'::jsonb)) AS edits
+    SELECT concept, prompt_version, COALESCE(user_edits, '[]'::jsonb) AS edits
     FROM genealogies WHERE id = ${id}
-  `) as { concept: string; prompt_version: string; edits: number }[];
+  `) as { concept: string; prompt_version: string; edits: UserEdit[] }[];
   if (!g.length) return null;
   const pv = g[0].prompt_version;
 
@@ -168,7 +208,8 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
       "> **This is a scaffold, not prose.** The citations, quotes and structure are\n" +
       "> real; the argument is yours to write.",
   );
-  if (g[0].edits) md.push(`>\n> Curated by hand: ${g[0].edits} workbench edit(s) applied.`);
+  const edits = Array.isArray(g[0].edits) ? g[0].edits : [];
+  if (edits.length) md.push(`>\n${curationNote(edits)}`);
   md.push("");
 
   if (one) {

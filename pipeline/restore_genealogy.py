@@ -21,7 +21,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import env  # noqa: E402
+from common import actor, env  # noqa: E402
 
 
 def main() -> None:
@@ -41,9 +41,13 @@ def main() -> None:
             sys.exit(f'A genealogy for "{concept}" ({pv}) already exists (id {existing[0]}). '
                      "Delete it first if you mean to replace it.")
 
-        # The restoration is itself a curatorial event — record it.
+        # The restoration is itself a curatorial event — record it. The actor
+        # goes in `by_asserted`: this used to write {"by": "cli"} into the same
+        # key that holds authenticated GitHub logins, so the audit trail
+        # rendered "by cli" beside "by rgok001" with nothing to tell them apart.
         audit = [{"op": "restore", "detail": {"from": Path(args.json_path).name},
-                  "at": datetime.now(timezone.utc).isoformat(), "by": "cli"}]
+                  "at": datetime.now(timezone.utc).isoformat(),
+                  "by_asserted": actor()}]
         gid = conn.execute(
             """INSERT INTO genealogies (concept, prompt_version, status, nodes, user_edits)
                VALUES (%s, %s, 'complete', %s, %s) RETURNING id""",

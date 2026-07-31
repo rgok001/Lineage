@@ -1,6 +1,8 @@
 """Shared plumbing for pipeline CLI scripts: env loading and polite HTTP."""
 
+import getpass
 import os
+import socket
 import sys
 import time
 from pathlib import Path
@@ -30,6 +32,53 @@ def env(name: str, default: str | None = None) -> str:
 
 def mailto() -> str:
     return env("OPENALEX_MAILTO", "lineage@example.com")
+
+
+# ── who made a curatorial edit ──────────────────────────────────────────────
+#
+# Nothing here authenticates anyone, and that is the point. A CLI edit is made
+# by whoever holds the .env, so the name goes in `by_asserted` and never in
+# `by`, which is reserved for a GitHub login the app got from a session. A
+# reader that has not been taught about `by_asserted` sees no `by` and degrades
+# to "unattributed"; it can never degrade to "authenticated".
+
+
+def actor() -> str:
+    """The name the running process asserts about itself.
+
+    LINEAGE_ACTOR first, because on Render the container user is noise and an
+    operator should be able to say who they are. It is free text supplied by
+    whoever holds the .env: a label, not a credential, which is why it is only
+    ever written to `by_asserted`.
+    """
+    override = os.environ.get("LINEAGE_ACTOR", "").strip()
+    if override:
+        return override
+    try:
+        user = getpass.getuser()
+    except Exception:
+        # getuser() consults the password database when no env var names the
+        # user, and that lookup raises in a container with no passwd entry.
+        # An unnameable user must not abort the edit it was about to record.
+        user = "unknown"
+    return f"{user}@{socket.gethostname()}"
+
+
+def edit_actor(edit: dict) -> tuple[str | None, str]:
+    """(name, basis) for one genealogies.user_edits entry.
+
+    The precedence lives here rather than at each print site: `by` outranks
+    `by_asserted`, and an entry carrying neither is a legacy entry from before
+    either key was written. Absence is reported as absence and never as a claim
+    about origin, which is the "(cli)" the evidence page used to fabricate.
+    """
+    by = (edit.get("by") or "").strip()
+    if by:
+        return by, "signed in"
+    asserted = (edit.get("by_asserted") or "").strip()
+    if asserted:
+        return asserted, "from the command line, name not verified"
+    return None, "actor not recorded"
 
 
 _session: requests.Session | None = None

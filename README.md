@@ -63,7 +63,8 @@ python pipeline/stage_d_edges.py "attention"
 # Stage E: grounding check + assemble genealogy JSON
 python pipeline/stage_e_ground.py "attention"
 
-# Workbench: curate the draft (every edit is recorded in genealogies.user_edits)
+# Workbench: curate the draft (every edit is recorded in genealogies.user_edits,
+# attributed to LINEAGE_ACTOR if set, else user@host, and always as unverified)
 python pipeline/workbench.py "attention" list
 python pipeline/workbench.py "attention" merge n6 --into n4
 python pipeline/workbench.py "attention" delete-node n5

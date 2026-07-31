@@ -1,6 +1,6 @@
 # Lineage: As-Built Documentation
 
-**As of 2026-07-31.**
+**As of 2026-08-01.**
 
 This is the as-built record: a description of the system as it actually exists,
 including the deviations, incidents, and hard-won rules that shaped it. The
@@ -140,7 +140,8 @@ earliest paper has no earlier work to be displaced from).
 
 **genealogies** (001, 007, 012): the map itself. `nodes` is JSONB
 (concept-states with members and year ranges), `user_edits` is the append-only
-curatorial audit trail, `spend_usd` accumulates cost, `status` is loosely one of
+curatorial audit trail (each entry `{op, detail, at}` plus at most one of `by`
+and `by_asserted`; decision 18), `spend_usd` accumulates cost, `status` is loosely one of
 pending/running/complete/failed/aborted_spend_cap. Migration 007 adds
 `UNIQUE (concept, prompt_version)`: Stage C now upserts on that key (stable id
 across re-runs, in place), where it used to DELETE then INSERT and mint a new
@@ -382,8 +383,10 @@ incident 4). Re-run Stage E after curating.
 
 **Auxiliaries.**
 `workbench.py`: CLI curation (merge, rename, split-out, delete, reclassify);
-every edit appends to `user_edits`. The web workbench (section 6) does the
-same operations via Server Actions.
+every edit appends to `user_edits`, carrying `by_asserted` (decision 18): this
+script authenticates nobody, so the name is what the process says about itself,
+`LINEAGE_ACTOR` if set and `user@host` otherwise. The web workbench (section 6)
+does the same operations via Server Actions and is the only writer of `by`.
 `enrich_authors.py`: fills author lists, arXiv first and OpenAlex only as
 fallback, because a stored openalex_id can be wrong while the arxiv_id was
 proven by the title-match guard. Missing authors are omitted from BibTeX, not
@@ -401,10 +404,10 @@ curatorial audit trail), or the definitions the edges quote, which a repair
 overwrites in place. Incident 4 was recovered from that export with its audit
 trail lost, which is the same gap. Restoring is deliberately not automated: the
 file is plain JSON and a restore is a decision. It prints the curatorial edits
-rather than counting them, because `user_edits` records what changed and when
-and **not who**: the web workbench is owner-only, but `workbench.py`
-authenticates nobody, so an edit can come from any process holding the `.env`.
-An owner who does not recognise an edit has only its timestamp to go on.
+rather than counting them, and since decision 18 it prints each one's actor with
+the basis for the name: this is the forensic tool for "who changed this map", so
+the answer belongs where the owner is already looking. Entries written before
+decision 18 print as `actor not recorded`, which is the whole truth about them.
 `restore_snapshot.py`: puts a map back the way `snapshot_map.py` found it, by id
 so nothing is orphaned: concept-states, threads, every edge, and each
 definition's quote, verdict and magnitude scores. `user_edits` is the one thing
@@ -595,6 +598,11 @@ was a back-link in whatever corner each page happened to use.
   verified or inferred from `quote_verified`, and the river's "what it did" and
   prose lines are labelled the tool's reading. Papers with no author metadata
   are named as incomplete citations at the point of use, not only in the `.bib`.
+  The curation line is a fourth such tier: both exports used to write "Curated by
+  hand: N workbench edit(s) applied", which claims human agency from a count that
+  cannot support it. They now state the count and, per actor, the name and the
+  basis for it, and say when no actor is recorded rather than implying one
+  (decision 18).
   The CLI export (`export_related_work.py`) still writes the older sense-shaped
   document, and is kept because the pipeline is CLI-first.
 - `/g/[id]/p/[arxiv]` : a paper's dossier. What it contributed (novelty claims,
@@ -811,6 +819,32 @@ The why behind the load-bearing choices, in one place:
     sourced and unverifiable here. A rationale is the model's reading. Each is
     labelled as what it is, everywhere it appears; only the first wears the
     verified stamp.
+
+18. **An actor on every curatorial edit, and the basis for it** (2026-08-01,
+    `docs/design/actor-on-edits.md`). In `genealogies.user_edits`, **`by` is
+    authenticated**: a GitHub login the app obtained from a session, and the web
+    workbench is its only writer. **`by_asserted` is not authenticated**: a name
+    the running process asserts about itself (`LINEAGE_ACTOR`, else `user@host`),
+    which is all a CLI script running for whoever holds the `.env` can honestly
+    claim. An entry carries one, or the other, or **neither, which is what every
+    entry predating this change carries**. There is no backfill: that set is
+    fixed at deploy time and must never grow, so an entry with neither key is by
+    construction a legacy entry rather than a new failure.
+    **Absence is never rendered as a claim about origin.** The evidence page used
+    to print "(cli)" when `by` was missing, manufacturing a positive claim out of
+    a silence; it now reads `actor not recorded`, and the exports say the same
+    where they used to say "Curated by hand".
+    Two properties are load-bearing. `recordEdit`'s actor parameter is typed
+    `Viewer`, not `string`, and a `Viewer` can only come from `getViewer()` or
+    `requireOwner()`, so the compiler rather than a comment keeps unauthenticated
+    text out of `by`. And the split fails safe: any reader not updated for
+    `by_asserted` sees no `by` on a CLI entry and degrades to unattributed, never
+    to authenticated. That is `isOwner()` failing closed, applied to attribution.
+    The rejected alternative worth naming is a single `by` plus a
+    `by_verified` boolean, which fails open the moment a reader ignores the flag.
+    Nothing here wears the verified stamp: the green check means a quote was
+    string-matched against extracted text and must keep meaning only that
+    (decision 16).
 
 ---
 

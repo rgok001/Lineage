@@ -6,8 +6,14 @@ a conflated node is not), and weak nodes survive. This is the tool that turns th
 draft into a defensible map.
 
 Every edit is appended to genealogies.user_edits, so the curated map always
-carries the record of what a human changed and when. Edits mutate the stored
-genealogy; re-run Stage E afterwards to re-ground and re-export the JSON.
+carries the record of what changed, when, and who says they changed it. Edits
+mutate the stored genealogy; re-run Stage E afterwards to re-ground and
+re-export the JSON.
+
+The actor is written to `by_asserted`, never to `by`. This script authenticates
+nobody: it runs for whoever holds the .env, so the name is what the process
+asserts about itself (LINEAGE_ACTOR, else user@host). `by` belongs to the web
+app alone, where the login came from a GitHub session.
 
 Usage:
   python pipeline/workbench.py "attention" list
@@ -26,7 +32,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import env  # noqa: E402
+from common import actor, env  # noqa: E402
 
 EDGE_TYPES = ("extends", "contests", "narrows", "renames", "merges", "migrates")
 
@@ -40,10 +46,11 @@ def load(conn, concept, pv):
     return row
 
 
-def record(conn, gen_id, edits, op, detail):
+def record(conn, gen_id, edits, op, detail, who):
     edits = list(edits or [])
     edits.append({"op": op, "detail": detail,
-                  "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+                  "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  "by_asserted": who})
     conn.execute("UPDATE genealogies SET user_edits=%s, updated_at=now() WHERE id=%s",
                  (psycopg.types.json.Json(edits), gen_id))
 
@@ -179,10 +186,12 @@ def main() -> None:
         detail = {"edge_id": args.edge_id, "to": args.edge_type}
         print(f"Reclassified edge {args.edge_id} -> {args.edge_type}.")
 
-    record(conn, gen_id, edits, args.cmd, detail)
+    who = actor()
+    record(conn, gen_id, edits, args.cmd, detail, who)
     conn.commit()
     conn.close()
-    print("\nEdit recorded in genealogies.user_edits. "
+    print(f"\nEdit recorded in genealogies.user_edits as {who} "
+          "(asserted, not verified). "
           "Re-run Stage E to re-ground and re-export the JSON.")
 
 

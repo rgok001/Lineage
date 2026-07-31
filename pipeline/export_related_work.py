@@ -21,7 +21,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import data_dir, env  # noqa: E402
+from common import data_dir, edit_actor, env  # noqa: E402
 
 STOP = {"a", "an", "the", "on", "of", "in", "for", "and", "with", "is", "are", "to", "by"}
 
@@ -68,6 +68,41 @@ def tex_escape(s: str) -> str:
 
 def clean_quote(q: str) -> str:
     return re.sub(r"\s+", " ", q).strip()
+
+
+# Basis order: authenticated, then asserted, then the entries that carry
+# neither. Highest evidence first, so a reader who stops at the first clause
+# has read the strongest claim rather than the largest one.
+_BASIS_RANK = {"signed in": 0, "from the command line, name not verified": 1}
+
+
+def curation_note(user_edits: list[dict]) -> str:
+    """One line about who curated this map, for a document going into a paper.
+
+    This used to read "Curated by hand: N workbench edit(s) applied", which
+    claims human agency from a count that cannot support it — the same claim the
+    as-built had to retract about the embedding map, travelling into somebody
+    else's manuscript. The count is a count; what carries the claim is the
+    actors, each with the basis on which its name is known, and where no actor
+    is recorded the line says so rather than implying one.
+    """
+    ops = ", ".join(sorted({e["op"] for e in user_edits}))
+    head = f"> {len(user_edits)} workbench edit(s) applied ({ops})"
+
+    tally: dict[tuple[str | None, str], int] = {}
+    for e in user_edits:
+        key = edit_actor(e)
+        tally[key] = tally.get(key, 0) + 1
+    known = sorted(((n, b, c) for (n, b), c in tally.items() if n),
+                   key=lambda t: (_BASIS_RANK.get(t[1], 9), -t[2], t[0]))
+    unattributed = sum(c for (n, _), c in tally.items() if not n)
+
+    if not known:
+        return head + ". No actor is recorded for any of them.\n"
+    parts = [f"{c} by {n} ({b})" for n, b, c in known]
+    if unattributed:
+        parts.append(f"{unattributed} with no actor recorded")
+    return head + ": " + ", ".join(parts) + ".\n"
 
 
 def main() -> None:
@@ -142,8 +177,7 @@ def main() -> None:
               "> be re-checked before use. **This is a scaffold, not prose** — the citations,\n"
               "> quotes and structure are real; the argument is yours to write.\n")
     if user_edits:
-        md.append(f"> Curated by hand: {len(user_edits)} workbench edit(s) applied "
-                  f"({', '.join(sorted({e['op'] for e in user_edits}))}).\n")
+        md.append(curation_note(user_edits))
     md.append("\n## How the concept developed\n")
     md.append(f"Across this corpus, *{args.concept}* is used in {len(nodes)} distinct senses:\n")
     for i, n in enumerate(nodes, 1):

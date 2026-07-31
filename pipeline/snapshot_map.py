@@ -28,7 +28,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import data_dir, env  # noqa: E402
+from common import data_dir, edit_actor, env  # noqa: E402
 
 
 def main() -> None:
@@ -97,13 +97,16 @@ def main() -> None:
                  for p in s.get("papers", []))
     print(f'Snapshot of "{args.concept}" (genealogy {gen_id}) -> {out}')
     print(f"  {len(genealogy['nodes'])} concept-states, {len(genealogy['user_edits'])} curatorial edits")
-    # Printed, not just counted. The trail records what changed and when and not
-    # who: the web workbench is owner-only, but workbench.py authenticates
-    # nobody, so an edit here may have come from any process holding the .env.
-    # When the owner does not recognise an edit, the timestamp is the only thread
-    # to pull, so it should not require opening the file to find it.
+    # Printed, not just counted, and with the actor: this is the forensic tool
+    # for "who changed this map", so the answer belongs where the owner is
+    # already looking rather than inside the file. The basis is printed beside
+    # the name because a signed-in login and a name a process asserted about
+    # itself are not the same evidence, and an entry from before either key was
+    # written says so instead of being guessed at.
     for e in genealogy["user_edits"] or []:
-        print(f"    {e.get('at', '?')}  {e.get('op', '?')}  {e.get('detail', '')}")
+        name, basis = edit_actor(e)
+        who = f"{name} ({basis})" if name else basis
+        print(f"    {e.get('at', '?')}  {e.get('op', '?')}  {who}  {e.get('detail', '')}")
     print(f"  {len(payload['edges'])} edges ({verified} verified)")
     print(f"  {len(payload['definitions'])} definitions with their quotes and verdicts")
     print(f"  {threads} threads carrying {claims} claims")

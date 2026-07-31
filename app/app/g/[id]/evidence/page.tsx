@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { deleteEdge, deleteGenealogy, reclassifyEdge } from "../../../../lib/actions";
 import { getViewer, isOwner } from "../../../../lib/authz";
-import { EDGE_MEANING, EDGE_TYPES, getGenealogy, type Edge, type RankedPaper, type Genealogy } from "../../../../lib/genealogy";
+import { EDGE_MEANING, EDGE_TYPES, editActor, getGenealogy, type Edge, type RankedPaper, type Genealogy, type UserEdit } from "../../../../lib/genealogy";
 
 export const dynamic = "force-dynamic";
 
@@ -247,19 +247,26 @@ function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear
   );
 }
 
-function AuditTrail({ edits }: { edits: { op: string; detail: unknown; at: string; by?: string }[] }) {
+/** Three ways an entry can name its actor, and no stamp on any of them. The
+ *  green check means one thing in this product — a quote string-matched against
+ *  our own extraction — and must not acquire a second by being lent to a
+ *  signed-in login. The basis is the whole of the signal here. */
+function AuditTrail({ edits }: { edits: UserEdit[] }) {
   return (
     <details style={{ marginTop: "2.5rem", paddingTop: "1.2rem", borderTop: "1px solid var(--line)" }}>
       <summary style={{ cursor: "pointer", fontSize: ".85rem", color: "var(--ink)" }}>
         Audit trail: {edits.length} curatorial change(s)
       </summary>
       <ul style={{ margin: ".7rem 0 0", paddingLeft: "1.1rem", fontSize: ".78rem", color: "var(--ink-soft)" }}>
-        {edits.map((e, i) => (
-          <li key={i} style={{ marginBottom: ".3rem", fontFamily: "var(--font-mono)" }}>
-            {new Date(e.at).toLocaleString()} · <strong>{e.op}</strong>
-            {e.by ? ` by ${e.by}` : " (cli)"} {JSON.stringify(e.detail)}
-          </li>
-        ))}
+        {edits.map((e, i) => {
+          const { name, basis } = editActor(e);
+          return (
+            <li key={i} style={{ marginBottom: ".3rem", fontFamily: "var(--font-mono)" }}>
+              {new Date(e.at).toLocaleString()} · <strong>{e.op}</strong>
+              {name ? ` · by ${name} · ${basis}` : ` · ${basis}`} {JSON.stringify(e.detail)}
+            </li>
+          );
+        })}
       </ul>
     </details>
   );

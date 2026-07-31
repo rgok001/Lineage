@@ -31,7 +31,7 @@ export async function renameNode(formData: FormData) {
   n.label = label;
 
   await saveNodes(genealogyId, nodes);
-  await recordEdit(genealogyId, "rename", { node: nodeId, from, to: label }, who.login);
+  await recordEdit(genealogyId, "rename", { node: nodeId, from, to: label }, who);
   refresh(genealogyId);
 }
 
@@ -72,7 +72,7 @@ export async function mergeNode(formData: FormData) {
   await saveNodes(genealogyId, nodes.filter((x) => x.node_id !== nodeId));
   await recordEdit(genealogyId, "merge", {
     merged: nodeId, into: intoId, self_loops_dropped: dropped.map((d) => d.edge_type),
-  }, who.login);
+  }, who);
   refresh(genealogyId);
 }
 
@@ -94,7 +94,7 @@ export async function deleteNode(formData: FormData) {
   await saveNodes(genealogyId, nodes.filter((x) => x.node_id !== nodeId));
   await recordEdit(genealogyId, "delete-node", {
     node: nodeId, label: n.label, edges_removed: killed.length,
-  }, who.login);
+  }, who);
   refresh(genealogyId);
 }
 
@@ -136,7 +136,7 @@ export async function reclassifyEdge(formData: FormData) {
 
   await sql`UPDATE edges SET edge_type = ${edgeType}
             WHERE id = ${edgeId} AND genealogy_id = ${genealogyId}`;
-  await recordEdit(genealogyId, "reclassify", { edge_id: edgeId, to: edgeType }, who.login);
+  await recordEdit(genealogyId, "reclassify", { edge_id: edgeId, to: edgeType }, who);
   refresh(genealogyId);
 }
 
@@ -151,6 +151,6 @@ export async function deleteEdge(formData: FormData) {
   `) as { edge_type: string }[];
   if (!rows.length) return;
 
-  await recordEdit(genealogyId, "delete-edge", { edge_id: edgeId, was: rows[0].edge_type }, who.login);
+  await recordEdit(genealogyId, "delete-edge", { edge_id: edgeId, was: rows[0].edge_type }, who);
   refresh(genealogyId);
 }

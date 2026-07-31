@@ -1,3 +1,4 @@
+import type { Viewer } from "./authz";
 import { sql } from "./db";
 
 export type Member = { arxiv_id: string; year: number; title: string };
@@ -28,7 +29,32 @@ export type Edge = {
   source_section: string | null;
   target_section: string | null;
 };
-export type UserEdit = { op: string; detail: unknown; at: string; by?: string };
+/** `by` is a GitHub login this app got from a session, so a third party
+ *  authenticated it. `by_asserted` is a name a process asserted about itself
+ *  (the CLI scripts, which authenticate nobody). An entry carries one, or the
+ *  other, or — if it was written before either key existed — neither. Never
+ *  both, and nothing but a session may ever write `by`. */
+export type UserEdit = {
+  op: string; detail: unknown; at: string;
+  by?: string; by_asserted?: string;
+};
+
+/**
+ * How one audit entry names its actor, in one place because the evidence page
+ * and the export both say it and must say the same thing.
+ *
+ * The absence of an actor is reported as an absence. The page used to print
+ * "(cli)" there, which manufactured a positive claim about origin out of a
+ * silence: every entry predating this change would have asserted that the
+ * command line made it, which nobody knows.
+ */
+export function editActor(e: UserEdit): { name: string | null; basis: string } {
+  if (e.by?.trim()) return { name: e.by.trim(), basis: "signed in" };
+  if (e.by_asserted?.trim())
+    return { name: e.by_asserted.trim(), basis: "from the command line, name not verified" };
+  return { name: null, basis: "actor not recorded" };
+}
+
 /** A paper ranked for the spine. attention = on-term weighted uptake (who built
  *  on it for this term); displacement = how far it moved the term's meaning.
  *  Both drive ordering only — never shown as numbers (see product guardrail). */
@@ -367,11 +393,19 @@ export function computeFamilies(nodes: Node[], edges: Edge[]) {
   return { families, unconnected };
 }
 
-/** Every workbench edit is appended here, so a curated map always carries the
- *  record of what a human changed, when, and who — same contract as the CLI
- *  workbench (which has no session, hence `by` is optional). */
-export async function recordEdit(genealogyId: number, op: string, detail: unknown, by?: string) {
-  const entry = JSON.stringify([{ op, detail, at: new Date().toISOString(), ...(by ? { by } : {}) }]);
+/**
+ * Every workbench edit is appended here, so a curated map always carries the
+ * record of what a human changed, when, and who.
+ *
+ * The actor is a `Viewer`, not a string, and that is the load-bearing part: a
+ * string is a convention any caller can satisfy with any text, while a Viewer
+ * can only be obtained from getViewer() or requireOwner(). So the compiler,
+ * rather than a comment, keeps unauthenticated text out of `by`. The CLI has no
+ * session and writes `by_asserted` instead; this function is the only writer of
+ * `by` in the system.
+ */
+export async function recordEdit(genealogyId: number, op: string, detail: unknown, by: Viewer) {
+  const entry = JSON.stringify([{ op, detail, at: new Date().toISOString(), by: by.login }]);
   await sql`
     UPDATE genealogies
     SET user_edits = COALESCE(user_edits, '[]'::jsonb) || ${entry}::jsonb,

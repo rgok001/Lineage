@@ -1,6 +1,8 @@
 # Design: an actor on every curatorial edit, and the basis for it
 
-**Status: approved by the Product Owner, 2026-07-31. Not yet implemented.**
+**Status: approved by the Product Owner, 2026-07-31. Implemented 2026-08-01
+(as-built decision 18). Verification checks 1, 2, 4 and 5 in section 4 need the
+live database and are still to run.**
 Architect's design; the open question in section 6 has been decided and the
 answer is recorded there.
 

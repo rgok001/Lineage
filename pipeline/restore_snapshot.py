@@ -37,7 +37,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import env  # noqa: E402
+from common import actor, env  # noqa: E402
 
 
 def main() -> None:
@@ -113,7 +113,8 @@ def main() -> None:
                              (gen_id,)).fetchone()[0] or []
         edits.append({"op": "restore", "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                       "detail": f"restored from snapshot {snap['snapshot_at']} "
-                                f"({restored} edges, {len(g['nodes'])} concept-states)"})
+                                f"({restored} edges, {len(g['nodes'])} concept-states)",
+                      "by_asserted": actor()})
         conn.execute("UPDATE genealogies SET user_edits = %s WHERE id = %s",
                      (json.dumps(edits), gen_id))
         conn.commit()
