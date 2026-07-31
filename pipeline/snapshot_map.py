@@ -28,7 +28,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import data_dir, edit_actor, env  # noqa: E402
+from common import data_dir, edit_actor, edit_op, edit_when, env  # noqa: E402
 
 
 def main() -> None:
@@ -106,7 +106,8 @@ def main() -> None:
     for e in genealogy["user_edits"] or []:
         name, basis = edit_actor(e)
         who = f"{name} ({basis})" if name else basis
-        print(f"    {e.get('at', '?')}  {e.get('op', '?')}  {who}  {e.get('detail', '')}")
+        detail = e.get("detail", "") if isinstance(e, dict) else e
+        print(f"    {edit_when(e)}  {edit_op(e)}  {who}  {detail}")
     print(f"  {len(payload['edges'])} edges ({verified} verified)")
     print(f"  {len(payload['definitions'])} definitions with their quotes and verdicts")
     print(f"  {threads} threads carrying {claims} claims")

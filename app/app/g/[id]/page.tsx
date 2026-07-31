@@ -23,7 +23,10 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
           </h1>
           <span style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)",
             background: "var(--card)", border: "1px solid var(--line)", borderRadius: 999, padding: ".38rem .8rem", marginTop: ".4rem" }}>
-            {data.papers.length} pivotal of {data.total_papers} papers · {data.edges.length} links · quote-verified
+            {data.papers.length} pivotal of {data.total_papers} papers ·{" "}
+            {data.edges.length === 0
+              ? "no links between them"
+              : `${data.edges.filter((e) => e.verified).length} of ${data.edges.length} links quote-verified`}
           </span>
         </div>
         {data.through_line && (
@@ -101,8 +104,11 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
 
       <p style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-faint)",
         lineHeight: 1.8, marginTop: "1.8rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>
-        Drafted automatically from the papers’ own words, then curated by hand; every curatorial change
-        is recorded. Scope is the corpus: broadening the source adds threads, each arriving with its
+        Drafted automatically from the papers’ own words.{" "}
+        {data.edit_count > 0
+          ? `${data.edit_count} curatorial change(s) have been made to it since, each recorded with who made it.`
+          : "No curatorial changes have been made to it since; any that are will be recorded with who made them."}{" "}
+        Scope is the corpus: broadening the source adds threads, each arriving with its
         evidence attached.
       </p>
     </main>

@@ -38,21 +38,33 @@ EDGE_TYPES = ("extends", "contests", "narrows", "renames", "merges", "migrates")
 
 
 def load(conn, concept, pv):
+    # user_edits is deliberately not read: record() appends in the database, so
+    # holding a stale copy of the array in this process is what let a concurrent
+    # web edit be overwritten.
     row = conn.execute(
-        "SELECT id, nodes, user_edits FROM genealogies WHERE concept=%s AND prompt_version=%s",
+        "SELECT id, nodes FROM genealogies WHERE concept=%s AND prompt_version=%s",
         (concept, pv)).fetchone()
     if not row:
         sys.exit(f'No genealogy for "{concept}" at prompt {pv}. Run Stage C first.')
     return row
 
 
-def record(conn, gen_id, edits, op, detail, who):
-    edits = list(edits or [])
-    edits.append({"op": op, "detail": detail,
-                  "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                  "by_asserted": who})
-    conn.execute("UPDATE genealogies SET user_edits=%s, updated_at=now() WHERE id=%s",
-                 (psycopg.types.json.Json(edits), gen_id))
+def record(conn, gen_id, op, detail, who):
+    """Append one entry, in the database, with `||`.
+
+    This used to read the whole array at process start and write it back
+    wholesale, so a web edit landing between the read and the write was silently
+    erased. The app has always appended; now both do, and the array Postgres
+    holds is the only copy either of them reasons about. Decision 18 made this
+    array load-bearing, which is what turned a latent race into a real one.
+    """
+    entry = [{"op": op, "detail": detail,
+              "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+              "by_asserted": who}]
+    conn.execute(
+        "UPDATE genealogies SET user_edits = COALESCE(user_edits, '[]'::jsonb) || %s, "
+        "updated_at = now() WHERE id = %s",
+        (psycopg.types.json.Jsonb(entry), gen_id))
 
 
 def save_nodes(conn, gen_id, nodes):
@@ -159,7 +171,13 @@ def main() -> None:
 
     pv = env("PROMPT_VERSION", "v1")
     conn = psycopg.connect(env("DATABASE_URL"))
-    gen_id, nodes, edits = load(conn, args.concept, pv)
+    gen_id, nodes = load(conn, args.concept, pv)
+
+    # Resolved before anything is mutated. It used to be resolved after, which
+    # meant a failure here rolled the transaction back while the command had
+    # already printed "Deleted n5 and 3 attached edge(s)." to stdout — the
+    # operator reads a delete that did not happen.
+    who = actor()
 
     if args.cmd == "list":
         cmd_list(conn, gen_id, nodes, args.concept)
@@ -186,8 +204,7 @@ def main() -> None:
         detail = {"edge_id": args.edge_id, "to": args.edge_type}
         print(f"Reclassified edge {args.edge_id} -> {args.edge_type}.")
 
-    who = actor()
-    record(conn, gen_id, edits, args.cmd, detail, who)
+    record(conn, gen_id, args.cmd, detail, who)
     conn.commit()
     conn.close()
     print(f"\nEdit recorded in genealogies.user_edits as {who} "

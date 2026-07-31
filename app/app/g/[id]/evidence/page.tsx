@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { deleteEdge, deleteGenealogy, reclassifyEdge } from "../../../../lib/actions";
 import { getViewer, isOwner } from "../../../../lib/authz";
-import { EDGE_MEANING, EDGE_TYPES, editActor, getGenealogy, type Edge, type RankedPaper, type Genealogy, type UserEdit } from "../../../../lib/genealogy";
+import { EDGE_MEANING, EDGE_TYPES, editActor, editOp, editWhen, getGenealogy, type Edge, type RankedPaper, type Genealogy, type UserEdit } from "../../../../lib/genealogy";
 
 export const dynamic = "force-dynamic";
 
@@ -262,8 +262,8 @@ function AuditTrail({ edits }: { edits: UserEdit[] }) {
           const { name, basis } = editActor(e);
           return (
             <li key={i} style={{ marginBottom: ".3rem", fontFamily: "var(--font-mono)" }}>
-              {new Date(e.at).toLocaleString()} · <strong>{e.op}</strong>
-              {name ? ` · by ${name} · ${basis}` : ` · ${basis}`} {JSON.stringify(e.detail)}
+              {editWhen(e)} · <strong>{editOp(e)}</strong>
+              {name ? ` · by ${name} · ${basis}` : ` · ${basis}`} {JSON.stringify(e?.detail)}
             </li>
           );
         })}

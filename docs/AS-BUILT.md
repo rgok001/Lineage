@@ -385,8 +385,13 @@ incident 4). Re-run Stage E after curating.
 `workbench.py`: CLI curation (merge, rename, split-out, delete, reclassify);
 every edit appends to `user_edits`, carrying `by_asserted` (decision 18): this
 script authenticates nobody, so the name is what the process says about itself,
-`LINEAGE_ACTOR` if set and `user@host` otherwise. The web workbench (section 6)
-does the same operations via Server Actions and is the only writer of `by`.
+`LINEAGE_ACTOR` if set and `user@host` otherwise. The append is done in the
+database with `||`, not by reading the array and writing it back, so a
+concurrent web edit is not erased. The actor is resolved before anything is
+mutated, because resolving it afterwards meant a failure there rolled the
+transaction back after the command had already printed its success line. The web
+workbench (section 6) does the same operations via Server Actions and is the
+only writer of `by`.
 `enrich_authors.py`: fills author lists, arXiv first and OpenAlex only as
 fallback, because a stored openalex_id can be wrong while the arxiv_id was
 proven by the title-match guard. Missing authors are omitted from BibTeX, not
@@ -411,8 +416,9 @@ decision 18 print as `actor not recorded`, which is the whole truth about them.
 `restore_snapshot.py`: puts a map back the way `snapshot_map.py` found it, by id
 so nothing is orphaned: concept-states, threads, every edge, and each
 definition's quote, verdict and magnitude scores. `user_edits` is the one thing
-not overwritten; the restore appends itself to it, because a restore is an event
-in a map's history rather than a way to un-happen one. It cannot restore the
+not overwritten; the restore appends itself to it with `||` in the database,
+because a restore is an event in a map's history rather than a way to un-happen
+one, and because read-modify-write on that array loses a concurrent web edit. It cannot restore the
 extracted text, so a map re-extracted since the snapshot comes back with verdicts
 describing a document no longer on disk: run Stage E afterwards, which is free and
 re-grounds every quote against the text that is actually there.
@@ -544,7 +550,10 @@ was a back-link in whatever corner each page happened to use.
 
 **Routes.**
 - `/` : the map list, with a link to `/trace` showing how many runs are in
-  flight.
+  flight. Its closing line used to read "then curated by hand", unconditionally,
+  on a page whose only curated map was the one this document had already
+  retracted that claim about. It is now gated on `edit_count` across the listed
+  maps and says the truthful thing when none has been curated (decision 18).
 - `/trace` : requesting a map. Three steps that set expectations (name a term,
   it reads up to 150 papers in about fifteen minutes, you get the map), then
   the form, the queue and live progress. The panel (`trace-panel.tsx`, client)
@@ -552,6 +561,10 @@ was a back-link in whatever corner each page happened to use.
   page you started on, and request/approve/reject revalidate `/trace` as well
   as `/`, because a request that appears to vanish is worse than a slow one.
 - `/g/[id]` : the front door, an influence map (`InfluenceMap.tsx`, client).
+  Two header claims are counted rather than assumed (decision 18): the badge
+  reads "*X* of *Y* links quote-verified" instead of a flat "quote-verified",
+  which on `embedding` sat above 201 verified of 305; and the footer states the
+  map's actual `edit_count` instead of asserting it was curated by hand.
   `getInfluenceMap()` picks the top 20 papers by attention plus the 8 strongest
   movers by displacement, preferring movers that have some uptake and topping up
   from the rest; every thread is then guaranteed its strongest paper, so the
@@ -835,9 +848,14 @@ The why behind the load-bearing choices, in one place:
     a silence; it now reads `actor not recorded`, and the exports say the same
     where they used to say "Curated by hand".
     Two properties are load-bearing. `recordEdit`'s actor parameter is typed
-    `Viewer`, not `string`, and a `Viewer` can only come from `getViewer()` or
-    `requireOwner()`, so the compiler rather than a comment keeps unauthenticated
-    text out of `by`. And the split fails safe: any reader not updated for
+    `Viewer`, and **`Viewer` is branded with a `unique symbol` that only
+    `lib/authz.ts` can name**, so it is nominal rather than structural and the
+    only way to hold one is to have been handed it by `getViewer()`,
+    `requireOwner()` or `requireViewer()`. A hand-built `{ login: "anyone" }` is
+    a compile error at every call site. The brand is not decoration: without it
+    the type was a plain shape alias, structural typing accepted any matching
+    literal, and this entry asserted an enforced invariant that was not enforced
+    (incident 13). And the split fails safe: any reader not updated for
     `by_asserted` sees no `by` on a CLI entry and degrades to unattributed, never
     to authenticated. That is `isOwner()` failing closed, applied to attribution.
     The rejected alternative worth naming is a single `by` plus a
@@ -845,6 +863,34 @@ The why behind the load-bearing choices, in one place:
     Nothing here wears the verified stamp: the green check means a quote was
     string-matched against extracted text and must keep meaning only that
     (decision 16).
+    **Both readers treat malformed entries as unattributed rather than
+    crashing.** `user_edits` is JSONB and really does accept `"by": 42`,
+    `"by": []`, a blank string, a missing `op`, or an element that is not an
+    object at all. `editActor`/`edit_actor` and their `op` and `at` siblings
+    return "actor not recorded" for every one of those, in both languages, on
+    identical input. `app/` has no `error.tsx`, so an exception inside the audit
+    trail is a 500 on `/g/<id>/evidence` and `/g/<id>/export` for that map until
+    somebody edits the row by hand. Junk degrades downwards only; nothing junk
+    can become "signed in".
+    **A stored name is folded before it is rendered, not only before it is
+    stored.** `LINEAGE_ACTOR` is free text on a public page and in a Markdown
+    document, and React escapes where Markdown does not: an interior newline
+    used to break out of the export's `> ` blockquote into body prose in a
+    researcher's paper. Whitespace collapses, control characters go, the name is
+    capped at 64 characters, and `(`, `)` and `·` are removed because those are
+    the delimiters this product prints a *basis* with — a label must not be able
+    to spell a trust level it does not have. That is a rule about our own
+    syntax, not a blocklist of phrases.
+    **`LINEAGE_ACTOR` unset degrades honestly.** Both `getpass.getuser()` and
+    `socket.gethostname()` can fail, and either half being unnameable yields
+    `unknown@host` or `user@unknown` rather than the plausible junk `@host`;
+    both failing yields `unnamed process`. The return is never empty, because an
+    entry with no actor key would join the legacy set this decision froze.
+    **Both writers append with `||` in the database.** `workbench.py` and
+    `restore_snapshot.py` used to read the whole array at process start and
+    write it back, so a web edit landing in between was silently erased. This
+    decision is what made that array load-bearing, so the latent race was closed
+    with it.
 
 ---
 
@@ -996,6 +1042,29 @@ ewcommand` as a thing pylatexenc does not know, and the fix that followed
     named the cause immediately. All three now print the message.
     Recovery is from `snapshot_map.py`, taken minutes earlier, which is the only
     reason this is an incident rather than a loss.
+
+13. **This document asserted a compiler-enforced invariant that the compiler did
+    not enforce, and it propagated within hours (2026-08-01).** Decision 18
+    shipped saying that `recordEdit`'s actor parameter is a `Viewer`, that a
+    `Viewer` can only come from `getViewer()` or `requireOwner()`, and that the
+    compiler therefore keeps unauthenticated text out of `by`. `Viewer` was
+    `{ login: string; name?: string | null; image?: string | null }`. TypeScript
+    compares object types by shape, so
+    `recordEdit(1, "rename", {}, { login: "attacker" })` compiled clean under
+    `--strict` with no cast, no `any`, and no import from `authz.ts`. The
+    guarantee was a comment wearing a compiler's clothes, and the same sentence
+    was in the design, in the commit message and here. Caught by the tester with
+    a `@ts-expect-error` control, which reported the directive as *unused* —
+    the cheapest possible probe and one nobody had run. By then an architecture
+    review had already read the claim out of this document and repeated it back
+    verbatim, so the false invariant had a second source before it had a fix.
+    **Two lessons.** A claim about what a type system enforces is a testable
+    claim, and `@ts-expect-error` tests it in one line; a security property
+    asserted without such a probe has not been checked, it has been hoped for.
+    And this document is load-bearing enough to be quoted, which means an
+    over-claim in it does not stay in it. The fix is a `unique symbol` brand on
+    `Viewer` (decision 18), whose whole purpose is to make the sentence already
+    written here true.
 
 ---
 

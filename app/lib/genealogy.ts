@@ -39,9 +39,42 @@ export type UserEdit = {
   by?: string; by_asserted?: string;
 };
 
+const ACTOR_MAX = 64;
+
+/**
+ * Make a stored name safe to render, in markdown as well as in React.
+ *
+ * `by_asserted` can hold anything `LINEAGE_ACTOR` held, and an interior newline
+ * escapes the `> ` blockquote in the export and lands as body prose in a
+ * researcher's paper. React escapes, markdown does not, so the folding happens
+ * on the way out and not only on the way in — that covers rows already stored
+ * and rows a future writer stores. Parentheses and the middle dot go too:
+ * those are the delimiters this product uses to print the *basis*, and a label
+ * must not be able to spell a trust level it does not have. That is a rule
+ * about our own syntax rather than a blocklist of phrases, which is the
+ * distinction incidents 10 and 11 were about.
+ */
+function tidyActorName(raw: string): string {
+  return raw
+    .replace(/[\u0000-\u001f\u007f-\u009f\uFEFF]/g, " ")
+    .replace(/[()·]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, ACTOR_MAX);
+}
+
+/** `user_edits` is JSONB, so a field the types call a string can hold a number,
+ *  a boolean, an array or null. Anything that is not a usable string is absent:
+ *  junk degrades to "actor not recorded" and can never be upgraded into an
+ *  authenticated claim. It must not throw either — `app/` has no error.tsx, so
+ *  one TypeError inside a server component turns the evidence page and the
+ *  export into a 500 for that map until the row is edited by hand. */
+const actorName = (v: unknown): string => (typeof v === "string" ? tidyActorName(v) : "");
+
 /**
  * How one audit entry names its actor, in one place because the evidence page
- * and the export both say it and must say the same thing.
+ * and the export both say it and must say the same thing. Its twin is
+ * `edit_actor` in pipeline/common.py and the two must agree on every input.
  *
  * The absence of an actor is reported as an absence. The page used to print
  * "(cli)" there, which manufactured a positive claim about origin out of a
@@ -49,10 +82,25 @@ export type UserEdit = {
  * command line made it, which nobody knows.
  */
 export function editActor(e: UserEdit): { name: string | null; basis: string } {
-  if (e.by?.trim()) return { name: e.by.trim(), basis: "signed in" };
-  if (e.by_asserted?.trim())
-    return { name: e.by_asserted.trim(), basis: "from the command line, name not verified" };
+  if (!e || typeof e !== "object") return { name: null, basis: "actor not recorded" };
+  const by = actorName(e.by);
+  if (by) return { name: by, basis: "signed in" };
+  const asserted = actorName(e.by_asserted);
+  if (asserted) return { name: asserted, basis: "from the command line, name not verified" };
   return { name: null, basis: "actor not recorded" };
+}
+
+/** Same contract for `op` and `at`: a stored entry may be missing either, or
+ *  hold something that is not a string, and neither may crash a page. */
+export function editOp(e: UserEdit): string {
+  const op = e && typeof e === "object" ? e.op : undefined;
+  return typeof op === "string" && op.trim() ? op.trim() : "unrecorded change";
+}
+
+export function editWhen(e: UserEdit): string {
+  const at = e && typeof e === "object" ? e.at : undefined;
+  const d = typeof at === "string" ? new Date(at) : new Date(NaN);
+  return Number.isNaN(d.getTime()) ? "date not recorded" : d.toLocaleString();
 }
 
 /** A paper ranked for the spine. attention = on-term weighted uptake (who built
@@ -113,6 +161,12 @@ export type InfluenceMapData = {
   edges: MapEdge[];
   streams: { id: string; name: string; color: string; count: number }[];
   total_papers: number;
+  /** How many curatorial edits this map actually carries. The page's footer
+   *  claimed the map was "curated by hand" unconditionally, on every map,
+   *  including `embedding`, whose `user_edits` is empty — the same claim this
+   *  project's own as-built had to retract. Nothing may say a map was curated
+   *  without counting. */
+  edit_count: number;
 };
 
 /** The pivotal papers and the typed links among them: top-N by on-term uptake
@@ -123,8 +177,11 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
   if (!riverData) return null;
   const { concept, river } = riverData;
 
-  const g = (await sql`SELECT concept, prompt_version FROM genealogies WHERE id = ${id}`) as
-    { concept: string; prompt_version: string }[];
+  const g = (await sql`
+    SELECT concept, prompt_version,
+           jsonb_array_length(COALESCE(user_edits, '[]'::jsonb)) AS edit_count
+    FROM genealogies WHERE id = ${id}
+  `) as { concept: string; prompt_version: string; edit_count: number }[];
   if (!g.length) return null;
 
   const rows = (await sql`
@@ -212,6 +269,7 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
     edges,
     streams: river.streams.map((s) => ({ id: s.id, name: s.name, color: s.color, count: s.papers.length })),
     total_papers: rows.length,
+    edit_count: Number(g[0].edit_count ?? 0),
   };
 }
 

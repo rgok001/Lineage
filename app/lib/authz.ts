@@ -6,13 +6,34 @@ import { auth } from "../auth";
  * do is ours alone, and it lives here.
  */
 
-export type Viewer = { login: string; name?: string | null; image?: string | null };
+/**
+ * A Viewer is NOMINAL, not structural, and the brand is what makes it so.
+ *
+ * TypeScript compares object types by shape, so while this was a plain
+ * `{ login: string; ... }` alias, `recordEdit(…, { login: "anyone" })` compiled
+ * clean under --strict with no cast: the "only a session can supply this"
+ * guarantee was a comment wearing a compiler's clothes, and it had already been
+ * copied into the as-built as an enforced invariant. `SESSION_BACKED` is a
+ * unique symbol nothing outside this module can name or construct, so the only
+ * way to hold a Viewer is to have been handed one by the three functions below.
+ * The single cast that mints one lives here and must live nowhere else.
+ */
+declare const SESSION_BACKED: unique symbol;
+
+export type Viewer = {
+  readonly [SESSION_BACKED]: true;
+  login: string;
+  name?: string | null;
+  image?: string | null;
+};
 
 export async function getViewer(): Promise<Viewer | null> {
   const session = await auth();
   const login = (session?.user as { login?: string } | undefined)?.login;
   if (!login) return null;
-  return { login, name: session?.user?.name, image: session?.user?.image };
+  // The one place a Viewer is minted, and the only cast that may do it: the
+  // login came from a GitHub session, which is the whole content of the brand.
+  return { login, name: session?.user?.name, image: session?.user?.image } as Viewer;
 }
 
 export function isOwner(viewer: Viewer | null): boolean {

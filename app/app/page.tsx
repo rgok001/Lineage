@@ -83,9 +83,14 @@ export default async function Home() {
         </span>
       </Link>
 
+      {/* Counted, never assumed. This read "then curated by hand" on every map,
+          including ones whose audit trail is empty — the claim this project's
+          own as-built had to retract about the showcase map. */}
       <p style={{ marginTop: "2rem", fontSize: ".78rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
-        Each account is drafted automatically from the papers themselves, then curated by hand.
-        Every curatorial change is recorded in an audit trail.
+        Each account is drafted automatically from the papers themselves.{" "}
+        {rows.some((g) => g.edit_count > 0)
+          ? "Where a map has been curated since, the count is shown above and every change is recorded in an audit trail with who made it."
+          : "None has been curated since; any curatorial change would be recorded in an audit trail with who made it."}
       </p>
     </main>
   );

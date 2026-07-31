@@ -43,6 +43,32 @@ def mailto() -> str:
 # to "unattributed"; it can never degrade to "authenticated".
 
 
+ACTOR_MAX = 64
+_ACTOR_BLANK = {c for c in range(0x20)} | {0x7F} | set(range(0x80, 0xA0)) | {0xFEFF}
+
+
+def tidy_actor_name(raw: object) -> str:
+    """Make a name safe to render, in markdown as well as in React.
+
+    LINEAGE_ACTOR is free text and an interior newline escapes the `> `
+    blockquote in the export, landing as body prose in a researcher's paper.
+    React escapes, markdown does not. Parentheses and the middle dot go too:
+    they are the delimiters this product prints a *basis* with, and a label must
+    not be able to spell a trust level it does not have. That is a rule about
+    our own syntax rather than a blocklist of phrases, which is the distinction
+    incidents 10 and 11 were about.
+
+    Anything that is not a string is not a name. `user_edits` is JSONB, so these
+    fields really can hold a number, a boolean, an array or null, and a reader
+    that raises on one takes a public page down with it.
+    """
+    if not isinstance(raw, str):
+        return ""
+    folded = "".join(" " if ord(c) in _ACTOR_BLANK else c for c in raw)
+    folded = folded.replace("(", "").replace(")", "").replace("·", "")
+    return " ".join(folded.split())[:ACTOR_MAX]
+
+
 def actor() -> str:
     """The name the running process asserts about itself.
 
@@ -50,35 +76,65 @@ def actor() -> str:
     operator should be able to say who they are. It is free text supplied by
     whoever holds the .env: a label, not a credential, which is why it is only
     ever written to `by_asserted`.
+
+    Every lookup here can fail and none of them may abort the edit they were
+    about to record: getuser() consults the password database when no env var
+    names the user, and gethostname() can fail on a misconfigured host. When a
+    half is unnameable it is said to be unnameable rather than dropped, because
+    "@somehost" is plausible junk that reads like a real name. The return is
+    never empty: an entry with no actor key at all would join the legacy set
+    that decision 18 fixed at deploy time, and that set must never grow.
     """
-    override = os.environ.get("LINEAGE_ACTOR", "").strip()
+    override = tidy_actor_name(os.environ.get("LINEAGE_ACTOR", ""))
     if override:
         return override
     try:
-        user = getpass.getuser()
+        user = tidy_actor_name(getpass.getuser())
     except Exception:
-        # getuser() consults the password database when no env var names the
-        # user, and that lookup raises in a container with no passwd entry.
-        # An unnameable user must not abort the edit it was about to record.
-        user = "unknown"
-    return f"{user}@{socket.gethostname()}"
+        user = ""
+    try:
+        host = tidy_actor_name(socket.gethostname())
+    except Exception:
+        host = ""
+    if user or host:
+        return f"{user or 'unknown'}@{host or 'unknown'}"
+    return "unnamed process"
 
 
-def edit_actor(edit: dict) -> tuple[str | None, str]:
+def edit_actor(edit: object) -> tuple[str | None, str]:
     """(name, basis) for one genealogies.user_edits entry.
 
-    The precedence lives here rather than at each print site: `by` outranks
-    `by_asserted`, and an entry carrying neither is a legacy entry from before
-    either key was written. Absence is reported as absence and never as a claim
-    about origin, which is the "(cli)" the evidence page used to fabricate.
+    Twin of `editActor` in app/lib/genealogy.ts; the two must agree on every
+    input, well-formed or not. The precedence lives here rather than at each
+    print site: `by` outranks `by_asserted`, and an entry carrying neither is a
+    legacy entry from before either key was written. Absence is reported as
+    absence and never as a claim about origin, which is the "(cli)" the evidence
+    page used to fabricate — and junk degrades the same way, downwards, never
+    up into an authenticated claim.
     """
-    by = (edit.get("by") or "").strip()
+    if not isinstance(edit, dict):
+        return None, "actor not recorded"
+    by = tidy_actor_name(edit.get("by"))
     if by:
         return by, "signed in"
-    asserted = (edit.get("by_asserted") or "").strip()
+    asserted = tidy_actor_name(edit.get("by_asserted"))
     if asserted:
         return asserted, "from the command line, name not verified"
     return None, "actor not recorded"
+
+
+def edit_op(edit: object) -> str:
+    """Same contract for `op`: it may be missing or hold something that is not a
+    string, and neither the export nor the snapshot may crash on one."""
+    op = edit.get("op") if isinstance(edit, dict) else None
+    return op.strip() if isinstance(op, str) and op.strip() else "unrecorded change"
+
+
+def edit_when(edit: object) -> str:
+    """Same again for `at`. No parsing: the stored ISO string is printed as it
+    stands, and anything unusable is named as missing rather than guessed."""
+    at = edit.get("at") if isinstance(edit, dict) else None
+    return at.strip() if isinstance(at, str) and at.strip() else "date not recorded"
 
 
 _session: requests.Session | None = None

@@ -21,7 +21,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import data_dir, edit_actor, env  # noqa: E402
+from common import data_dir, edit_actor, edit_op, env  # noqa: E402
 
 STOP = {"a", "an", "the", "on", "of", "in", "for", "and", "with", "is", "are", "to", "by"}
 
@@ -86,7 +86,7 @@ def curation_note(user_edits: list[dict]) -> str:
     actors, each with the basis on which its name is known, and where no actor
     is recorded the line says so rather than implying one.
     """
-    ops = ", ".join(sorted({e["op"] for e in user_edits}))
+    ops = ", ".join(sorted({edit_op(e) for e in user_edits}))
     head = f"> {len(user_edits)} workbench edit(s) applied ({ops})"
 
     tally: dict[tuple[str | None, str], int] = {}

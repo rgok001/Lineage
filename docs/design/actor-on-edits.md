@@ -3,6 +3,13 @@
 **Status: approved by the Product Owner, 2026-07-31. Implemented 2026-08-01
 (as-built decision 18). Verification checks 1, 2, 4 and 5 in section 4 need the
 live database and are still to run.**
+
+**Correction, 2026-08-01.** Section 2's claim that "a `Viewer` can only be
+obtained from `getViewer()` or `requireOwner()`" was not true of the `Viewer`
+that existed when this was written: it was a structural type alias, so any
+matching object literal satisfied it and the compiler enforced nothing. The
+claim is true now only because implementation added a `unique symbol` brand to
+`Viewer` to make it so. See as-built incident 13.
 Architect's design; the open question in section 6 has been decided and the
 answer is recorded there.
 

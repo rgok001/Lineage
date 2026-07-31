@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import actor, env  # noqa: E402
@@ -108,15 +109,17 @@ def main() -> None:
                   d["attention"], d["displacement"], d["id"]))
 
         # The restore is itself an event in the map's history, not an erasure of
-        # one. user_edits is append-only and is the one thing not overwritten.
-        edits = conn.execute("SELECT user_edits FROM genealogies WHERE id = %s",
-                             (gen_id,)).fetchone()[0] or []
-        edits.append({"op": "restore", "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                      "detail": f"restored from snapshot {snap['snapshot_at']} "
-                                f"({restored} edges, {len(g['nodes'])} concept-states)",
-                      "by_asserted": actor()})
-        conn.execute("UPDATE genealogies SET user_edits = %s WHERE id = %s",
-                     (json.dumps(edits), gen_id))
+        # one. user_edits is append-only and is the one thing not overwritten —
+        # appended with `||` in the database rather than read, extended and
+        # written back, because the read-modify-write silently dropped any web
+        # edit that landed in between.
+        entry = [{"op": "restore", "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  "detail": f"restored from snapshot {snap['snapshot_at']} "
+                            f"({restored} edges, {len(g['nodes'])} concept-states)",
+                  "by_asserted": actor()}]
+        conn.execute("UPDATE genealogies SET user_edits = "
+                     "COALESCE(user_edits, '[]'::jsonb) || %s WHERE id = %s",
+                     (Jsonb(entry), gen_id))
         conn.commit()
 
     print(f"\n  {restored} edges restored" + (f", {skipped} skipped (paper gone)" if skipped else ""))
