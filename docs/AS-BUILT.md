@@ -371,6 +371,15 @@ them after Stage E, and both were proven on a second concept (`attention`,
 `worker/run.py`, ~230 lines, one process, no threads. Full walkthrough
 knowledge condensed:
 
+- **Startup housekeeping.** Before polling, the worker applies database
+  migrations and runs the extraction audit over papers nobody has audited
+  yet (`--only-unchecked --write`). Both were manual commands, which meant
+  they were commands for a machine the owner does not have: everything runs
+  on Render and Neon, and there is no laptop in the loop. The worker is the
+  only process holding the disk, the database and the repo at once, so it is
+  the only honest home for them. Both are idempotent, and neither can stop
+  the worker booting: a worker that will not start processes no traces,
+  which is worse than an unapplied migration, and the next restart retries.
 - **Claiming.** Polls every 10s for `status = 'approved'` only (the money
   gate: a request nobody approved is invisible to it). The claim is a single
   `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED) RETURNING`, so

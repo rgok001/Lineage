@@ -67,6 +67,12 @@ def stages_for(concept: str, corpus_limit: int, field: str,
                                 "--json", corpus_json] + gloss_arg),
         ("fetch papers", py + ["pipeline/fetch_papers.py", corpus_json]),
         ("extract text", py + ["pipeline/extract_text.py"]),
+        # What the grounding check is about to rest on. Free, and it runs here
+        # rather than at the end because the verdict describes the text, not the
+        # map: a paper whose text lost content is worth knowing about while its
+        # quotes are being chosen, not after.
+        ("audit extracted text", py + ["pipeline/check_extraction.py",
+                                       "--only-unchecked", "--write"]),
         # --corpus scopes Stage B to THIS trace's papers; the papers table is
         # shared across concepts, and without it every past trace's corpus
         # would be re-billed against the new concept.
@@ -280,11 +286,51 @@ def claim(conn: psycopg.Connection) -> tuple[int, str, int, str, str | None] | N
     return row
 
 
+def startup_task(name: str, cmd: list[str]) -> None:
+    """Run a housekeeping step at boot, and never let it stop the worker starting.
+
+    A failure here is worth shouting about and not worth dying over: a worker
+    that will not boot processes no traces, which is a worse outcome than an
+    unapplied migration or an unaudited paper. Both steps are safe to retry, and
+    the next restart retries them.
+    """
+    print(f"[startup] {name}…")
+    try:
+        proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, timeout=900)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"[startup] {name} did not finish ({e}). Continuing.")
+        return
+    for line in (proc.stdout or "").splitlines():
+        print(f"[startup]   {line}")
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()[-5:]
+        print(f"[startup] {name} FAILED (exit {proc.returncode}). Continuing anyway.")
+        for line in tail:
+            print(f"[startup]   {line}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run approved trace requests.")
     ap.add_argument("--once", action="store_true", help="process at most one job, then exit")
     ap.add_argument("--poll", type=int, default=POLL_SECONDS, help="poll interval seconds")
     args = ap.parse_args()
+
+    # Two things that used to wait on somebody running a command by hand, on a
+    # machine that does not exist. Neither is optional, both are idempotent, and
+    # the worker is the only process that has the disk, the database and the repo
+    # in one place, so it is the only honest home for them.
+    #
+    # Migrations first: a deploy that adds a column and a query that reads it ship
+    # in the same commit, and the gap between them was a broken page waiting to
+    # happen. migrate.py records what it applied, so a second run does nothing.
+    startup_task("apply database migrations",
+                 [sys.executable, "-u", "pipeline/db/migrate.py"])
+    # Then the extraction audit, scoped to papers nobody has looked at yet. Free
+    # (no model, no network, disk reads only) and self-limiting: the first run
+    # backfills the corpora already on the disk, later runs find little to do.
+    startup_task("audit extracted text",
+                 [sys.executable, "-u", "pipeline/check_extraction.py",
+                  "--only-unchecked", "--write"])
 
     conn = connect()
     print(f"Worker up. Polling every {args.poll}s for approved trace requests…")

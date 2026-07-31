@@ -383,11 +383,19 @@ def main() -> None:
     ap.add_argument("--prompt-version", default=env("PROMPT_VERSION", "v2"))
     ap.add_argument("--sample", type=int, default=0, help="print this many flagged papers in full")
     ap.add_argument("--json", help="write the full per-paper audit here")
+    ap.add_argument("--only-unchecked", action="store_true",
+                    help="skip papers already audited. Makes this cheap enough to "
+                         "run on every worker start, so the backfill needs nobody "
+                         "to remember it")
     ap.add_argument("--write", action="store_true",
                     help="store each verdict on papers.extraction_verdict (migration 013), "
                          "so the app can tell a reader what it knows about the text "
                          "a quote was matched against")
     args = ap.parse_args()
+
+    # Cheap re-runs are what let this live in the worker's startup rather than in
+    # somebody's terminal history.
+    unchecked = "AND p.extraction_checked_at IS NULL" if args.only_unchecked else ""
 
     with psycopg.connect(env("DATABASE_URL")) as conn:
         if args.concept:
@@ -397,15 +405,17 @@ def main() -> None:
                 FROM papers p JOIN definitions d ON d.paper_id = p.id
                 WHERE d.concept = %(c)s AND d.prompt_version = %(pv)s
                   AND p.extracted_text_path IS NOT NULL
+                  {unchecked}
                 ORDER BY p.arxiv_id
-            """, {"c": args.concept, "pv": args.prompt_version}).fetchall()
+            """.format(unchecked=unchecked), {"c": args.concept, "pv": args.prompt_version}).fetchall()
         else:
             rows = conn.execute("""
                 SELECT arxiv_id, title, source_format, raw_path,
                        extracted_text_path, text_title_match
                 FROM papers WHERE extracted_text_path IS NOT NULL
+                  {unchecked}
                 ORDER BY arxiv_id
-            """).fetchall()
+            """.format(unchecked=unchecked.replace("p.", ""))).fetchall()
 
         cols = ("arxiv_id", "title", "source_format", "raw_path",
                 "extracted_text_path", "text_title_match")
