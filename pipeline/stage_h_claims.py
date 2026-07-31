@@ -105,15 +105,20 @@ def main() -> None:
                 skipped += 1
                 continue
             if args.recheck:
-                # Re-ground what is already stored. A claim that stops checking out
-                # keeps its text and loses its stamp and its quote, exactly as it
-                # would have on first generation: the prose is an honest reading
-                # either way, and only the passage was ever the claim to evidence.
+                # Re-ground what is already stored, and KEEP the passage either way.
+                # Generation nulls a passage that fails, which is right there: a
+                # paraphrase the model invented has no provenance value. Here it is
+                # wrong. A passage that checked out once and stops may have stopped
+                # because OUR text changed, and destroying it makes that
+                # unrecoverable without paying to regenerate. The stamp is what must
+                # follow the check; the evidence of what was returned is not ours to
+                # throw away. The thread page renders a claim's quote only when
+                # verified is true, so an unverified passage never reaches a reader.
                 claims = []
                 for cl in p.get("claims") or []:
                     q = (cl.get("quote") or "").strip()
                     ok = bool(q) and quote_is_grounded(text, q)
-                    claims.append({"text": cl.get("text", ""), "quote": q if ok else None,
+                    claims.append({"text": cl.get("text", ""), "quote": q or None,
                                    "verified": ok})
                     kept += 1
                     unverified += (not ok)
