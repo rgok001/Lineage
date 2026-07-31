@@ -129,10 +129,15 @@ curated map loses its labels and merges. The safe path updates definitions in
 place, keeping the ids the nodes point at:
 
 ```sh
-python pipeline/extract_text.py --force                        # re-extract
-python pipeline/stage_b_extract.py "attention" --refresh --only 1706.03762 ...
+python pipeline/extract_text.py --concept "attention" --force  # scoped: the papers
+                                                               # table is shared, so
+                                                               # --force alone would
+                                                               # re-extract every map
+python pipeline/stage_b_extract.py "attention" --refresh       # fresh quotes, ids kept
 python pipeline/stage_c_cluster.py "attention" --embed-only    # vectors, no re-clustering
 python pipeline/stage_e_ground.py "attention"                  # re-ground, honestly
+python pipeline/stage_h_claims.py "attention"                  # re-check claim quotes
+python pipeline/check_extraction.py --concept "attention"      # confirm staleness gone
 ```
 
 Exercise it on an uncurated map first. Never re-anchor a stored quote to the new

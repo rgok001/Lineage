@@ -392,15 +392,30 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Convert fetched arXiv source to clean text.")
     ap.add_argument("--limit", type=int, help="process at most N papers")
     ap.add_argument("--force", action="store_true", help="re-extract even if text already exists")
+    ap.add_argument("--concept", metavar="NAME",
+                    help="restrict to the papers of one map. The papers table is "
+                         "shared across every concept ever traced, so --force "
+                         "without this re-extracts the whole table, and changing "
+                         "text under a curated map's quotes is not something to "
+                         "do as a side effect of repairing a different one")
     args = ap.parse_args()
 
     text_root = data_dir() / "text"
     text_root.mkdir(parents=True, exist_ok=True)
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
 
+    params: dict = {}
+    scope = ""
+    if args.concept:
+        scope = ("  AND EXISTS (SELECT 1 FROM definitions d WHERE d.paper_id = papers.id "
+                 "AND d.concept = %(concept)s)\n")
+        params["concept"] = args.concept
     sql = ("SELECT arxiv_id, source_format, raw_path, extracted_text_path, title "
-           "FROM papers WHERE raw_path IS NOT NULL ORDER BY arxiv_id")
-    rows = conn.execute(sql).fetchall()
+           f"FROM papers WHERE raw_path IS NOT NULL\n{scope}ORDER BY arxiv_id")
+    rows = conn.execute(sql, params).fetchall()
+    if args.force and not args.concept:
+        print("Re-extracting EVERY paper in the table, across all concepts. "
+              "--concept scopes it to one map.")
     if args.limit:
         rows = rows[:args.limit]
 
