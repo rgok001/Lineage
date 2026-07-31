@@ -83,6 +83,7 @@ pipeline/            the eight stages + auxiliaries (Python, CLI-first)
   check_extraction.py  audit of extracted-text fidelity (no model, no network)
   db/migrate.py      ordered SQL migrations, schema_migrations table
   db/migrations/     001..013
+.claude/agents/      architect, developer, tester (Claude Code subagents)
 worker/run.py        the trace worker (queue consumer)
 app/                 Next.js app (Vercel root directory is app/)
   app/               routes: /, /trace (request a map), /about, /roadmap,
