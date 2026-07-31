@@ -25,7 +25,12 @@ services:
     # for now for safety. For a blueprint service this line is authoritative.
     plan: standard
     buildCommand: pip install -r pipeline/requirements.txt
-    startCommand: python worker/run.py
+    # -u for the same reason the worker passes -u to every stage it spawns: with
+    # stdout on a pipe rather than a terminal, Python buffers by the kilobyte, so
+    # a quiet worker's own prints reach the log long after the thing they
+    # describe. It had -u for its children and not for itself, which is why the
+    # startup report was invisible on the deploy that introduced it.
+    startCommand: python -u worker/run.py
     disk:
       name: lineage-data
       mountPath: /data
