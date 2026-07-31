@@ -150,16 +150,21 @@ RATIO_SUSPECT = 0.18
 # Words that never take a following comma, and nouns that never end a sentence
 # bare. "a model should, detect the objects" is incident 10 as it reads today,
 # once tidy_marks has closed the space the citation left behind.
+# Every part anchors to a word character and to LITERAL spaces (\x20), never to
+# \s. \s matches a newline, and a paper's text is full of wrapped and indented
+# lines, so "\s{2,}" quietly meant "any indented line" and reported 892 gaps in a
+# paper that had a handful. Whitespace that spans a line break is layout; only
+# whitespace inside a line can be a hole where a token stood.
 GAP_STRONG = re.compile(
-    r"\s[.,;:]"          # space before punctuation: "vectors of dimension ."
-    r"|\(\s*[)\]]"       # nothing left inside: "a neural ranking model ()."
-    r"|\[\s*\]"
-    r"|\(\s+\S"          # something left the front of a group: "( 200 dimensions)"
-    r"|[,;:]\s*[.,;:]"   # two marks where one token stood between them
-    r"|[^.!?]\x20{2,}\S")  # "extracting  features": tidy_marks collapses runs of
-                           # spaces, so one that survived opened up afterwards.
-                           # Not after . ! ? — a double space there is somebody's
-                           # typography, not our damage.
+    r"\w\x20+[.,;:]"       # "vectors of dimension ."
+    r"|\(\x20*[)\]]"       # nothing left inside: "a neural ranking model ()."
+    r"|\[\x20*\]"
+    r"|\(\x20+\S"          # the front of a group left: "( 200 dimensions)"
+    r"|[,;:]\x20*[.,;:]"   # two marks with nothing between them
+    r"|\w\x20{2,}\w")      # "extracting  features"; tidy_marks collapses runs of
+                           # spaces, so one that survived opened up after it ran.
+                           # Anchored on \w at both ends, which also excludes the
+                           # double space some authors put after a full stop.
 GAP_WEAK = re.compile(r"(?!)")  # nothing: see the note above
 GAP_SUSPECT = 3
 

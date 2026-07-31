@@ -268,6 +268,14 @@ that tidy_marks would have closed. Those same signatures found "vectors of
 dimension .", "a neural ranking model ()." and "( 200 dimensions)" in real
 stored quotes, so the strictness cost nothing that mattered.
 
+The third run failed too, and worse: 100% flagged, with gap counts in the
+hundreds per paper. The structural patterns were written with `\s`, which
+matches a newline, so `\s{2,}` meant "any indented line" and a paper's own
+layout became evidence against it. Anchored to `\w` and literal spaces, the
+same patterns find every real case from the corpus and score zero on wrapped,
+indented, list-bearing text. **Whitespace that spans a line break is layout;
+only whitespace inside a line can be a hole where a token stood.**
+
 The counts never changed through any of this; only what the tool is willing to
 call damage did. **Thresholds guessed against a synthetic sample are a
 hypothesis, and the first real corpus is the test.** Twice now the corpus has
