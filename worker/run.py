@@ -5,7 +5,8 @@ a stranger submitted sits at 'requested' until the owner promotes it), claims
 one atomically, then runs the pipeline stages as subprocesses in order:
 
     corpus_select -> fetch_papers -> extract_text
-        -> stage_b_extract -> stage_c_cluster -> stage_d_edges -> stage_e_ground
+        -> stage_b_extract -> stage_c_cluster -> stage_d_edges
+        -> stage_b_extract --reground -> stage_e_ground
         -> enrich_authors -> stage_f_magnitude -> stage_g_threads
         -> stage_h_claims
 
@@ -80,6 +81,18 @@ def stages_for(concept: str, corpus_limit: int, field: str,
                                       "--corpus", corpus_json] + gloss_arg),
         ("cluster concept-states", py + ["pipeline/stage_c_cluster.py", concept]),
         ("classify edges", py + ["pipeline/stage_d_edges.py", concept]),
+        # Free, and it runs immediately before grounding for the same reason
+        # Stage E re-copies the edge quotes there: a stamp must not be older than
+        # the text it describes. A definition's stamp was the one in the system
+        # with no recompute path, so it could only be refreshed by paying for a
+        # fresh extraction, and on a map whose papers were re-extracted it kept
+        # claiming a check that no longer held. No --corpus here on purpose,
+        # unlike extraction: this touches only this concept's own definition
+        # rows, so there is nothing to re-bill or overwrite, and scoping it to
+        # one trace's corpus would leave a stale stamp on any definition of this
+        # concept that came in some other way.
+        ("re-check definition quotes", py + ["pipeline/stage_b_extract.py", concept,
+                                             "--reground"]),
         ("ground & assemble", py + ["pipeline/stage_e_ground.py", concept]),
         # Authors are needed by nothing upstream and by the export absolutely: a
         # citation without them is omitted from the BibTeX rather than guessed,

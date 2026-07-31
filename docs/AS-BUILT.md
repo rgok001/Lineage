@@ -325,6 +325,7 @@ verbatim, plus section and novelty claims (structured output via
 `count_tokens` when a key exists and a calibrated 2.6 chars/token heuristic
 when not. A spend cap (`TRACE_SPEND_CAP_USD`) aborts cleanly mid-run.
 `--refresh` re-extracts papers that already have a row, UPDATEing in place: `genealogies.nodes` holds definition_ids, so a delete-and-reinsert would mint new ids and orphan the curated node membership on every map built from that concept. It nulls the embedding, because the text it encodes has changed and stale is worse than absent: absent is visible to the re-embed step, stale is visible to nothing. Scope it with `--only <arxiv ids>`, which is what an audit hands you.
+`--reground` is the free half of that repair: it re-checks the quotes already stored against the extracted text as it is now and rewrites `quote_verified` alone, leaving the quote, the embedding and everything else untouched. It calls the same `quote_is_grounded` Stage E calls, makes no model call and needs no API key, prints the verified count before and after, and reports separately the definitions it could not check because the paper's text is not on this disk. The worker runs it immediately before Stage E on every trace, so a definition's stamp is never older than the text it describes (decision 18).
 `--corpus` scopes extraction to one trace's papers; without it the query takes
 every extracted paper in the shared papers table, which is correct for
 single-concept research use and wrong for the worker (section 10, incident 3).
@@ -811,6 +812,32 @@ The why behind the load-bearing choices, in one place:
     sourced and unverifiable here. A rationale is the model's reading. Each is
     labelled as what it is, everywhere it appears; only the first wears the
     verified stamp.
+
+18. **Every verification stamp gets a free recompute** (2026-08-01).
+    `definitions.quote_verified` was the last stamp in the system without one.
+    Stage E re-grounds every edge on every run and Stage H's `--recheck`
+    re-grounds every claim, both for nothing, while a definition's stamp could
+    only be refreshed by paying Stage B for a fresh extraction, so in practice
+    it never was. `embedding` is what that costs: its papers were re-extracted
+    on 2026-07-31 and its definitions were not, so its definition quotes were
+    copied out of text that is no longer on disk while their stamps still said
+    the text had been searched for them. Stage E, which does recompute, put a
+    number on it in passing: 286 verified edges down to 201.
+    `stage_b_extract.py --reground` runs the same `quote_is_grounded` every
+    other stage runs, rewrites `quote_verified` and nothing else, prints the
+    count before and after, and the worker runs it immediately before Stage E on
+    every trace. **A stamp that cannot be recomputed is a claim about the past
+    written in the present tense.** It lowers `/g/10`'s definition verified
+    count visibly, and that is the point: the count is wrong in the optimistic
+    direction, and it is the number that says what finishing the refresh buys.
+    A definition whose paper has no extracted text on this disk is **skipped,
+    counted and printed, never flipped.** `quote_verified` is
+    `NOT NULL DEFAULT false`, so there is no "unknown" to write: leaving it true
+    perpetuates exactly the stale claim the flag exists to kill, and writing
+    false asserts a check that never ran, which would mass-flip stamps on any
+    worker whose disk is incomplete. Choosing between those two is a decision
+    about the product; the script's job is to make the number impossible to
+    miss rather than to take it. That choice is still open.
 
 ---
 
