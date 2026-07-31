@@ -85,8 +85,11 @@ OUR_MARKS = re.compile(r"<cit\.>|<ref>")
 # A healthy pylatexenc parse emits no dollars and no braces; the raw-strip
 # fallback leaves both (measured: 8 dollars, 2 braces on a 6-line sample).
 LATEX_RESIDUE = re.compile(r"[${}]|\\[a-zA-Z@]{2,}")
-RESIDUE_DAMAGED = 30
-RESIDUE_SUSPECT = 4
+# Calibrated on the first real run: 4 flagged papers whose parse was fine.
+# The raw-strip fallback leaves residue in the hundreds, so the bar for
+# 'this parse degraded' sits far above where a stray brace lands.
+RESIDUE_DAMAGED = 150
+RESIDUE_SUSPECT = 25
 
 REPLACEMENT = "�"
 REPLACEMENT_DAMAGED = 20
@@ -98,11 +101,21 @@ MACRO_USE = re.compile(r"\\([a-zA-Z@]{2,})")
 MACRO_DEF = re.compile(r"\\(?:newcommand|renewcommand|providecommand|def|DeclareMathOperator)\*?\s*\{?\\([a-zA-Z@]+)")
 # A macro the paper defines and then uses is content by construction: nobody
 # writes \newcommand for something they would not mind losing. One use is worth
-# reporting. An unknown macro the paper did NOT define is usually a package's
-# formatting (\small, \linebreak), whose loss costs a reader nothing, so it takes
-# a crowd of them to mean anything.
+# reporting.
 OWN_DAMAGED, OWN_SUSPECT = 10, 1
-OTHER_DAMAGED, OTHER_SUSPECT = 60, 20
+
+# An unknown macro the paper did NOT define is usually a package's formatting,
+# and these were calibrated on the "embedding" corpus after the first real run,
+# because the synthetic sample they were guessed against did not resemble a
+# paper. At 60 for damaged, 160 of 182 papers came back damaged, driven almost
+# entirely by package macros: one paper alone had 506. A verdict that fires on
+# 88% of a corpus is not a verdict, and it would have put a warning on nearly
+# every paper page.
+#
+# So package macros can no longer reach "damaged" at all. That follows from what
+# this file already argued: their loss costs a reader nothing. Rating them the
+# same as lost content was the incoherence, not the number.
+OTHER_SUSPECT = 200
 
 # Structural macros whose disappearance is the intended behaviour rather than a
 # loss: they carry no prose, and pylatexenc drops or handles them by design.
@@ -320,9 +333,7 @@ def scan_paper(row: dict) -> dict:
                 out["signals"].append(("damaged", f"{m['own']} uses of the paper's own macros still dropped"))
             elif m["own"] >= OWN_SUSPECT:
                 out["signals"].append(("suspect", f"{m['own']} uses of the paper's own macros still dropped"))
-            if m["other"] >= OTHER_DAMAGED:
-                out["signals"].append(("damaged", f"{m['other']} uses of unknown package macros dropped"))
-            elif m["other"] >= OTHER_SUSPECT:
+            if m["other"] >= OTHER_SUSPECT:
                 out["signals"].append(("suspect", f"{m['other']} uses of unknown package macros dropped"))
 
             checked, missing, examples = symbol_survival(source, text)
@@ -488,7 +499,8 @@ def main() -> None:
         for level, why in p["signals"]:
             print(f"      {level}: {why}")
         if p.get("unknown_macros"):
-            names = ", ".join(f"\\{n} x{c}" for n, c in p["unknown_macros"][:5])
+            names = ", ".join(f"\\{n} x{c}{'' if own else ' (pkg)'}"
+                              for n, c, own in p["unknown_macros"][:5])
             print(f"      dropped: {names}")
         for ex in p.get("symbol_examples", [])[:3]:
             print(f"      lost symbol: ${ex}$")

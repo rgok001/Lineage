@@ -241,6 +241,27 @@ so the fix's worth is measured rather than argued. It is a lower bound and says
 so: it finds damage that leaves a mark, and the worst damage leaves none.
 `--write` stores the verdict on the paper (migration 013).
 
+**First real measurement (2026-07-31, "embedding", 187 papers, 182 LaTeX).**
+The macro fix was worth more than the incident that prompted it suggested.
+**22,039 uses of the papers' own macros, across 133 of 182 papers (73%), would
+have been dropped in silence before it**; 378 uses across 12 papers (7%) still
+escape, mostly delimited `\def` parameters the expander declines to guess at.
+Separately, 1,411 of 11,763 short inline symbols (12%) leave no trace in the
+extracted text. Against that, only 10 of 187 stored quotes (5.3%) carry a
+visible damage tell, which is the number that matters to a reader and the
+reason the product was not obviously broken: the loss is broad across the
+corpus and thin in the passages Stage B chose to quote.
+
+The first run also invalidated this file's own thresholds. At the guessed
+values, 160 of 182 papers came back "damaged", driven almost entirely by
+dropped *package* macros, which this same file argues cost a reader nothing.
+A verdict that fires on 88% of a corpus is not a verdict, and it would have put
+a warning on nearly every paper page. Package macros can no longer reach
+"damaged", and the residue bars moved from 4/30 to 25/150. The counts did not
+change; only what the tool is willing to call damage did. **Thresholds guessed
+against a synthetic sample are a hypothesis, and the first real corpus is the
+test.**
+
 **Stage B: definition extraction** (`stage_b_extract.py <concept> [--corpus JSON] [--dry-run]`).
 For each paper with usable text, Claude answers: does this paper give the
 concept a meaning of its own? If yes it must return the defining passage
