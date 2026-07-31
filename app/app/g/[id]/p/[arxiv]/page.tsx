@@ -19,12 +19,14 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
 
   const defs = (await sql`
     SELECT p.id AS pid, p.year, p.title, d.definition, d.verbatim_quote, d.quote_verified,
-           d.section, d.novelty_claims AS novelty, d.displacement
+           d.section, d.novelty_claims AS novelty, d.displacement,
+           p.extraction_verdict, p.extraction_signals
     FROM definitions d JOIN papers p ON p.id = d.paper_id
     WHERE p.arxiv_id = ${arxiv} AND d.concept = ${g[0].concept}
       AND d.prompt_version = ${g[0].prompt_version} AND d.defines_concept = true
   `) as { pid: number; year: number; title: string; definition: string | null; verbatim_quote: string | null;
-          quote_verified: boolean | null; section: string | null; novelty: string[] | null; displacement: number | null }[];
+          quote_verified: boolean | null; section: string | null; novelty: string[] | null; displacement: number | null;
+          extraction_verdict: string | null; extraction_signals: string[] | null }[];
   if (!defs.length) notFound();
   const d = defs[0];
 
@@ -148,6 +150,21 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
               color: d.quote_verified === false ? "var(--inferred)" : "var(--verified)" }}>
               {d.quote_verified === false ? "○ could not be string-matched · shown as inferred" : "✓ verified verbatim against the source text"}
             </div>
+            {/* The stamp above says the quote matches our reading of the paper. It
+                cannot say our reading matches the paper, and when we know that
+                reading is damaged, saying so is the difference between a narrow
+                guarantee and an overstated one. Reported only when something was
+                found: a clean scan means no evidence of damage, which is not the
+                same as evidence of none, so it makes no claim here. */}
+            {d.extraction_verdict && d.extraction_verdict !== "clean" && (
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", marginTop: ".3rem",
+                color: "var(--ink-soft)", lineHeight: 1.5 }}>
+                ◐ our reading of this paper lost some of its text
+                {d.extraction_verdict === "damaged" ? " in more than one place" : ""}, so
+                this passage may be missing symbols or wording the paper had. Worth
+                checking against the source before quoting.
+              </div>
+            )}
           </section>
         )}
 

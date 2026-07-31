@@ -143,6 +143,10 @@ def main() -> None:
                     help=f"cosine-distance cutoff for merging (default {DEFAULT_THRESHOLD})")
     ap.add_argument("--no-label", action="store_true", help="skip LLM node labels (offline)")
     ap.add_argument("--force", action="store_true", help="re-embed even if cached")
+    ap.add_argument("--embed-only", action="store_true",
+                    help="fill missing embeddings and stop, WITHOUT re-clustering. "
+                         "The repair path after stage_b_extract.py --refresh: "
+                         "clustering would overwrite curated nodes")
     args = ap.parse_args()
 
     prompt_version = env("PROMPT_VERSION", "v1")
@@ -152,6 +156,15 @@ def main() -> None:
     if len(rows) < 2:
         sys.exit(f"Need at least 2 definitions to cluster; found {len(rows)} for "
                  f'"{args.concept}" at prompt {prompt_version}. Run Stage B first.')
+
+    # Clustering writes genealogies.nodes wholesale (ON CONFLICT DO UPDATE), so a
+    # curated map does not survive a re-run. --embed-only exists so a refreshed
+    # definition can get its vector back without that cost.
+    if args.embed_only:
+        embed_definitions(conn, rows, args.force)
+        print(f'Embeddings filled for "{args.concept}" (prompt {prompt_version}). '
+              f"Nodes untouched; re-run Stage E to re-ground.")
+        return
 
     print(f'Clustering {len(rows)} definitions of "{args.concept}" (prompt {prompt_version})')
     mat = embed_definitions(conn, rows, args.force)

@@ -75,7 +75,8 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import data_dir, env  # noqa: E402
-from extract_text import find_main_tex, inline_inputs, read_archive  # noqa: E402
+from extract_text import (expand_own_macros, find_main_tex, inline_inputs,  # noqa: E402
+                          read_archive)
 
 # Our own marks. Expected, folded away by quote_is_grounded, rendered as an
 # elision by readableQuote. Counted for context, never as damage.
@@ -156,29 +157,54 @@ def parser_knows(name: str) -> bool:
     return _known_cache[name]
 
 
-def unknown_macros(source_latex: str) -> tuple[int, int, list[tuple[str, int, bool]]]:
-    """(own uses, other uses, [(name, count, defined_by_paper)]) for body macros
-    the parser will drop in silence.
+def _dropped_in(latex: str, defined: set[str]) -> dict[str, int]:
+    """Body macros the parser will drop in silence, counted by name.
 
     Anything containing "cite" is excluded: normalise_cite_macros folds those to
-    one mark before parsing, so they are handled rather than lost. The split that
-    matters is whether the paper defined the macro itself. `\\dmodel` is a value
-    the paper needed a name for; `\\linebreak` is a typesetting instruction, and
-    losing it changes nothing a reader can see.
+    one mark before parsing, so they are handled rather than lost.
     """
-    body = source_latex.split(r"\begin{document}", 1)
-    body = body[1] if len(body) > 1 else source_latex
-    defined = set(MACRO_DEF.findall(source_latex))
+    body = latex.split(r"\begin{document}", 1)
+    body = body[1] if len(body) > 1 else latex
     counts: dict[str, int] = {}
     for name in MACRO_USE.findall(body):
         if "cite" in name.lower() or name in HARMLESS_MACROS or parser_knows(name):
             continue
         counts[name] = counts.get(name, 0) + 1
-    own = sum(c for n, c in counts.items() if n in defined)
-    other = sum(c for n, c in counts.items() if n not in defined)
-    ranked = sorted(((n, c, n in defined) for n, c in counts.items()),
+    return counts
+
+
+def unknown_macros(source_latex: str) -> dict:
+    """What this paper loses to macros, asked of the pipeline as it now stands.
+
+    The question changed when the extractor learned to expand a paper's own
+    definitions, and asking the old one would report a fixed bug as a live
+    finding. So it is asked twice:
+
+      before  what the parser alone would have dropped. Not a live defect. It is
+              the measurement of what the macro fix was worth, on real corpora,
+              and it is the number worth reporting.
+      after   what still disappears once expansion has run. This is the live
+              finding: a definition too exotic to parse (delimited \\def
+              parameters), a macro used with arguments the definition does not
+              promise, or a package's own command.
+
+    The own/package split survives expansion because the names a paper defined
+    are collected from the original source, before those definitions are stripped.
+    A macro the paper defined is content by construction; a package's `\\linebreak`
+    is a typesetting instruction nobody misses.
+    """
+    defined = set(MACRO_DEF.findall(source_latex))
+    before = _dropped_in(source_latex, defined)
+    after = _dropped_in(expand_own_macros(source_latex), defined)
+    ranked = sorted(((n, c, n in defined) for n, c in after.items()),
                     key=lambda t: (not t[2], -t[1]))
-    return own, other, ranked
+    return {
+        "before_own": sum(c for n, c in before.items() if n in defined),
+        "before_other": sum(c for n, c in before.items() if n not in defined),
+        "own": sum(c for n, c in after.items() if n in defined),
+        "other": sum(c for n, c in after.items() if n not in defined),
+        "ranked": ranked,
+    }
 
 
 def fold_alnum(s: str) -> str:
@@ -285,17 +311,19 @@ def scan_paper(row: dict) -> dict:
             elif ratio < RATIO_SUSPECT:
                 out["signals"].append(("suspect", f"text is {ratio:.0%} of source"))
 
-            own, other, ranked = unknown_macros(source)
-            out["own_macro_uses"], out["other_macro_uses"] = own, other
-            out["unknown_macros"] = ranked[:8]
-            if own >= OWN_DAMAGED:
-                out["signals"].append(("damaged", f"{own} uses of the paper's own macros dropped in silence"))
-            elif own >= OWN_SUSPECT:
-                out["signals"].append(("suspect", f"{own} uses of the paper's own macros dropped in silence"))
-            if other >= OTHER_DAMAGED:
-                out["signals"].append(("damaged", f"{other} uses of unknown package macros dropped"))
-            elif other >= OTHER_SUSPECT:
-                out["signals"].append(("suspect", f"{other} uses of unknown package macros dropped"))
+            m = unknown_macros(source)
+            out["own_macro_uses"], out["other_macro_uses"] = m["own"], m["other"]
+            out["macro_uses_before_fix"] = m["before_own"] + m["before_other"]
+            out["own_macro_uses_before_fix"] = m["before_own"]
+            out["unknown_macros"] = m["ranked"][:8]
+            if m["own"] >= OWN_DAMAGED:
+                out["signals"].append(("damaged", f"{m['own']} uses of the paper's own macros still dropped"))
+            elif m["own"] >= OWN_SUSPECT:
+                out["signals"].append(("suspect", f"{m['own']} uses of the paper's own macros still dropped"))
+            if m["other"] >= OTHER_DAMAGED:
+                out["signals"].append(("damaged", f"{m['other']} uses of unknown package macros dropped"))
+            elif m["other"] >= OTHER_SUSPECT:
+                out["signals"].append(("suspect", f"{m['other']} uses of unknown package macros dropped"))
 
             checked, missing, examples = symbol_survival(source, text)
             out["symbols_checked"], out["symbols_missing"] = checked, missing
@@ -355,6 +383,10 @@ def main() -> None:
     ap.add_argument("--prompt-version", default=env("PROMPT_VERSION", "v2"))
     ap.add_argument("--sample", type=int, default=0, help="print this many flagged papers in full")
     ap.add_argument("--json", help="write the full per-paper audit here")
+    ap.add_argument("--write", action="store_true",
+                    help="store each verdict on papers.extraction_verdict (migration 013), "
+                         "so the app can tell a reader what it knows about the text "
+                         "a quote was matched against")
     args = ap.parse_args()
 
     with psycopg.connect(env("DATABASE_URL")) as conn:
@@ -380,6 +412,25 @@ def main() -> None:
         papers = [scan_paper(dict(zip(cols, r))) for r in rows]
         quotes = scan_quotes(conn, args.concept, args.prompt_version)
 
+        if args.write:
+            # A paper whose text is not on this machine is left alone rather than
+            # recorded as unchecked: another machine has the file, and its verdict
+            # is the one worth keeping (incident 7c).
+            stored = 0
+            for p in papers:
+                if p["verdict"] == "no text on this machine":
+                    continue
+                conn.execute("""
+                    UPDATE papers SET extraction_verdict = %(v)s,
+                                      extraction_signals = %(s)s,
+                                      extraction_checked_at = now()
+                    WHERE arxiv_id = %(a)s
+                """, {"v": p["verdict"], "a": p["arxiv_id"],
+                      "s": json.dumps([f"{lvl}: {why}" for lvl, why in p["signals"]])})
+                stored += 1
+            conn.commit()
+            print(f"  Wrote {stored} verdicts to papers.extraction_verdict.\n")
+
     scope = f'"{args.concept}"' if args.concept else "every extracted paper"
     print(f"\nExtraction audit: {scope} ({len(papers)} papers)\n")
 
@@ -400,8 +451,16 @@ def main() -> None:
         own = sum(p.get("own_macro_uses", 0) for p in group)
         affected = sum(1 for p in group if p.get("own_macro_uses", 0) >= OWN_SUSPECT)
         if own:
-            print(f"           the papers' own macros dropped in silence: {own} uses "
-                  f"across {affected} papers ({affected / n:.0%})")
+            print(f"           still dropped after macro expansion: {own} uses of the "
+                  f"papers' own macros, across {affected} papers ({affected / n:.0%})")
+        # What the macro fix was worth, measured rather than argued. This is the
+        # number for the write-up: it is the size of a silent failure that no
+        # grounding check could have caught, because both sides agreed.
+        was = sum(p.get("own_macro_uses_before_fix", 0) for p in group)
+        was_papers = sum(1 for p in group if p.get("own_macro_uses_before_fix", 0) >= OWN_SUSPECT)
+        if was:
+            print(f"           would have been dropped before the macro fix: {was} uses "
+                  f"across {was_papers} papers ({was_papers / n:.0%})")
 
     if quotes["total"]:
         t, n = quotes["touched"], quotes["total"]

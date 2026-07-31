@@ -127,6 +127,145 @@ def normalise_cite_macros(latex: str) -> str:
     return UNKNOWN_CITE_RE.sub(r"\\cite{x}", latex)
 
 
+# Macros the paper defines for itself. Same failure as the citation macros above,
+# one class wider: pylatexenc drops an unknown macro in silence and takes its
+# content with it. `\newcommand{\dmodel}{d_{model}}` turns "dimension $\dmodel$"
+# into "dimension.", which is why Attention Is All You Need carried a quote
+# reading "vectors of dimension ." and left 17 edges inferred. Plain
+# `$d_{model}$` was never the problem: it extracts correctly.
+#
+# Nobody writes \newcommand for something they would not mind losing, so these
+# are expanded rather than marked. The definitions are collected and their uses
+# substituted before pylatexenc ever sees the source.
+DEF_HEAD = re.compile(
+    r"\\(newcommand|renewcommand|providecommand|DeclareMathOperator|def)\s*\*?\s*"
+    r"(?:\{\s*\\([a-zA-Z@]+)\s*\}|\\([a-zA-Z@]+))")
+ARGC = re.compile(r"\A\s*\[\s*(\d)\s*\]")
+OPTIONAL_DEFAULT = re.compile(r"\A\s*\[[^\]]*\]")
+MAX_EXPANSION_PASSES = 4  # a macro defined in terms of another; bounded so a
+                          # self-referential \renewcommand cannot spin forever
+
+
+def read_group(s: str, i: int) -> tuple[str | None, int]:
+    """Read a brace-balanced group starting at s[i] == '{'.
+
+    Balanced braces are not a regular language, so this is a scanner rather than
+    a pattern. An escaped brace is skipped with its backslash, because `\\{` is a
+    literal character in the body, not a nesting level.
+    """
+    if i >= len(s) or s[i] != "{":
+        return None, i
+    depth, start, j = 0, i + 1, i
+    while j < len(s):
+        c = s[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start:j], j + 1
+        j += 1
+    return None, len(s)  # unbalanced source; leave it to pylatexenc to survive
+
+
+def collect_own_macros(latex: str) -> tuple[dict[str, tuple[int, str]], list[tuple[int, int]]]:
+    """({name: (argument count, body)}, spans of the definitions themselves).
+
+    The spans are returned so the definitions can be removed once their uses are
+    substituted: leaving them behind would let a later pass expand a macro inside
+    its own definition body.
+    """
+    defs: dict[str, tuple[int, str]] = {}
+    spans: list[tuple[int, int]] = []
+    for m in DEF_HEAD.finditer(latex):
+        name = m.group(2) or m.group(3)
+        kind, i = m.group(1), m.end()
+        nargs = 0
+        if kind == "def":
+            # \def\foo#1#2{...}: the parameter text is whatever sits before the
+            # body. Only the plain numbered form is handled; delimited parameters
+            # are rare in papers and too sharp to guess at.
+            params = re.match(r"\A((?:#\d)*)\s*", latex[i:])
+            nargs = len(params.group(1)) // 2
+            i += params.end()
+        else:
+            if am := ARGC.match(latex[i:]):
+                nargs = int(am.group(1))
+                i += am.end()
+                if dm := OPTIONAL_DEFAULT.match(latex[i:]):
+                    i += dm.end()  # a default value makes the first argument optional
+        body, after = read_group(latex, i)
+        if body is None or not name:
+            continue
+        defs[name] = (nargs, body)
+        spans.append((m.start(), after))
+    return defs, spans
+
+
+def expand_own_macros(latex: str) -> str:
+    """Substitute the paper's own macro definitions into its text.
+
+    Runs before normalise_cite_macros so that a paper's `\\newcommand{\\mycite}`
+    wrapper expands to the real citation command, which the citation rule then
+    folds to a single mark.
+    """
+    defs, spans = collect_own_macros(latex)
+    if not defs:
+        return latex
+
+    use = re.compile(r"\\(" + "|".join(sorted(map(re.escape, defs), key=len, reverse=True)) + r")(?![a-zA-Z@])")
+
+    def once(s: str) -> tuple[str, bool]:
+        out, i, changed = [], 0, False
+        while True:
+            m = use.search(s, i)
+            if not m:
+                out.append(s[i:])
+                break
+            nargs, body = defs[m.group(1)]
+            j, args = m.end(), []
+            for _ in range(nargs):
+                arg, j2 = read_group(s, skip_ws(s, j))
+                if arg is None:
+                    break
+                args.append(arg)
+                j = j2
+            if len(args) != nargs:  # arguments not where the definition promised
+                out.append(s[i:m.end()])
+                i = m.end()
+                continue
+            expanded = body
+            for k, arg in enumerate(args, 1):
+                expanded = expanded.replace(f"#{k}", arg)
+            out.append(s[i:m.start()])
+            out.append(expanded)
+            i, changed = j, True
+        return "".join(out), changed
+
+    # Definitions first, so a body is never expanded into itself.
+    kept, last = [], 0
+    for start, end in sorted(spans):
+        kept.append(latex[last:start])
+        last = end
+    kept.append(latex[last:])
+    stripped = "".join(kept)
+
+    for _ in range(MAX_EXPANSION_PASSES):
+        stripped, changed = once(stripped)
+        if not changed:
+            break
+    return stripped
+
+
+def skip_ws(s: str, i: int) -> int:
+    while i < len(s) and s[i] in " \t\n":
+        i += 1
+    return i
+
+
 def _latex_context():
     from pylatexenc.latex2text import get_default_latex_context_db, MacroTextSpec
     db = get_default_latex_context_db()
@@ -154,7 +293,7 @@ def tidy_marks(text: str) -> str:
 
 def latex_to_text(latex: str) -> str:
     from pylatexenc.latex2text import LatexNodes2Text
-    latex = normalise_cite_macros(latex)
+    latex = normalise_cite_macros(expand_own_macros(latex))
     try:
         text = LatexNodes2Text(latex_context=_latex_context(), math_mode="text",
                                strict_latex_spaces=False).latex_to_text(latex)

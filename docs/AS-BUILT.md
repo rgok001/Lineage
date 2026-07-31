@@ -1,6 +1,6 @@
 # Lineage: As-Built Documentation
 
-**As of 2026-07-29.**
+**As of 2026-07-31.**
 
 This is the as-built record: a description of the system as it actually exists,
 including the deviations, incidents, and hard-won rules that shaped it. The
@@ -71,8 +71,9 @@ render.yaml          Render blueprint for the trace worker
 docs/                ARCHITECTURE.md (design), AS-BUILT.md (this file)
 pipeline/            the seven stages + auxiliaries (Python, CLI-first)
   common.py          env loading, polite HTTP session, data_dir()
+  check_extraction.py  audit of extracted-text fidelity (no model, no network)
   db/migrate.py      ordered SQL migrations, schema_migrations table
-  db/migrations/     001..012
+  db/migrations/     001..013
 worker/run.py        the trace worker (queue consumer)
 app/                 Next.js app (Vercel root directory is app/)
   app/               routes: /, /trace (request a map), /about, /roadmap,
@@ -93,7 +94,7 @@ hold different `DATABASE_URL` values; see section 8.
 
 ## 3. Data model
 
-Six tables, migrations `001` through `012`, applied by
+Six tables, migrations `001` through `013`, applied by
 `python pipeline/db/migrate.py` (tracked in `schema_migrations`). Migrations
 `008`-`009` are data fixes (paths relative to `DATA_DIR`; correcting future
 publication years OpenAlex mis-dated). `010`-`012` carry the paper-centric turn
@@ -163,6 +164,14 @@ extraction question. The field is not a disambiguator (polysemy collides
 within a field: OS vs ML "kernel" are both CS); the gloss is. The worker reads
 both from the row and passes them through as CLI args.
 
+**papers**, continued (013): `extraction_verdict` (clean/suspect/damaged),
+`extraction_signals` and `extraction_checked_at` record what
+`check_extraction.py --write` found in that paper's extracted text. NULL means
+unchecked, and `clean` means nothing was found rather than nothing is wrong: the
+scan is a lower bound, so the column is never read as a certificate. The paper
+dossier shows the note only when something *was* found, which is the honest
+asymmetry.
+
 **trace_requests** (005, 006): the request inbox and the job queue in one table.
 Status flow: `requested -> approved -> running -> complete`, plus `rejected`
 and `failed`. `progress` JSONB is written live by the worker; `updated_at`
@@ -209,9 +218,28 @@ biblatex or a paper's own `
 ewcommand`, and an unknown macro is dropped in
 silence, taking the citation with it and stranding the punctuation around it
 (section 10, incident 10). Any macro whose name contains "cite", in any case,
-is folded to one mark first, so the rule covers names nobody has listed. Extraction uses pylatexenc for
+is folded to one mark first, so the rule covers names nobody has listed. **The
+paper's own macros are expanded before that** (`expand_own_macros`, incident
+11): `\newcommand`, `\renewcommand`, `\providecommand`, `\def` and
+`\DeclareMathOperator` are collected with a brace-balanced scanner, their uses
+substituted with arguments, the definitions themselves stripped, and the pass
+repeated up to four times so a macro defined in terms of another resolves while
+a self-referential one cannot spin. Expansion runs *before* the citation rule,
+so a paper's own `\mycite` wrapper expands to the real citation command and then
+folds to a mark. Extraction uses pylatexenc for
 LaTeX and pymupdf with de-hyphenation for PDF, computes `text_title_match`,
 and warns loudly below the 0.5 guard.
+
+**Audit** (`check_extraction.py [--concept C] [--sample N] [--write]`). The
+extracted text is what the grounding check rests on, and its fidelity went
+unmeasured until 2026-07-31. This scans for the marks damage leaves behind:
+macros the parser still drops, `$`/`{`/`}` residue from a parse that fell back
+to the raw strip, short inline symbols that left no trace, sections lost to a
+dropped `\input`, undecodable bytes, and the punctuation an eaten token strands.
+No model, no network. Macro loss is reported twice, before and after expansion,
+so the fix's worth is measured rather than argued. It is a lower bound and says
+so: it finds damage that leaves a mark, and the worst damage leaves none.
+`--write` stores the verdict on the paper (migration 013).
 
 **Stage B: definition extraction** (`stage_b_extract.py <concept> [--corpus JSON] [--dry-run]`).
 For each paper with usable text, Claude answers: does this paper give the
@@ -221,6 +249,7 @@ verbatim, plus section and novelty claims (structured output via
 `--dry-run` estimates cost across models without an API call, using real
 `count_tokens` when a key exists and a calibrated 2.6 chars/token heuristic
 when not. A spend cap (`TRACE_SPEND_CAP_USD`) aborts cleanly mid-run.
+`--refresh` re-extracts papers that already have a row, UPDATEing in place: `genealogies.nodes` holds definition_ids, so a delete-and-reinsert would mint new ids and orphan the curated node membership on every map built from that concept. It nulls the embedding, because the text it encodes has changed and stale is worse than absent: absent is visible to the re-embed step, stale is visible to nothing. Scope it with `--only <arxiv ids>`, which is what an audit hands you.
 `--corpus` scopes extraction to one trace's papers; without it the query takes
 every extracted paper in the shared papers table, which is correct for
 single-concept research use and wrong for the worker (section 10, incident 3).
@@ -230,7 +259,7 @@ Embeds definitions via the Voyage hosted API (1024-dim, cached in
 `definitions.embedding`), then agglomerative clustering with cosine distance
 and no fixed k. `DEFAULT_THRESHOLD = 0.16` was calibrated on bge-large
 distances back when embeddings were local, so it may want re-tuning for Voyage
-vectors; clustering granularity is a curatable draft either way.
+vectors; clustering granularity is a curatable draft either way. `--embed-only` fills missing vectors and stops before clustering: Stage C writes `nodes` wholesale on conflict, so a re-run costs a curated map its labels and merges. It is the second step of the repair path after `stage_b_extract.py --refresh`, and the reason that path does not simply re-run the pipeline.
 The original calibration:
 the soft-alignment and self-attention cores sit ~0.16 apart, and a bridge pair
 (Show-Attend-Tell / Transformer) is 0.161, so 0.19 would merge the two senses
@@ -436,7 +465,7 @@ was a back-link in whatever corner each page happened to use.
   document, and is kept because the pipeline is CLI-first.
 - `/g/[id]/p/[arxiv]` : a paper's dossier. What it contributed (novelty claims,
   labelled extracted rather than verbatim), how it defines the term with the
-  verified-or-inferred stamp, and its typed links in both directions ("what it
+  verified-or-inferred stamp, a note where we know our reading of that paper lost text (migration 013; shown only when something was found, since a clean scan is not a certificate), and its typed links in both directions ("what it
   drew from", "what drew from it") each carrying the edge rationale labelled as
   the tool's reading.
 - `/g/[id]/evidence` : the former genealogy page, now the evidence and
@@ -741,6 +770,30 @@ ewcommand`, and an unknown
     **Lesson: when a check fails on things that are yours rather than the
     source's, it is the check that is wrong, and repairing the data to satisfy
     it hides that.**
+11. **The recorded diagnosis was wrong, and the bug was incident 10 again
+    (2026-07-31).** Open item 3 had said for days that *Attention Is All You
+    Need* reads "vectors of dimension ." because `$d_{model}$` extracted to
+    nothing. It does not. Run against the extractor we actually ship,
+    `$d_{model}$` extracts correctly to `d_model`. What extracts to nothing is
+    `$\dmodel$`, because the paper writes `\newcommand{\dmodel}{d_{model}}` in
+    its preamble and pylatexenc drops an unknown macro in silence along with its
+    content. **That is incident 10 exactly, one class wider.** The rule drawn
+    from incident 10 covered every macro whose name contains "cite". The general
+    case is every macro a paper defines for itself, and it was sitting in the
+    same document, correctly described, while the fix was scoped to citations.
+    The fix has the shape the last one should have had: expand the definitions
+    rather than enumerate the names.
+    **Two lessons, and the second is the uncomfortable one.** First, a diagnosis
+    written from a plausible reading is not a measurement: two minutes running
+    both forms through the extractor would have shown maths mode works, and
+    nobody spent them, because the explanation sounded right. Second, incident
+    10's own text names `
+ewcommand` as a thing pylatexenc does not know, and the fix that followed
+    covered only "cite". **A lesson recorded at the width of the symptom will be
+    applied at that width.** The habit this argues for is asking, of every fix,
+    what class the failure belongs to and whether the fix covers the class.
+    Consequence: `expand_own_macros`, and `check_extraction.py`, which exists
+    because none of this was visible from inside the system. Every quote passed.
 
 ---
 
@@ -778,25 +831,20 @@ Open engineering work, in priority order:
    the same model and prompt version, with attention getting *more* cache help.
    That points at how much extracted text Stage B sends per paper. Worth
    measuring, because it is the largest single lever on what a trace costs.
-3. Maths is the next artifact family, and the reason 19 of embedding's 305
-   edges are still inferred. 17 of them trace to one paper, *Attention Is All
-   You Need*, whose quote reads "vectors of dimension .". Unlike a citation, a
-   symbol is content, so it cannot be folded away in the comparison the way
-   whitespace and citation marks are, and grounding correctly refuses to verify
-   a sentence missing part of itself. Found the same way incident 10 was: by
-   reading a quote that looked wrong.
-   **The diagnosis recorded here was wrong, and the correction matters more than
-   the bug.** This said the cause was `$d_{model}$` extracting to nothing. It
-   does not: `$d_{model}$` extracts correctly to `d_model`, measured against the
-   extractor we run. What extracts to nothing is `$\dmodel$`, where the paper
-   wrote `\newcommand{\dmodel}{d_{model}}` in its preamble. pylatexenc does not
-   know the macro, and an unknown macro is dropped in silence along with its
-   content. **That is incident 10 exactly, one class wider.** The rule that came
-   out of incident 10 covered every macro whose name contains "cite"; the
-   general case is every macro a paper defines for itself, and the fix has the
-   same shape: expand `\newcommand` and `\def` definitions before parsing rather
-   than enumerating names. Until then `check_extraction.py` reports which papers
-   are affected and which macros they lose.
+3. ~~Maths is the next artifact family~~ **FIXED, and it was never maths
+   (2026-07-31).** See incident 11. The 19 inferred edges on embedding, 17 of
+   them from *Attention Is All You Need*, are the visible end of a paper-defined
+   macro being dropped in silence, not of maths mode. The extractor now expands
+   a paper's own macros; `check_extraction.py` measures what still escapes.
+   **The repair of the existing maps is deliberately not done**, and the reason
+   is worth stating: re-extracting changes the text under stored quotes, and the
+   showcase map is hand-curated. The safe path exists (`stage_b_extract.py
+   --refresh`, then `stage_c_cluster.py --embed-only`, then Stage E) and should
+   be exercised on `attention` (`/g/13`, uncurated) before it goes near `/g/10`.
+   The affected quotes stay as they are, labelled, until then. What must never
+   happen is re-anchoring a quote to the new text: a lost symbol is content, and
+   unlike whitespace it cannot be folded into the check, so there is no honest
+   way to make those pass (incident 10's lesson, second application).
 4. Proper 403s instead of fail-closed 500s on unauthorised writes.
 5. **Notifications, both directions.** Nothing tells anyone anything: a
    stranger's request is visible only if the owner happens to visit, and the

@@ -148,7 +148,7 @@ export default function AboutPage() {
           <Tier
             label="Verified"
             color="var(--verified)"
-            body="Quoted passages carrying the ✓ stamp. These were string-matched against our extraction of the source. If the stamp is there, the paper contains those words."
+            body="Quoted passages carrying the ✓ stamp. These were string-matched against our reading of the source, so the words are the paper's and not the tool's. The guarantee stops exactly there: converting a paper into plain text can drop a symbol or a phrase, and where we know that happened the paper's page says so."
           />
           <Tier
             label="Sourced but unverified"

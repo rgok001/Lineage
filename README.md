@@ -117,4 +117,24 @@ python pipeline/check_extraction.py --json data/extraction_audit.json
 ```
 
 It is a lower bound: it finds damage that leaves a mark, and the worst damage
-leaves none. Papers it flags are papers worth opening on arXiv.
+leaves none. Papers it flags are papers worth opening on arXiv. `--write` stores
+each verdict on the paper (migration 013) so the app can tell a reader what it
+knows about the text a quote was matched against.
+
+### Repairing a map after the extracted text changes
+
+Fixing the extractor changes the text under stored quotes. Re-running the
+pipeline is the wrong move: Stage C rewrites `genealogies.nodes` wholesale, so a
+curated map loses its labels and merges. The safe path updates definitions in
+place, keeping the ids the nodes point at:
+
+```sh
+python pipeline/extract_text.py --force                        # re-extract
+python pipeline/stage_b_extract.py "attention" --refresh --only 1706.03762 ...
+python pipeline/stage_c_cluster.py "attention" --embed-only    # vectors, no re-clustering
+python pipeline/stage_e_ground.py "attention"                  # re-ground, honestly
+```
+
+Exercise it on an uncurated map first. Never re-anchor a stored quote to the new
+text to make it pass: a lost symbol is content, and unlike whitespace it cannot
+be folded into the grounding check.

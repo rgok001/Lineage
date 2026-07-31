@@ -144,7 +144,7 @@ WHERE p.extracted_text_path IS NOT NULL
       WHERE d.paper_id = p.id AND d.concept = %(concept)s
         AND d.prompt_version = %(prompt_version)s
   )
-{{corpus_filter}}ORDER BY p.cited_by_count DESC NULLS LAST
+{{corpus_filter}}{{arxiv_filter}}ORDER BY p.cited_by_count DESC NULLS LAST
 """
 
 INSERT_DEF = """
@@ -155,6 +155,44 @@ VALUES (%(paper_id)s, %(concept)s, %(prompt_version)s, %(defines_concept)s,
         %(definition)s, %(verbatim_quote)s, %(quote_verified)s, %(section)s,
         %(novelty_claims)s, %(model)s)
 ON CONFLICT (paper_id, concept, prompt_version) DO NOTHING
+"""
+
+# --refresh re-extracts papers that already have a row, which the cache exists to
+# prevent. It is for one situation: the extracted text changed underneath a
+# stored quote, so the quote is answering a question about a document that no
+# longer exists.
+#
+# It UPDATEs rather than DELETEs and re-INSERTs, and that is the whole point.
+# `genealogies.nodes` holds definition_ids, so a delete would mint new ids and
+# orphan the curated node membership on every map built from this concept. The
+# id is the thing being protected.
+#
+# The embedding is nulled because the definition text it encodes has changed.
+# Stale is worse than absent: absent is visible to the re-embed step, stale is
+# not visible to anything.
+REFRESH_DEF = """
+UPDATE definitions SET
+    defines_concept = %(defines_concept)s,
+    definition      = %(definition)s,
+    verbatim_quote  = %(verbatim_quote)s,
+    quote_verified  = %(quote_verified)s,
+    section         = %(section)s,
+    novelty_claims  = %(novelty_claims)s,
+    model           = %(model)s,
+    embedding       = NULL
+WHERE paper_id = %(paper_id)s AND concept = %(concept)s
+  AND prompt_version = %(prompt_version)s
+"""
+
+# The mirror of SELECT_PAPERS: papers that DO have a row, so they can be redone.
+SELECT_PAPERS_REFRESH = f"""
+SELECT p.id, p.arxiv_id, p.title, p.extracted_text_path
+FROM papers p
+JOIN definitions d ON d.paper_id = p.id
+WHERE p.extracted_text_path IS NOT NULL
+  AND COALESCE(p.text_title_match, 0) >= {TITLE_MATCH_MIN}
+  AND d.concept = %(concept)s AND d.prompt_version = %(prompt_version)s
+{{corpus_filter}}{{arxiv_filter}}ORDER BY p.cited_by_count DESC NULLS LAST
 """
 
 
@@ -175,6 +213,13 @@ def main() -> None:
     ap.add_argument("--gloss",
                     help="one-line sense clarification; makes the extraction question "
                          "sense-specific for polysemous concepts")
+    ap.add_argument("--refresh", action="store_true",
+                    help="re-extract papers that already have a definition, updating "
+                         "the row in place. For when the extracted text changed under "
+                         "a stored quote; scope it with --only")
+    ap.add_argument("--only", metavar="ARXIV_ID", nargs="+",
+                    help="restrict to these arxiv ids (use with --refresh to redo "
+                         "just the papers an audit flagged)")
     args = ap.parse_args()
 
     sense = SENSE.format(gloss=args.gloss) if args.gloss else ""
@@ -184,19 +229,34 @@ def main() -> None:
         corpus = json.loads(Path(args.corpus).read_text(encoding="utf-8"))
         params["arxiv_ids"] = [p["arxiv_id"] for p in corpus]
         corpus_filter = "  AND p.arxiv_id = ANY(%(arxiv_ids)s)\n"
+    arxiv_filter = ""
+    if args.only:
+        params["only_ids"] = list(args.only)
+        arxiv_filter = "  AND p.arxiv_id = ANY(%(only_ids)s)\n"
+    elif args.refresh:
+        print("Refreshing EVERY paper for this concept. --only <ids> scopes it to "
+              "the papers an audit flagged, which is almost always what you want.")
 
     prompt_version = env("PROMPT_VERSION", "v1")
     cap = float(env("TRACE_SPEND_CAP_USD", "10"))
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
     params["prompt_version"] = prompt_version
-    rows = conn.execute(SELECT_PAPERS.format(corpus_filter=corpus_filter),
-                        params).fetchall()
+    query = SELECT_PAPERS_REFRESH if args.refresh else SELECT_PAPERS
+    rows = conn.execute(query.format(corpus_filter=corpus_filter,
+                                     arxiv_filter=arxiv_filter), params).fetchall()
     if args.limit:
         rows = rows[:args.limit]
     if not rows:
-        print(f'Nothing to extract for "{args.concept}" (all cached at prompt {prompt_version}, '
-              f"or no papers pass text_title_match >= {TITLE_MATCH_MIN}).")
+        if args.refresh:
+            print(f'Nothing to refresh for "{args.concept}" at prompt {prompt_version} '
+                  f"(no matching papers already have a definition).")
+        else:
+            print(f'Nothing to extract for "{args.concept}" (all cached at prompt {prompt_version}, '
+                  f"or no papers pass text_title_match >= {TITLE_MATCH_MIN}).")
         return
+    if args.refresh:
+        print(f"Refreshing {len(rows)} papers in place (definition ids preserved, "
+              f"embeddings cleared for re-embedding).")
 
     import os
     have_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
@@ -277,7 +337,7 @@ def main() -> None:
         # Always record the verdict — "does not define it" is a finding worth
         # caching, not an absence of one. Without a row, every re-run re-pays
         # the LLM for papers already known to be irrelevant.
-        conn.execute(INSERT_DEF, {
+        conn.execute(REFRESH_DEF if args.refresh else INSERT_DEF, {
             "paper_id": pid, "concept": args.concept, "prompt_version": prompt_version,
             "defines_concept": ex.defines_concept,
             "definition": ex.definition or "", "verbatim_quote": ex.verbatim_quote or "",
