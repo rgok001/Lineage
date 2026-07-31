@@ -37,6 +37,35 @@ def main() -> None:
         sys.exit(f'No genealogy for "{args.concept}" at prompt {prompt_version}.')
     gen_id, nodes = gen
 
+    # An edge's quotes ARE the two papers' Stage B definition quotes (decision 6):
+    # only text we extracted can pass our own grounding check. Stage D copies them
+    # onto the edge when it classifies, and a copy can go stale. Re-extracting a
+    # corpus and refreshing its definitions did exactly that: the definitions were
+    # correct, the edges still held the quotes taken from the text before the fix,
+    # and grounding them against the new text failed 77 edges that had nothing
+    # wrong with them.
+    #
+    # So the copy is re-derived here, every run, before anything is judged. A
+    # value that is defined as a copy of another value should never be older than
+    # what it copies. Empty definitions are left alone: a paper that no longer
+    # defines the concept keeps its old quote and fails honestly, rather than
+    # being blanked into a pass.
+    synced = conn.execute("""
+        UPDATE edges e
+        SET source_quote = ds.verbatim_quote, target_quote = dt.verbatim_quote
+        FROM definitions ds, definitions dt
+        WHERE e.genealogy_id = %(gid)s
+          AND ds.paper_id = e.source_paper_id
+          AND ds.concept = %(c)s AND ds.prompt_version = %(pv)s AND ds.verbatim_quote <> ''
+          AND dt.paper_id = e.target_paper_id
+          AND dt.concept = %(c)s AND dt.prompt_version = %(pv)s AND dt.verbatim_quote <> ''
+          AND (e.source_quote IS DISTINCT FROM ds.verbatim_quote
+               OR e.target_quote IS DISTINCT FROM dt.verbatim_quote)
+    """, {"gid": gen_id, "c": args.concept, "pv": prompt_version}).rowcount
+    if synced:
+        print(f"  re-synced {synced} edge quote pair(s) from their definitions "
+              f"(the definition is the source of truth; the edge holds a copy)\n")
+
     edges = conn.execute("""
         SELECT e.id, e.source_node, e.target_node, e.edge_type, e.confidence,
                sp.arxiv_id, tp.arxiv_id, e.source_quote, e.target_quote,

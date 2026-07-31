@@ -344,6 +344,17 @@ text. Direction convention: cited = ancestor = source; citing = descendant =
 target.
 
 **Stage E: grounding and assembly** (`stage_e_ground.py <concept>`).
+Re-derives each edge's quote pair from `definitions.verbatim_quote` before
+judging anything. An edge's quotes ARE the two papers' definition quotes
+(decision 6); Stage D copies them onto the edge when it classifies, and that copy
+can go stale. Refreshing attention's definitions against re-extracted text did
+exactly that: the definitions were all correct and individually verified, the
+edges still held quotes taken from the text before the fix, and grounding them
+against the new text failed 77 edges that had nothing wrong with them (287 of 287
+verified fell to 210). A value defined as a copy of another value must never be
+older than what it copies, so it is now re-copied every run. Empty definitions are
+skipped rather than blanked, so a paper that no longer defines the concept fails
+honestly instead of being emptied into a pass.
 The mandatory grounding check: an edge is `verified` (rendered solid) iff both
 quotes are found verbatim in the extracted source text. The comparison
 (`quote_is_grounded` in `common.py`, shared with Stage B) folds away exactly two
