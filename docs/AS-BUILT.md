@@ -37,12 +37,18 @@ an influence map: the pivotal papers placed by year, sized by how much later
 work built on them for that term, riding in the threads the idea split into.
 Underneath it still holds the typed relationships between papers, each backed by
 verbatim quotes from both papers verified against the extracted source text. The
-showcase map is "embedding" (`/g/10`, 27 concept-states, 187 definitions, 305
-relationships, 286 verified before the 2026-07-31 repair, 9 threads, 476 claims;
-**never curated: `user_edits` is empty**, and earlier drafts of this document
-said otherwise because that was the plan rather than the record), 134 papers, 286
-verified); "attention" (`/g/13`, 85 papers, 287 relationships, all verified) is
-the second, and the first built end to end by the worker. The earlier "dropout"
+showcase map is "embedding" (`/g/10`, 134 defining papers of 187, 27
+concept-states, 305 relationships, 9 threads, 476 claims; **never curated:
+`user_edits` is empty**, and earlier drafts of this document said otherwise
+because that was the plan rather than the record). It sits **half-repaired** as
+of 2026-07-31: its papers were re-extracted with the fixed extractor, its
+definitions were not (incident 12 stopped the refresh), so its quotes were
+copied from text that is no longer on disk and grounding now reports **201
+verified of 305**, down from 286. That is the truth about the quotes it holds,
+not a regression; finishing the refresh (~$8.45) is what returns them.
+"attention" (`/g/13`, 88 definitions all verified, 287 relationships, 286
+verified) is the second, the first built end to end by the worker, and **the
+only map in the system built entirely on correctly extracted text**. The earlier "dropout"
 map was deleted on 2026-07-26.
 
 | Component | Technology | Where it runs | Cost |
