@@ -398,6 +398,14 @@ rather than counting them, because `user_edits` records what changed and when
 and **not who**: the web workbench is owner-only, but `workbench.py`
 authenticates nobody, so an edit can come from any process holding the `.env`.
 An owner who does not recognise an edit has only its timestamp to go on.
+`restore_snapshot.py`: puts a map back the way `snapshot_map.py` found it, by id
+so nothing is orphaned: concept-states, threads, every edge, and each
+definition's quote, verdict and magnitude scores. `user_edits` is the one thing
+not overwritten; the restore appends itself to it, because a restore is an event
+in a map's history rather than a way to un-happen one. It cannot restore the
+extracted text, so a map re-extracted since the snapshot comes back with verdicts
+describing a document no longer on disk: run Stage E afterwards, which is free and
+re-grounds every quote against the text that is actually there.
 `restore_genealogy.py`: the inverse of Stage E's export; re-inserts a
 genealogies row and its edges from a JSON export and records the restoration
 in the audit trail. Written during incident 4 and kept as the recovery path.
