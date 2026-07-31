@@ -41,12 +41,18 @@ assumed:
   short text      extracted characters against the inlined source. A missing or
                   circular \\input is dropped in silence (extract_text.py:91),
                   so a whole section can leave without a word about it.
-  gaps            punctuation standing where a token used to be. tidy_marks
-                  closes the space, so the surviving signature is a comma
-                  welded to a word that never takes one ("and," "of."), which is
-                  exactly what incident 10's quote looks like today. Heuristic
-                  and false-positive prone, which is why a hit is only ever
-                  "suspect" and the excerpt is printed for a human to judge.
+  gaps            punctuation standing where a token used to be, detected by
+                  shape and never by vocabulary. The first version guessed at
+                  words that "never" take a following comma, and the first real
+                  corpus answered: it flagged "the batch size.", "And," and "a
+                  fixed number of dimensions." as damage, drove 73% of papers to
+                  suspect, and would have warned a reader about ordinary English.
+                  What survives is structural and checkable: a space before
+                  punctuation, an empty group, a group missing its front, two
+                  marks with nothing between them. Those found "vectors of
+                  dimension .", "a neural ranking model ().", "( 200 dimensions)"
+                  and "extracting  features" in real stored quotes. Still only
+                  ever "suspect", and the excerpt is still printed for a human.
   bad decode      U+FFFD, from the "replace" decode in read_archive.
   no structure    neither a references nor an introduction heading survived.
 
@@ -145,9 +151,16 @@ RATIO_SUSPECT = 0.18
 # bare. "a model should, detect the objects" is incident 10 as it reads today,
 # once tidy_marks has closed the space the citation left behind.
 GAP_STRONG = re.compile(
-    r"\b(?:of|by|with|from|into|using|than|should|and)\s*,"
-    r"|\b(?:of|dimension|dimensions|denoted|equals|size)\s*[.,;:)]", re.I)
-GAP_WEAK = re.compile(r"\(\s*\)|\[\s*\]|[,;:]\s*[.,;:]")
+    r"\s[.,;:]"          # space before punctuation: "vectors of dimension ."
+    r"|\(\s*[)\]]"       # nothing left inside: "a neural ranking model ()."
+    r"|\[\s*\]"
+    r"|\(\s+\S"          # something left the front of a group: "( 200 dimensions)"
+    r"|[,;:]\s*[.,;:]"   # two marks where one token stood between them
+    r"|[^.!?]\x20{2,}\S")  # "extracting  features": tidy_marks collapses runs of
+                           # spaces, so one that survived opened up afterwards.
+                           # Not after . ! ? — a double space there is somebody's
+                           # typography, not our damage.
+GAP_WEAK = re.compile(r"(?!)")  # nothing: see the note above
 GAP_SUSPECT = 3
 
 SECTION_HINTS = (re.compile(r"^[\s§]*(?:\d+\.?\s*)?references\b", re.I | re.M),

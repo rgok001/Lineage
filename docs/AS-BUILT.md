@@ -257,10 +257,22 @@ values, 160 of 182 papers came back "damaged", driven almost entirely by
 dropped *package* macros, which this same file argues cost a reader nothing.
 A verdict that fires on 88% of a corpus is not a verdict, and it would have put
 a warning on nearly every paper page. Package macros can no longer reach
-"damaged", and the residue bars moved from 4/30 to 25/150. The counts did not
-change; only what the tool is willing to call damage did. **Thresholds guessed
-against a synthetic sample are a hypothesis, and the first real corpus is the
-test.**
+"damaged", and the residue bars moved from 4/30 to 25/150.
+
+The second run then failed the same way for a different reason: 73% "suspect",
+driven by a gap detector that guessed at *words* which "never" take a following
+comma. On real papers it flagged "the batch size.", "And," and "a fixed number
+of dimensions." as damage. It now tests shape rather than vocabulary: a space
+before punctuation, an empty group, a group missing its front, a run of spaces
+that tidy_marks would have closed. Those same signatures found "vectors of
+dimension .", "a neural ranking model ()." and "( 200 dimensions)" in real
+stored quotes, so the strictness cost nothing that mattered.
+
+The counts never changed through any of this; only what the tool is willing to
+call damage did. **Thresholds guessed against a synthetic sample are a
+hypothesis, and the first real corpus is the test.** Twice now the corpus has
+said the hypothesis was wrong, and both times the tell was the same: a check
+that fires on most of its input is measuring itself.
 
 **Stage B: definition extraction** (`stage_b_extract.py <concept> [--corpus JSON] [--dry-run]`).
 For each paper with usable text, Claude answers: does this paper give the
