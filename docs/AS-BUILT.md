@@ -38,9 +38,15 @@ work built on them for that term, riding in the threads the idea split into.
 Underneath it still holds the typed relationships between papers, each backed by
 verbatim quotes from both papers verified against the extracted source text. The
 showcase map is "embedding" (`/g/10`, 134 defining papers of 187, 27
-concept-states, 305 relationships, 9 threads, 476 claims; **never curated:
-`user_edits` is empty**, and earlier drafts of this document said otherwise
-because that was the plan rather than the record). It sits **half-repaired** as
+concept-states, 305 relationships, 9 threads, 476 claims; **never curated**, and
+earlier drafts of this document said otherwise because that was the plan rather
+than the record). Its `user_edits` is **not** empty, which this document, the
+actor design and two rounds of testing all assumed: read against the live
+database on 2026-08-01 it holds exactly one entry, incident 12's restore, dated
+2026-07-31T13:13:24Z and carrying no actor key, correctly, being older than
+decision 18. A restore is not curation (`CURATORIAL_OPS`, decision 18), so the
+map is uncurated and now says so rather than counting that entry.
+It sits **half-repaired** as
 of 2026-07-31: its papers were re-extracted with the fixed extractor, its
 definitions were not (incident 12 stopped the refresh), so its quotes were
 copied from text that is no longer on disk and grounding now reports **201
@@ -850,13 +856,27 @@ The why behind the load-bearing choices, in one place:
     where they used to say "Curated by hand".
     Two properties are load-bearing. `recordEdit`'s actor parameter is typed
     `Viewer`, and **`Viewer` is branded with a `unique symbol` that only
-    `lib/authz.ts` can name**, so it is nominal rather than structural and the
-    only way to hold one is to have been handed it by `getViewer()`,
-    `requireOwner()` or `requireViewer()`. A hand-built `{ login: "anyone" }` is
-    a compile error at every call site. The brand is not decoration: without it
-    the type was a plain shape alias, structural typing accepted any matching
-    literal, and this entry asserted an enforced invariant that was not enforced
-    (incident 13). And the split fails safe: any reader not updated for
+    `lib/authz.ts` can name**, so it is nominal rather than structural.
+    **What that buys, exactly: a hand-built object literal is a compile error at
+    every call site** — `{ login: "anyone" }`, the same with every optional field
+    filled, one annotated `: Viewer`, a bare string, and the argument omitted.
+    `login`, `name` and `image` are `readonly`, so relabelling a real viewer in
+    place is an error too.
+    **What it does not stop, and no brand could.** A value typed `any` reaching
+    the parameter is accepted in silence, with no cast written and nothing that
+    looks like forgery: `JSON.parse(body)`, or any helper whose return type is
+    unannotated. A genuine viewer can be spread and its login replaced,
+    `{ ...viewer, login: other }`, because `readonly` does not survive a spread.
+    And `as unknown as Viewer` always works, as it does for every type.
+    None of those has a live path today: all five call sites take the actor
+    straight from `requireOwner()`, and `getViewer()` is the only function in the
+    codebase that produces a `Viewer`. The boundary is kept as an executable
+    probe rather than as this paragraph, because this paragraph has been wrong
+    twice (incident 13).
+    The brand is not decoration: without it the type was a plain shape alias,
+    structural typing accepted any matching literal, and this entry asserted an
+    enforced invariant that was not enforced at all.
+    And the split fails safe: any reader not updated for
     `by_asserted` sees no `by` on a CLI entry and degrades to unattributed, never
     to authenticated. That is `isOwner()` failing closed, applied to attribution.
     The rejected alternative worth naming is a single `by` plus a
@@ -867,21 +887,34 @@ The why behind the load-bearing choices, in one place:
     **Both readers treat malformed entries as unattributed rather than
     crashing.** `user_edits` is JSONB and really does accept `"by": 42`,
     `"by": []`, a blank string, a missing `op`, or an element that is not an
-    object at all. `editActor`/`edit_actor` and their `op` and `at` siblings
-    return "actor not recorded" for every one of those, in both languages, on
-    identical input. `app/` has no `error.tsx`, so an exception inside the audit
-    trail is a 500 on `/g/<id>/evidence` and `/g/<id>/export` for that map until
-    somebody edits the row by hand. Junk degrades downwards only; nothing junk
-    can become "signed in".
+    object at all. `editActor`/`edit_actor` and their `op` sibling agree on the
+    actor, the basis and the op for every one of those, in both languages, and
+    return "actor not recorded" rather than raising. **The `at` sibling is the
+    one deliberate divergence**: `editWhen` formats for a viewer's locale and so
+    must parse, so an unparseable date string reads "date not recorded" there
+    while `edit_when` echoes it. Neither invents a date, and any divergence
+    beyond that one is a bug. `app/` has no `error.tsx`, so an exception inside
+    the audit trail is a 500 on `/g/<id>/evidence` and `/g/<id>/export` for that
+    map until somebody edits the row by hand; `getGenealogy` therefore checks
+    `Array.isArray` on `user_edits` rather than `?? []`, since a JSONB string has
+    a `.length` and no `.map`. Junk degrades downwards only; nothing junk can
+    become "signed in".
     **A stored name is folded before it is rendered, not only before it is
     stored.** `LINEAGE_ACTOR` is free text on a public page and in a Markdown
     document, and React escapes where Markdown does not: an interior newline
     used to break out of the export's `> ` blockquote into body prose in a
     researcher's paper. Whitespace collapses, control characters go, the name is
-    capped at 64 characters, and `(`, `)` and `·` are removed because those are
-    the delimiters this product prints a *basis* with — a label must not be able
-    to spell a trust level it does not have. That is a rule about our own
-    syntax, not a blocklist of phrases.
+    capped at 64 characters, and `(`, `)` and `·` are removed.
+    **What the fold guarantees is narrow and worth stating exactly: a label
+    cannot emit this product's own delimiters or break its own line.** It does
+    **not** guarantee that a label cannot read like a trust level. `rgok001 •
+    signed in` with U+2022 goes straight through, as do `・`, `（ ）`, `[ ]`,
+    U+200B and U+202E. Chasing those is homoglyph enumeration, which is
+    unwinnable and is the shape of fault incidents 10 and 11 are about, so it is
+    deliberately not attempted. The defence that does hold is structural: the
+    true basis is always printed last, in the delimiters only the renderer can
+    produce. A misleading operator label is possible in the same way a misleading
+    GitHub username is possible, and it is why the name is in `by_asserted`.
     **`LINEAGE_ACTOR` unset degrades honestly.** Both `getpass.getuser()` and
     `socket.gethostname()` can fail, and either half being unnameable yields
     `unknown@host` or `user@unknown` rather than the plausible junk `@host`;
@@ -892,6 +925,18 @@ The why behind the load-bearing choices, in one place:
     write it back, so a web edit landing in between was silently erased. This
     decision is what made that array load-bearing, so the latent race was closed
     with it.
+    **A restore is not a curatorial change.** `CURATORIAL_OPS` — rename, merge,
+    delete-node, delete-edge, reclassify — is the closed list of operations the
+    workbench performs, defined once per language (`lib/genealogy.ts`,
+    `pipeline/common.py`) and used by both exports and both pages. `restore` is
+    written by the two recovery scripts and is excluded: `/g/10` carries exactly
+    one entry, incident 12's restore, and the first version of this change
+    announced it as "1 curatorial change ... recorded with who made it", which
+    is two false claims in one sentence — nobody curated that map, and the entry
+    names nobody. The list is closed rather than "everything except restore", so
+    an op nobody adds to it is undercounted rather than overclaimed. The pages
+    now print the same actor tally the exports do, so where entries name nobody
+    they say "N with no actor recorded" instead of asserting attribution.
 
 19. **Every verification stamp gets a free recompute** (2026-08-01).
     `definitions.quote_verified` was the last stamp in the system without one.
@@ -918,6 +963,30 @@ The why behind the load-bearing choices, in one place:
     worker whose disk is incomplete. Choosing between those two is a decision
     about the product; the script's job is to make the number impossible to
     miss rather than to take it. That choice is still open.
+    **An empty text file is treated as missing text, not as text the quote is
+    absent from.** A zero-byte or whitespace-only file is what an interrupted
+    `extract_text.py` or a full `DATA_DIR` leaves behind, and grounding a quote
+    against it would assert a check that never ran. That is a distinction of
+    kind, not a threshold on file size.
+    **And the run as a whole is refused if nothing at all grounded.** If more
+    than one definition was checked and not one quote grounded, the stage writes
+    nothing and exits non-zero. One definition failing is a finding; every
+    definition failing is what a broken disk looks like, and this stage cannot
+    tell the two apart — a 5 GB Render disk plus a truncated extraction produces
+    exactly that shape, and the job would otherwise go green on a mass flip.
+    The boundary is zero, deliberately, not a percentage: decision 3, incident 9
+    and the turning-point cutoff are three bad calibrations already, and a
+    guessed fraction here would be the fourth. This is incident 12's rule (a
+    per-item fallback needs a global sanity check) applied to a stage that
+    publishes a verdict rather than spends money. Every verdict is now decided
+    before any is written, and the writes go in one transaction, because the
+    connection is autocommit and the stage used to commit the first rows before
+    it had looked at the last.
+    There is deliberately **no override flag**: Stage D and Stage F took the same
+    all-failed abort with no escape, and if the loss is genuinely real the answer
+    is to re-extract rather than to mass-flip stamps from here. The cost of that
+    choice is that a map whose every quote is honestly stale cannot be corrected
+    by this tool; that is the trade, taken in the direction that changes nothing.
 
 ---
 
@@ -1185,3 +1254,21 @@ Open engineering work, in priority order:
    Remaining refinement: the picker is at *field* granularity (26 fields); a
    finer *topic*-level picker (~4500 topics) was deferred as unnecessary for
    scoping.
+
+10. **Filed 2026-08-01, from the third review of decision 18 and decision 19.**
+    None of these is a live defect; all are recorded so they are not rediscovered.
+    (a) `--reground --limit` is rejected on the grounds that a partial count
+    would misdescribe the concept, but `--only` and `--corpus` scope the same
+    query and are allowed. The guard is right about the risk and wrong about
+    which flags carry it; either all three should print a "this is a subset"
+    banner or `--limit` should be allowed with one.
+    (b) `workbench.py` resolves the actor before mutating, which fixes the
+    reported failure, but its success lines are still printed inside the `cmd_*`
+    functions before the commit. Any later failure — a database error in
+    `record()` or at `commit()` — still prints "Deleted n5 and 3 attached
+    edge(s)." to an operator whose transaction then rolls back. Closing it means
+    returning the message rather than printing it, in three functions and two
+    inline branches.
+    (c) The map badge counts the links *drawn on the map*, not all of the map's
+    relationships; it now says "links shown" for that reason, which is one word
+    doing a lot of work. The full figure lives on `/g/<id>/evidence`.

@@ -132,9 +132,64 @@ def edit_op(edit: object) -> str:
 
 def edit_when(edit: object) -> str:
     """Same again for `at`. No parsing: the stored ISO string is printed as it
-    stands, and anything unusable is named as missing rather than guessed."""
+    stands, and anything unusable is named as missing rather than guessed.
+
+    Its twin `editWhen` in app/lib/genealogy.ts does NOT agree with this on every
+    input, and the difference is deliberate: the page formats for a viewer's
+    locale and so must parse, which means an unparseable string reads there as
+    "date not recorded" while this echoes it. Neither invents a date. Any other
+    divergence between the twins is a bug.
+    """
     at = edit.get("at") if isinstance(edit, dict) else None
     return at.strip() if isinstance(at, str) and at.strip() else "date not recorded"
+
+
+# What counts as curation, in one place, because four surfaces claim it.
+#
+# These are exactly the operations the workbench performs: workbench.py's
+# subcommands and lib/actions.ts's Server Actions write no other op. `restore` is
+# absent on purpose. It is written by restore_genealogy.py and
+# restore_snapshot.py, and putting a map back after an incident is not somebody
+# curating it — `embedding` carries one restore from incident 12 and nothing
+# else, and calling that "1 curatorial change" is the false curation claim this
+# change exists to remove, with a number attached to make it worse.
+#
+# A closed list fails by undercounting: an op nobody adds here is not counted as
+# curation. That is the direction this product is allowed to be wrong in, and it
+# is why the list is not "anything in user_edits except restore".
+CURATORIAL_OPS = ("rename", "merge", "delete-node", "delete-edge", "reclassify")
+
+
+def is_curatorial(edit: object) -> bool:
+    return edit_op(edit) in CURATORIAL_OPS
+
+
+def curatorial_edits(edits: object) -> list:
+    """The subset of a user_edits array that is somebody curating the map."""
+    if not isinstance(edits, list):
+        return []
+    return [e for e in edits if is_curatorial(e)]
+
+
+def actor_tally(edits: list) -> tuple[list[str], bool]:
+    """Who made these edits, counted per actor, highest evidence first.
+
+    Returns the clauses and whether any actor is known at all. Twin of
+    `actorTally` in app/lib/genealogy.ts: the export, the CLI export and the two
+    pages all say this, and they must all say it the same way.
+    """
+    rank = {"signed in": 0, "from the command line, name not verified": 1}
+    tally: dict[tuple[str | None, str], int] = {}
+    for e in edits:
+        key = edit_actor(e)
+        tally[key] = tally.get(key, 0) + 1
+    known = sorted(((n, b, c) for (n, b), c in tally.items() if n),
+                   key=lambda t: (rank.get(t[1], 9), -t[2], t[0]))
+    parts = [f"{c} by {n} ({b})" for n, b, c in known]
+    unattributed = sum(c for (n, _), c in tally.items() if not n)
+    if unattributed:
+        parts.append(f"{unattributed} with no actor recorded")
+    return parts, bool(known)
 
 
 _session: requests.Session | None = None

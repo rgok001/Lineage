@@ -262,8 +262,13 @@ def reground(conn, concept: str, prompt_version: str, params: dict,
     dd = data_dir()
     total = len(rows)
     before = sum(1 for r in rows if r[4])
-    checked = gained = lost = 0
+    checked = grounded = 0
     unchecked: list[tuple[str, bool]] = []
+    # Every verdict is decided before any of them is written. The stage used to
+    # UPDATE inside this loop on an autocommit connection, which meant the first
+    # rows were committed before the last row had been looked at, and there was
+    # no point at which the run as a whole could be refused.
+    pending: list[tuple[int, str, bool]] = []
 
     for i, (def_id, arxiv, tpath, quote, was, defines) in enumerate(rows, 1):
         was = bool(was)
@@ -291,36 +296,79 @@ def reground(conn, concept: str, prompt_version: str, params: dict,
                   f"stamp left as {stamp}", flush=True)
             continue
 
+        if not text.strip():
+            # An empty file is not "the text, and the quote is not in it". It is
+            # the absence of text wearing a text file's name, which is what an
+            # interrupted extract_text.py or a full DATA_DIR leaves behind, and
+            # answering the grounding question against it would assert a check
+            # that never ran. Same treatment as a missing file: a distinction of
+            # kind, not a threshold on size.
+            unchecked.append((arxiv, was))
+            print(f"  [{i}/{total}] {arxiv}: extracted text file is empty, "
+                  f"stamp left as {stamp}", flush=True)
+            continue
+
         checked += 1
         # `defines_concept` is in the test because it is in the test at creation
         # (see the extract loop below). A row that says the paper does not define
         # the concept has no definition quote to stand behind, whatever string
         # happens to sit in the column.
         ok = bool(defines) and bool(quote) and quote_is_grounded(text, quote)
+        grounded += ok
         if ok == was:
             print(f"  [{i}/{total}] {arxiv}: still {stamp}", flush=True)
             continue
 
-        gained += ok
-        lost += not ok
-        if not dry_run:
-            conn.execute(REGROUND_DEF, {"def_id": def_id, "concept": concept,
-                                        "prompt_version": prompt_version,
-                                        "quote_verified": ok})
+        pending.append((def_id, arxiv, ok))
         moved = ("not found before, found in the text now" if ok
-                 else "NO LONGER FOUND in the text")
+                 else "not found in the extracted text as it is on disk now")
         print(f"  [{i}/{total}] {arxiv}: {moved}", flush=True)
 
+    # Incident 12's lesson, in a stage that spends nothing but publishes a
+    # verdict: a per-item result needs a global sanity check. One definition
+    # failing to ground is a finding. EVERY definition failing to ground, when
+    # more than one was checked, is not a finding — it is what a truncated or
+    # half-written DATA_DIR looks like, and nothing here can tell that apart from
+    # a map that is genuinely wrong. So the run is refused rather than reported,
+    # in the direction that changes nothing.
+    #
+    # The boundary is zero, not a percentage. This project has shipped three bad
+    # calibrations (decision 3, incident 9, and the turning-point cutoff) and a
+    # guessed fraction here would be the fourth. "None at all" is a degenerate
+    # case, not a tuned one.
+    if checked > 1 and grounded == 0:
+        sys.exit(
+            f'\nRefusing to trust this result: {checked} definitions were checked for "{concept}" '
+            f"and not one quote grounded.\n"
+            "  That is what an empty, truncated or half-written DATA_DIR looks like, and this\n"
+            "  stage cannot tell it apart from the map genuinely being wrong. Nothing was\n"
+            "  written and every stamp stands as it was.\n"
+            f"  Check the extracted text first: {dd}\n"
+            "  If the text really is intact and every quote really is stale, the answer is to\n"
+            "  re-extract or re-run Stage B, not to mass-flip the stamps from here.")
+
+    if pending and not dry_run:
+        # One transaction. The connection is autocommit, so without this each
+        # UPDATE commits on its own and a failure partway leaves the concept
+        # half-flipped, which is a third state nobody can read.
+        with conn.transaction():
+            for def_id, _arxiv, ok in pending:
+                conn.execute(REGROUND_DEF, {"def_id": def_id, "concept": concept,
+                                            "prompt_version": prompt_version,
+                                            "quote_verified": ok})
+
+    gained = sum(1 for *_, ok in pending if ok)
+    lost = len(pending) - gained
     after = before - lost + gained
     print(f'\n"{concept}" at prompt {prompt_version}: {total} definitions, '
           f"{checked} re-checked against the text on disk.")
     print(f"  verified before: {before}")
     print(f"  verified after:  {after}  ({gained} newly verified, "
-          f"{lost} no longer found in the text)")
+          f"{lost} not found in the extracted text now on disk)")
     if unchecked:
         still = sum(1 for _, was in unchecked if was)
-        print(f"\n  Could NOT be checked, the paper's extracted text is not on this "
-              f"disk: {len(unchecked)} of {total}")
+        print(f"\n  Could NOT be checked, the paper's extracted text is missing or "
+              f"empty on this disk: {len(unchecked)} of {total}")
         print(f"  Of those, still stamped verified with nothing here to prove it: {still}")
         print("  Their stamps were left exactly as they were. Whether an unprovable "
               "stamp should stand or fall is a decision about the product, not one "

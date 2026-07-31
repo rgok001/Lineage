@@ -22,9 +22,9 @@ declare const SESSION_BACKED: unique symbol;
 
 export type Viewer = {
   readonly [SESSION_BACKED]: true;
-  login: string;
-  name?: string | null;
-  image?: string | null;
+  readonly login: string;
+  readonly name?: string | null;
+  readonly image?: string | null;
 };
 
 export async function getViewer(): Promise<Viewer | null> {

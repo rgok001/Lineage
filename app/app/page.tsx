@@ -83,14 +83,16 @@ export default async function Home() {
         </span>
       </Link>
 
-      {/* Counted, never assumed. This read "then curated by hand" on every map,
-          including ones whose audit trail is empty — the claim this project's
-          own as-built had to retract about the showcase map. */}
+      {/* Counted, never assumed, and the count is of curatorial ops only. This
+          read "then curated by hand" on every map; then it counted a restore
+          after an incident as somebody's editorial work. And "with who made it"
+          asserts an attribution the entries themselves may not carry, which is
+          the defect decision 18 exists to remove, restated in its own copy. */}
       <p style={{ marginTop: "2rem", fontSize: ".78rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
         Each account is drafted automatically from the papers themselves.{" "}
         {rows.some((g) => g.edit_count > 0)
-          ? "Where a map has been curated since, the count is shown above and every change is recorded in an audit trail with who made it."
-          : "None has been curated since; any curatorial change would be recorded in an audit trail with who made it."}
+          ? "Where one has been curated since, the count is shown above and each change is listed in that map’s audit trail, with its actor where one was recorded."
+          : "None has been curated since. Any curatorial change is listed in the map’s audit trail, with its actor where one was recorded."}
       </p>
     </main>
   );

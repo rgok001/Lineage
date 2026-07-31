@@ -1,15 +1,27 @@
 # Design: an actor on every curatorial edit, and the basis for it
 
 **Status: approved by the Product Owner, 2026-07-31. Implemented 2026-08-01
-(as-built decision 18). Verification checks 1, 2, 4 and 5 in section 4 need the
-live database and are still to run.**
+(as-built decision 18). Check 3 in section 4 passes; check 4 ran read-only
+against the live database and found no `{"by": "cli"}` anywhere. Checks 1, 2 and
+5 are still to run.**
 
 **Correction, 2026-08-01.** Section 2's claim that "a `Viewer` can only be
 obtained from `getViewer()` or `requireOwner()`" was not true of the `Viewer`
 that existed when this was written: it was a structural type alias, so any
-matching object literal satisfied it and the compiler enforced nothing. The
-claim is true now only because implementation added a `unique symbol` brand to
-`Viewer` to make it so. See as-built incident 13.
+matching object literal satisfied it and the compiler enforced nothing.
+Implementation added a `unique symbol` brand, and the claim is **still not true
+as written**. What is true is narrower: a hand-built object literal is a compile
+error at every call site, and a real viewer cannot be relabelled in place. A
+value typed `any` is still accepted silently, a real viewer can still be spread
+with a different `login`, and `as unknown as Viewer` still works. Nothing in the
+codebase does any of those, and `getViewer()` remains the only producer. Read
+as-built decision 18 for the exact boundary; it is kept as an executable probe
+because this sentence has been wrong twice (incident 13).
+
+**Correction, 2026-08-01.** Section 4's fixture test says to build a map with
+"one entry of each of the three shapes". Note that `/g/10` was assumed
+throughout this document and both testing rounds to have an empty `user_edits`;
+it does not. It holds one entry, incident 12's restore, carrying neither key.
 Architect's design; the open question in section 6 has been decided and the
 answer is recorded there.
 

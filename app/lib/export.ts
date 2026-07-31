@@ -1,5 +1,5 @@
 import { sql } from "./db";
-import { editActor, getRiver, readableQuote, type River, type RiverStream, type UserEdit } from "./genealogy";
+import { actorTally, curatorialEdits, getRiver, readableQuote, type River, type RiverStream, type UserEdit } from "./genealogy";
 
 /**
  * Export for writing: the thread account as a related-work scaffold, plus the
@@ -63,44 +63,25 @@ const clean = (s: unknown) => (typeof s === "string" ? s.replace(/\s+/g, " ").tr
 const slug = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "thread";
 
-// Authenticated, then asserted, then the entries carrying neither. Highest
-// evidence first, so a reader who stops at the first clause has read the
-// strongest claim rather than the largest one.
-const BASIS_RANK: Record<string, number> = {
-  "signed in": 0,
-  "from the command line, name not verified": 1,
-};
-
 /**
  * One line about who curated this map, for a document going into a paper.
+ * Empty string when nobody curated it, and the caller writes nothing.
  *
  * This used to read "Curated by hand: N workbench edit(s) applied", which claims
  * human agency from a count that cannot support it — the same claim the as-built
  * had to retract about the embedding map, travelling into somebody else's
- * manuscript. The count is a count; what carries the claim is the actors, each
- * with the basis on which its name is known, and where no actor is recorded the
- * line says so rather than implying one.
+ * manuscript. Two things carry the honesty now. The count is of curatorial ops
+ * only, so a restore after an incident is not reported as somebody's editorial
+ * work. And the claim is carried by the actors, each with the basis on which its
+ * name is known, with the entries that name nobody counted as naming nobody.
  */
-export function curationNote(edits: UserEdit[]): string {
-  const head = `> ${edits.length} workbench edit(s) applied`;
-  const tally = new Map<string, { name: string; basis: string; count: number }>();
-  let unattributed = 0;
-  for (const e of edits) {
-    const { name, basis } = editActor(e);
-    if (!name) { unattributed++; continue; }
-    const key = JSON.stringify([basis, name]);
-    const seen = tally.get(key);
-    if (seen) seen.count++;
-    else tally.set(key, { name, basis, count: 1 });
-  }
-  const known = [...tally.values()].sort(
-    (a, b) => (BASIS_RANK[a.basis] ?? 9) - (BASIS_RANK[b.basis] ?? 9) ||
-              b.count - a.count || a.name.localeCompare(b.name),
-  );
-  if (!known.length) return `${head}. No actor is recorded for any of them.`;
-  const parts = known.map((k) => `${k.count} by ${k.name} (${k.basis})`);
-  if (unattributed) parts.push(`${unattributed} with no actor recorded`);
-  return `${head}: ${parts.join(", ")}.`;
+export function curationNote(edits: unknown): string {
+  const curated = curatorialEdits(edits);
+  if (!curated.length) return "";
+  const head = `> ${curated.length} workbench edit(s) applied`;
+  const { parts, anyKnown } = actorTally(curated);
+  return anyKnown ? `${head}: ${parts.join(", ")}.`
+                  : `${head}. No actor is recorded for any of them.`;
 }
 
 const span = (s: RiverStream) => {
@@ -208,8 +189,8 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
       "> **This is a scaffold, not prose.** The citations, quotes and structure are\n" +
       "> real; the argument is yours to write.",
   );
-  const edits = Array.isArray(g[0].edits) ? g[0].edits : [];
-  if (edits.length) md.push(`>\n${curationNote(edits)}`);
+  const note = curationNote(g[0].edits);
+  if (note) md.push(`>\n${note}`);
   md.push("");
 
   if (one) {

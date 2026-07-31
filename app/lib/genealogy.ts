@@ -97,10 +97,80 @@ export function editOp(e: UserEdit): string {
   return typeof op === "string" && op.trim() ? op.trim() : "unrecorded change";
 }
 
+/** Its Python twin `edit_when` does NOT agree with this on every input, by
+ *  design: this formats for a viewer's locale and so must parse, so an
+ *  unparseable string reads "date not recorded" here and is echoed there.
+ *  Neither invents a date. Any other divergence between the twins is a bug. */
 export function editWhen(e: UserEdit): string {
   const at = e && typeof e === "object" ? e.at : undefined;
   const d = typeof at === "string" ? new Date(at) : new Date(NaN);
   return Number.isNaN(d.getTime()) ? "date not recorded" : d.toLocaleString();
+}
+
+/**
+ * What counts as curation, in one place, because four surfaces claim it.
+ *
+ * Exactly the operations the workbench performs: `lib/actions.ts`'s Server
+ * Actions and `workbench.py`'s subcommands write no other op. `restore` is
+ * absent on purpose. It is written by the two recovery scripts, and putting a
+ * map back after an incident is not somebody curating it — `/g/10` carries one
+ * restore from incident 12 and nothing else, and announcing that as "1
+ * curatorial change" is the false curation claim this change exists to remove,
+ * with a number attached to make it worse.
+ *
+ * A closed list fails by undercounting, which is the direction this product is
+ * allowed to be wrong in. Twin of `CURATORIAL_OPS` in pipeline/common.py.
+ */
+export const CURATORIAL_OPS = ["rename", "merge", "delete-node", "delete-edge", "reclassify"] as const;
+
+export const isCuratorial = (e: UserEdit): boolean =>
+  (CURATORIAL_OPS as readonly string[]).includes(editOp(e));
+
+export function curatorialEdits(edits: unknown): UserEdit[] {
+  return Array.isArray(edits) ? (edits as UserEdit[]).filter(isCuratorial) : [];
+}
+
+/**
+ * Who made these edits, counted per actor, highest evidence first, plus whether
+ * any actor is known at all. Twin of `actor_tally` in pipeline/common.py.
+ *
+ * One implementation because the map page, the home page and both exports all
+ * make this statement, and a claim about attribution said four ways drifts.
+ */
+export function actorTally(edits: UserEdit[]): { parts: string[]; anyKnown: boolean } {
+  const rank: Record<string, number> = {
+    "signed in": 0, "from the command line, name not verified": 1,
+  };
+  const tally = new Map<string, { name: string; basis: string; count: number }>();
+  let unattributed = 0;
+  for (const e of edits) {
+    const { name, basis } = editActor(e);
+    if (!name) { unattributed++; continue; }
+    const key = JSON.stringify([basis, name]);
+    const seen = tally.get(key);
+    if (seen) seen.count++;
+    else tally.set(key, { name, basis, count: 1 });
+  }
+  const known = [...tally.values()].sort(
+    (a, b) => (rank[a.basis] ?? 9) - (rank[b.basis] ?? 9) ||
+              b.count - a.count || a.name.localeCompare(b.name),
+  );
+  const parts = known.map((k) => `${k.count} by ${k.name} (${k.basis})`);
+  if (unattributed) parts.push(`${unattributed} with no actor recorded`);
+  return { parts, anyKnown: known.length > 0 };
+}
+
+/** The sentence the two pages use: how many curatorial changes, and who by,
+ *  with the same tally the exports print. Never asserts attribution the entries
+ *  have not established, which is decision 18 applied to its own copy. */
+export function curationSentence(edits: unknown): string {
+  const curated = curatorialEdits(edits);
+  if (!curated.length)
+    return "No curatorial changes have been made to it since; any that are will be recorded with who made them.";
+  const { parts, anyKnown } = actorTally(curated);
+  const head = `${curated.length} curatorial change(s) have been made to it since`;
+  return anyKnown ? `${head}: ${parts.join(", ")}.`
+                  : `${head}. No actor is recorded for any of them.`;
 }
 
 /** A paper ranked for the spine. attention = on-term weighted uptake (who built
@@ -161,12 +231,14 @@ export type InfluenceMapData = {
   edges: MapEdge[];
   streams: { id: string; name: string; color: string; count: number }[];
   total_papers: number;
-  /** How many curatorial edits this map actually carries. The page's footer
-   *  claimed the map was "curated by hand" unconditionally, on every map,
-   *  including `embedding`, whose `user_edits` is empty — the same claim this
-   *  project's own as-built had to retract. Nothing may say a map was curated
-   *  without counting. */
-  edit_count: number;
+  /** The footer's whole claim, already resolved server-side: how many
+   *  CURATORIAL edits this map carries and who by. The footer used to say
+   *  "curated by hand" on every map unconditionally, then said "1 curatorial
+   *  change ... recorded with who made it" about `/g/10`, whose one entry is
+   *  incident 12's restore and names nobody. Both were false; both are now
+   *  counted. A string rather than the array because this object is serialised
+   *  into the client bundle for InfluenceMap. */
+  curation: string;
 };
 
 /** The pivotal papers and the typed links among them: top-N by on-term uptake
@@ -179,9 +251,9 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
 
   const g = (await sql`
     SELECT concept, prompt_version,
-           jsonb_array_length(COALESCE(user_edits, '[]'::jsonb)) AS edit_count
+           COALESCE(user_edits, '[]'::jsonb) AS user_edits
     FROM genealogies WHERE id = ${id}
-  `) as { concept: string; prompt_version: string; edit_count: number }[];
+  `) as { concept: string; prompt_version: string; user_edits: UserEdit[] }[];
   if (!g.length) return null;
 
   const rows = (await sql`
@@ -269,7 +341,7 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
     edges,
     streams: river.streams.map((s) => ({ id: s.id, name: s.name, color: s.color, count: s.papers.length })),
     total_papers: rows.length,
-    edit_count: Number(g[0].edit_count ?? 0),
+    curation: curationSentence(g[0].user_edits),
   };
 }
 
@@ -303,10 +375,14 @@ export const EDGE_MEANING: Record<string, string> = {
   migrates: "carries into a new field",
 };
 
+/** `edit_count` is the count of CURATORIAL edits, computed here rather than in
+ *  SQL so that what counts as curation has one definition (`CURATORIAL_OPS`)
+ *  instead of a second one in a query. `jsonb_array_length` used to stand here
+ *  and it counted incident 12's restore as somebody's editorial work. */
 export async function listGenealogies() {
-  return (await sql`
+  const rows = (await sql`
     SELECT g.id, g.concept, g.prompt_version, g.status, g.updated_at,
-           jsonb_array_length(g.user_edits) AS edit_count,
+           COALESCE(g.user_edits, '[]'::jsonb) AS user_edits,
            CASE WHEN g.streams IS NOT NULL
                 THEN jsonb_array_length(g.streams->'streams') END                        AS stream_count,
            (SELECT count(*) FROM definitions d
@@ -318,9 +394,10 @@ export async function listGenealogies() {
     ORDER BY g.updated_at DESC
   `) as {
     id: number; concept: string; prompt_version: string; status: string;
-    updated_at: string; edit_count: number; stream_count: number | null;
+    updated_at: string; user_edits: UserEdit[]; stream_count: number | null;
     paper_count: number; edge_count: number; verified_count: number;
   }[];
+  return rows.map((g) => ({ ...g, edit_count: curatorialEdits(g.user_edits).length }));
 }
 
 /** A claim carries its own evidence: the passage from the paper that shows it,
@@ -392,7 +469,12 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
     status: g.status,
     updated_at: g.updated_at,
     nodes: (g.nodes as Node[]).slice().sort((a, b) => a.year_start - b.year_start),
-    user_edits: (g.user_edits ?? []) as UserEdit[],
+    // Array.isArray, not `?? []`: a JSONB string has a `.length` and no `.map`,
+    // so it satisfies the page's `user_edits.length > 0` guard and then throws
+    // inside AuditTrail. There is still no error.tsx, so that is a 500 on the
+    // whole evidence page. Nothing writes a non-array today; the guard costs a
+    // call.
+    user_edits: (Array.isArray(g.user_edits) ? g.user_edits : []) as UserEdit[],
     has_river: Boolean(g.has_river),
     edges: edges.map((e) => ({ ...e, confidence: Number(e.confidence) })),
     papers: paperRows.map((p) => ({
