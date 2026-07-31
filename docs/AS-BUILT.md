@@ -434,6 +434,13 @@ be regenerable without disturbing a shape a curator has judged. It is the second
 most expensive stage after extraction and roughly doubles what a map costs,
 which buys the difference between an account a reader must trust paragraph by
 paragraph and one they can audit sentence by sentence.
+`--recheck` re-grounds the stored quotes without asking the model for new ones,
+and costs nothing. A stamp is computed once, at generation, against the text of
+that moment: re-extracting a corpus leaves every stamp on the map asserting a
+check that ran against a document no longer on disk. A claim that stops checking
+out keeps its text and loses its stamp and its quote, which is what generation
+would have done with it. Regenerating instead would cost $4-6 to rewrite prose
+that was never the problem.
 
 Stages F and G were one-off scripts hardcoded to the showcase map until 2026-07-29, which
 meant no other map could have a front door. They are stages now, the worker runs
