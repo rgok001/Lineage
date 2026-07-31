@@ -48,7 +48,7 @@ map was deleted on 2026-07-26.
 | Database | Neon serverless Postgres, pgvector 0.8 | Neon (Vercel-linked account) | free tier |
 | Pipeline | Python 3.12 CLI scripts | Anywhere with the repo and `.env` | LLM spend only |
 | Trace worker | Python 3.12, single process | Render Background Worker (declared in `render.yaml`; the owner's laptop until the Render console setup is done) | ~$8/mo |
-| LLM | Claude Sonnet (`claude-sonnet-5`) for extraction/classification; Claude Haiku (`claude-haiku-4-5`) for the cheaper post-pipeline scoring and thread generation | n/a | ~$6 per 150-paper trace; +~$0.7 for magnitude + threads on one map |
+| LLM | Claude Sonnet (`claude-sonnet-5`) for extraction/classification; Claude Haiku (`claude-haiku-4-5`) for the cheaper post-pipeline scoring and thread generation | n/a | ~$6 per 150-paper trace; +~$0.7 magnitude and threads; +~$4-6 claim checking (stage H reads every paper again) |
 
 External data sources, all keyless: **arXiv** (paper source, LaTeX-first,
 throttled 1 request/3s), **OpenAlex** (corpus metadata and citation counts,
@@ -69,7 +69,7 @@ CLAUDE.md            product spec and non-negotiable rules
 README.md            setup and CLI usage
 render.yaml          Render blueprint for the trace worker
 docs/                ARCHITECTURE.md (design), AS-BUILT.md (this file)
-pipeline/            the seven stages + auxiliaries (Python, CLI-first)
+pipeline/            the eight stages + auxiliaries (Python, CLI-first)
   common.py          env loading, polite HTTP session, data_dir()
   check_extraction.py  audit of extracted-text fidelity (no model, no network)
   db/migrate.py      ordered SQL migrations, schema_migrations table
@@ -183,7 +183,7 @@ database level because app-level checks can be raced by simultaneous submits.
 
 ## 4. The pipeline
 
-Seven stages plus auxiliaries, each a standalone CLI script reading root
+Eight stages plus auxiliaries, each a standalone CLI script reading root
 `.env`. The pipeline is CLI-first by rule: the worker orchestrates these same
 commands and adds nothing to them.
 
@@ -346,7 +346,20 @@ thread page then rendered under a verified stamp (section 10, incident 8).
 Evidence is not regenerated: the app reads `definitions.verbatim_quote`, the
 span Stage E actually matched.
 
-Both were one-off scripts hardcoded to the showcase map until 2026-07-29, which
+**Stage H: claim-level evidence** (`stage_h_claims.py <concept> [--thread SID]`).
+Asks each paper for 2-4 things it did for the term, each with the passage that
+shows it, then checks every passage against our own extracted text with
+`quote_is_grounded`. A claim whose passage fails keeps the claim and loses the
+stamp, saying plainly that nothing was matched, rather than disappearing and
+narrowing the account in silence. Written into the existing threads rather than
+generated with them: thread membership is non-deterministic, so re-running
+Stage G to improve prose reshuffles which papers sit where, and evidence should
+be regenerable without disturbing a shape a curator has judged. It is the second
+most expensive stage after extraction and roughly doubles what a map costs,
+which buys the difference between an account a reader must trust paragraph by
+paragraph and one they can audit sentence by sentence.
+
+Stages F and G were one-off scripts hardcoded to the showcase map until 2026-07-29, which
 meant no other map could have a front door. They are stages now, the worker runs
 them after Stage E, and both were proven on a second concept (`attention`,
 `/g/13`) before being committed.
