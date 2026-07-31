@@ -291,15 +291,63 @@ def tidy_marks(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", text)
 
 
-def latex_to_text(latex: str) -> str:
+RAW_STRIP = re.compile(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?(\{[^}]*\})?")
+MAX_BISECT_DEPTH = 6      # 64 pieces at most, so a pathological file cannot spin
+MIN_BISECT_CHARS = 2_000  # below this, a piece is small enough to strip whole
+
+
+def _parse(latex: str) -> str | None:
+    """pylatexenc's text, or None if it could not read this. Its tolerant mode is
+    already on by default (checked), so an exception here is not something a flag
+    will fix."""
     from pylatexenc.latex2text import LatexNodes2Text
-    latex = normalise_cite_macros(expand_own_macros(latex))
     try:
-        text = LatexNodes2Text(latex_context=_latex_context(), math_mode="text",
+        return LatexNodes2Text(latex_context=_latex_context(), math_mode="text",
                                strict_latex_spaces=False).latex_to_text(latex)
-    except Exception as e:  # pylatexenc can choke on exotic macros; degrade, don't die
-        print(f"    (pylatexenc fell back to raw strip: {e})", file=sys.stderr)
-        text = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?(\{[^}]*\})?", " ", latex)
+    except Exception:
+        return None
+
+
+def _split_point(latex: str) -> int | None:
+    """A paragraph break near the middle. Splitting between paragraphs keeps most
+    environments whole; one that does span the cut fails on both sides and is
+    stripped there, which is the same outcome it had before, confined to itself."""
+    mid = len(latex) // 2
+    before = latex.rfind("\n\n", 0, mid)
+    after = latex.find("\n\n", mid)
+    candidates = [i for i in (before, after) if i > 0]
+    return min(candidates, key=lambda i: abs(i - mid)) if candidates else None
+
+
+def _parse_or_bisect(latex: str, depth: int = 0) -> tuple[str, int]:
+    """(text, characters that had to be stripped rather than parsed).
+
+    One unreadable construct used to cost a paper its entire text: the whole file
+    fell to a regex that leaves braces and dollars standing and loses every
+    heading. On the attention corpus that was 17 papers of 146. The construct is
+    still unreadable, but it is now the size of the problem rather than the file
+    being the size of the problem, so the rest of the paper parses properly and
+    only the piece that defeats the parser is stripped.
+    """
+    text = _parse(latex)
+    if text is not None:
+        return text, 0
+    if depth >= MAX_BISECT_DEPTH or len(latex) < MIN_BISECT_CHARS:
+        return RAW_STRIP.sub(" ", latex), len(latex)
+    cut = _split_point(latex)
+    if cut is None:
+        return RAW_STRIP.sub(" ", latex), len(latex)
+    left, l_stripped = _parse_or_bisect(latex[:cut], depth + 1)
+    right, r_stripped = _parse_or_bisect(latex[cut:], depth + 1)
+    return left + "\n\n" + right, l_stripped + r_stripped
+
+
+def latex_to_text(latex: str) -> str:
+    latex = normalise_cite_macros(expand_own_macros(latex))
+    text, stripped = _parse_or_bisect(latex)
+    if stripped:
+        print(f"    (pylatexenc could not read {stripped:,} of {len(latex):,} chars; "
+              f"that part stripped, the rest parsed)", file=sys.stderr)
     return normalize(tidy_marks(text))
 
 

@@ -230,6 +230,18 @@ folds to a mark. Extraction uses pylatexenc for
 LaTeX and pymupdf with de-hyphenation for PDF, computes `text_title_match`,
 and warns loudly below the 0.5 guard.
 
+**A parse failure now costs a paragraph, not a paper.** pylatexenc raises on
+some real arXiv sources (17 of attention's 146, every one an IndexError), and
+`diagnose_parse.py` confirmed on 1512.08756 that it raises on the untouched
+source too: not our preprocessing, and not fixable by a flag, since its
+tolerant mode is already the default. The old fallback dropped the WHOLE file
+to a regex that leaves braces and dollars standing and loses every heading, so
+one unreadable construct cost a paper its entire text. `_parse_or_bisect` now
+splits at a paragraph break and retries each half, to a depth of 6, stripping
+only the piece that actually defeats the parser. Measured on a document with a
+single bad paragraph: 8% stripped where it used to be 100%. A healthy paper
+still parses in one pass and pays nothing.
+
 **Audit** (`check_extraction.py [--concept C] [--sample N] [--write]`). The
 extracted text is what the grounding check rests on, and its fidelity went
 unmeasured until 2026-07-31. This scans for the marks damage leaves behind:
