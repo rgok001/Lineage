@@ -1147,287 +1147,228 @@ The why behind the load-bearing choices, in one place:
     not, and the difference is only visible because every passage is checked.
     **A model that paraphrases when told to copy fails silently in any system
     that does not verify, and this one verifies.**
-
 16. **Three tiers of trust, never blended** (migration 010, `/about`). A
     verified quote is string-matched against our own extraction. A citation
     context is verbatim but from Semantic Scholar's PDF extraction, so it is
     sourced and unverifiable here. A rationale is the model's reading. Each is
     labelled as what it is, everywhere it appears; only the first wears the
     verified stamp.
-
 18. **An actor on every curatorial edit, and the basis for it** (2026-08-01,
     `docs/design/actor-on-edits.md`). In `genealogies.user_edits`, **`by` is
-    authenticated**: a GitHub login the app obtained from a session, and the web
-    workbench is its only writer. **`by_asserted` is not authenticated**: a name
-    the running process asserts about itself (`LINEAGE_ACTOR`, else `user@host`),
+    authenticated** — a GitHub login the app obtained from a session, the web
+    workbench being its only writer — and **`by_asserted` is not**: a name the
+    running process asserts about itself (`LINEAGE_ACTOR`, else `user@host`),
     which is all a CLI script running for whoever holds the `.env` can honestly
-    claim. An entry carries one, or the other, or **neither, which is what every
+    claim. An entry carries one, the other, or **neither, which is what every
     entry predating this change carries**. There is no backfill: that set is
     fixed at deploy time and must never grow, so an entry with neither key is by
-    construction a legacy entry rather than a new failure.
-    **Absence is never rendered as a claim about origin.** The evidence page used
-    to print "(cli)" when `by` was missing, manufacturing a positive claim out of
-    a silence; it now reads `actor not recorded`, and the exports say the same
-    where they used to say "Curated by hand".
-    Two properties are load-bearing. `recordEdit`'s actor parameter is typed
-    `Viewer`, and **`Viewer` is branded with a `unique symbol` that only
-    `lib/authz.ts` can name**, so it is nominal rather than structural.
-    **What that buys, exactly: a hand-built object literal is a compile error at
-    every call site** — `{ login: "anyone" }`, the same with every optional field
-    filled, one annotated `: Viewer`, a bare string, and the argument omitted.
-    `login`, `name` and `image` are `readonly`, so relabelling a real viewer in
-    place is an error too.
-    **What it does not stop, and no brand could.** A value typed `any` reaching
-    the parameter is accepted in silence, with no cast written and nothing that
-    looks like forgery: `JSON.parse(body)`, or any helper whose return type is
-    unannotated. A genuine viewer can be spread and its login replaced,
-    `{ ...viewer, login: other }`, because `readonly` does not survive a spread.
-    And `as unknown as Viewer` always works, as it does for every type.
-    None of those has a live path today: all five call sites take the actor
-    straight from `requireOwner()`, and `getViewer()` is the only function in the
-    codebase that produces a `Viewer`. The boundary is kept as an executable
-    probe rather than as this paragraph, because this paragraph has been wrong
-    twice (incident 13).
-    The brand is not decoration: without it the type was a plain shape alias,
-    structural typing accepted any matching literal, and this entry asserted an
-    enforced invariant that was not enforced at all.
-    And the split fails safe: any reader not updated for
-    `by_asserted` sees no `by` on a CLI entry and degrades to unattributed, never
-    to authenticated. That is `isOwner()` failing closed, applied to attribution.
-    The rejected alternative worth naming is a single `by` plus a
-    `by_verified` boolean, which fails open the moment a reader ignores the flag.
-    Nothing here wears the verified stamp: the green check means a quote was
-    string-matched against extracted text and must keep meaning only that
+    construction legacy rather than a new failure. **Absence is never rendered as
+    a claim about origin** — the evidence page printed "(cli)" where `by` was
+    missing, manufacturing a positive claim out of a silence, and now reads
+    `actor not recorded`, as do the exports where they said "Curated by hand".
+    `recordEdit`'s actor parameter is typed `Viewer`, and **`Viewer` is branded
+    with a `unique symbol` only `lib/authz.ts` can name**, so it is nominal
+    rather than structural: a hand-built object literal is a compile error at
+    every call site, and `login`/`name`/`image` are `readonly`, so relabelling a
+    real viewer in place is one too. Without the brand it was a plain shape alias
+    and this entry asserted an invariant that was not enforced at all (incident
+    13). **What no brand stops, stated so it is not re-claimed:** a value typed
+    `any` is accepted in silence (`JSON.parse(body)`, or any helper with an
+    unannotated return), `{ ...viewer, login: other }` works because `readonly`
+    does not survive a spread, and `as unknown as Viewer` always works. None has
+    a live path — all five call sites take the actor from `requireOwner()`, and
+    `getViewer()` is the only function that produces a `Viewer`.
+    The rejected alternative worth naming is a single `by` plus a `by_verified`
+    boolean, which fails open the moment a reader ignores the flag; the split
+    instead fails safe, a reader not updated for `by_asserted` seeing no `by` on
+    a CLI entry and degrading to unattributed. Nothing here wears the verified
+    stamp, which must keep meaning only "string-matched against extracted text"
     (decision 16).
-    **Both readers treat malformed entries as unattributed rather than
-    crashing.** `user_edits` is JSONB and really does accept `"by": 42`,
-    `"by": []`, a blank string, a missing `op`, or an element that is not an
-    object at all. `editActor`/`edit_actor` and their `op` sibling agree on the
-    actor, the basis and the op for every one of those, in both languages, and
-    return "actor not recorded" rather than raising. **The `at` sibling is the
-    one deliberate divergence**: `editWhen` formats for a viewer's locale and so
-    must parse, so an unparseable date string reads "date not recorded" there
-    while `edit_when` echoes it. Neither invents a date, and any divergence
-    beyond that one is a bug. `app/` has no `error.tsx`, so an exception inside
-    the audit trail is a 500 on `/g/<id>/evidence` and `/g/<id>/export` for that
-    map until somebody edits the row by hand; `getGenealogy` therefore checks
-    `Array.isArray` on `user_edits` rather than `?? []`, since a JSONB string has
-    a `.length` and no `.map`. Junk degrades downwards only; nothing junk can
-    become "signed in".
+    **Malformed entries degrade to unattributed rather than crashing.**
+    `user_edits` is JSONB and really accepts `"by": 42`, a blank string, a
+    missing `op`, or an element that is not an object; `editActor`/`edit_actor`
+    and their `op` siblings agree on actor, basis and op for all of them in both
+    languages. **The `at` sibling is the one deliberate divergence**: `editWhen`
+    must parse in order to format for a locale, so an unparseable date reads
+    "date not recorded" there while `edit_when` echoes it; any divergence beyond
+    that one is a bug. `app/` has no `error.tsx`, so an exception in the audit
+    trail is a 500 on `/g/<id>/evidence` and `/g/<id>/export`; `getGenealogy`
+    therefore checks `Array.isArray` rather than `?? []`, since a JSONB string
+    has a `.length` and no `.map`.
     **A stored name is folded before it is rendered, not only before it is
-    stored.** `LINEAGE_ACTOR` is free text on a public page and in a Markdown
-    document, and React escapes where Markdown does not: an interior newline
-    used to break out of the export's `> ` blockquote into body prose in a
-    researcher's paper. Whitespace collapses, control characters go, the name is
-    capped at 64 characters, and `(`, `)` and `·` are removed.
-    **What the fold guarantees is narrow and worth stating exactly: a label
-    cannot emit this product's own delimiters or break its own line.** It does
-    **not** guarantee that a label cannot read like a trust level. `rgok001 •
-    signed in` with U+2022 goes straight through, as do `・`, `（ ）`, `[ ]`,
-    U+200B and U+202E. Chasing those is homoglyph enumeration, which is
-    unwinnable and is the shape of fault incidents 10 and 11 are about, so it is
-    deliberately not attempted. The defence that does hold is structural: the
-    true basis is always printed last, in the delimiters only the renderer can
-    produce. A misleading operator label is possible in the same way a misleading
-    GitHub username is possible, and it is why the name is in `by_asserted`.
-    **`LINEAGE_ACTOR` unset degrades honestly.** Both `getpass.getuser()` and
-    `socket.gethostname()` can fail, and either half being unnameable yields
-    `unknown@host` or `user@unknown` rather than the plausible junk `@host`;
-    both failing yields `unnamed process`. The return is never empty, because an
-    entry with no actor key would join the legacy set this decision froze.
+    stored.** React escapes where Markdown does not: an interior newline in
+    `LINEAGE_ACTOR` broke out of the export's `> ` blockquote into body prose.
+    Whitespace collapses, control characters go, the name caps at 64 characters,
+    and `(`, `)` and `·` are removed. **The guarantee is narrow: a label cannot
+    emit this product's own delimiters or break its own line.** It does not stop
+    a label reading like a trust level — `rgok001 • signed in` with U+2022 goes
+    straight through, as do `（ ）`, U+200B and U+202E — and chasing those is
+    homoglyph enumeration, unwinnable and the shape of fault incidents 10 and 11
+    are about, so it is deliberately not attempted. The defence that holds is
+    structural: the true basis is printed last, in delimiters only the renderer
+    can produce.
+    `LINEAGE_ACTOR` unset degrades honestly: either of `getpass.getuser()` and
+    `socket.gethostname()` failing yields `unknown@host` or `user@unknown` rather
+    than the plausible junk `@host`, and both failing yields `unnamed process`.
+    The return is never empty, because an entry with no actor key would join the
+    legacy set this decision froze.
     **Both writers append with `||` in the database.** `workbench.py` and
-    `restore_snapshot.py` used to read the whole array at process start and
-    write it back, so a web edit landing in between was silently erased. This
-    decision is what made that array load-bearing, so the latent race was closed
-    with it.
+    `restore_snapshot.py` used to read the whole array at process start and write
+    it back, silently erasing a web edit that landed in between; this decision is
+    what made that array load-bearing, so the latent race was closed with it.
     **A restore is not a curatorial change.** `CURATORIAL_OPS` — rename, merge,
-    delete-node, delete-edge, reclassify — is the closed list of operations the
-    workbench performs, defined once per language (`lib/genealogy.ts`,
-    `pipeline/common.py`) and used by both exports and both pages. `restore` is
-    written by the two recovery scripts and is excluded: `/g/10` carries exactly
-    one entry, incident 12's restore, and the first version of this change
-    announced it as "1 curatorial change ... recorded with who made it", which
-    is two false claims in one sentence — nobody curated that map, and the entry
-    names nobody. The list is closed rather than "everything except restore", so
-    an op nobody adds to it is undercounted rather than overclaimed. The pages
-    now print the same actor tally the exports do, so where entries name nobody
-    they say "N with no actor recorded" instead of asserting attribution.
-
+    delete-node, delete-edge, reclassify — is defined once per language
+    (`lib/genealogy.ts`, `pipeline/common.py`) and used by both exports and both
+    pages; `restore`, written by the two recovery scripts, is excluded. `/g/10`
+    carries exactly one entry, incident 12's restore, and announcing it as "1
+    curatorial change ... recorded with who made it" was two false claims in one
+    sentence. The list is closed rather than "everything except restore", so an
+    op nobody adds is undercounted rather than overclaimed, and where entries
+    name nobody the pages say "N with no actor recorded".
 19. **Every verification stamp gets a free recompute** (2026-08-01).
     `definitions.quote_verified` was the last stamp in the system without one.
     Stage E re-grounds every edge on every run and Stage H's `--recheck`
     re-grounds every claim, both for nothing, while a definition's stamp could
-    only be refreshed by paying Stage B for a fresh extraction, so in practice
-    it never was. `embedding` is what that costs: its papers were re-extracted
-    on 2026-07-31 and its definitions were not, so its definition quotes were
-    copied out of text that is no longer on disk while their stamps still said
-    the text had been searched for them. Stage E, which does recompute, put a
-    number on it in passing: 286 verified edges down to 201.
-    `stage_b_extract.py --reground` runs the same `quote_is_grounded` every
-    other stage runs, rewrites `quote_verified` and nothing else, prints the
-    count before and after, and the worker runs it immediately before Stage E on
-    every trace. **A stamp that cannot be recomputed is a claim about the past
-    written in the present tense.** It lowers `/g/10`'s definition verified
-    count visibly, and that is the point: the count is wrong in the optimistic
-    direction, and it is the number that says what finishing the refresh buys.
+    only be refreshed by paying Stage B for a fresh extraction, so in practice it
+    never was. `embedding` is what that cost: its papers were re-extracted on
+    2026-07-31 and its definitions were not, so its quotes were copied out of
+    text no longer on disk while their stamps said the text had been searched.
+    Stage E, which does recompute, put a number on it in passing: 286 verified
+    edges down to 201. `stage_b_extract.py --reground` runs the same
+    `quote_is_grounded` every other stage runs, rewrites `quote_verified` and
+    nothing else, prints the count before and after, and the worker runs it
+    immediately before Stage E on every trace. **A stamp that cannot be
+    recomputed is a claim about the past written in the present tense.** It
+    lowers `/g/10`'s definition verified count visibly, and that is the point:
+    the count is wrong in the optimistic direction.
     A definition whose paper has no extracted text on this disk is **skipped,
-    counted and printed, never flipped.** `quote_verified` is
-    `NOT NULL DEFAULT false`, so there is no "unknown" to write: leaving it true
-    perpetuates exactly the stale claim the flag exists to kill, and writing
-    false asserts a check that never ran, which would mass-flip stamps on any
-    worker whose disk is incomplete. Choosing between those two is a decision
-    about the product; the script's job is to make the number impossible to
-    miss rather than to take it. That choice is still open.
-    **An empty text file is treated as missing text, not as text the quote is
-    absent from.** A zero-byte or whitespace-only file is what an interrupted
-    `extract_text.py` or a full `DATA_DIR` leaves behind, and grounding a quote
-    against it would assert a check that never ran. That is a distinction of
-    kind, not a threshold on file size.
-    **And the run as a whole is refused if nothing at all grounded.** If more
-    than one definition was checked and not one quote grounded, the stage writes
-    nothing and exits non-zero. One definition failing is a finding; every
-    definition failing is what a broken disk looks like, and this stage cannot
-    tell the two apart — a 5 GB Render disk plus a truncated extraction produces
-    exactly that shape, and the job would otherwise go green on a mass flip.
-    The boundary is zero, deliberately, not a percentage: decision 3, incident 9
-    and the turning-point cutoff are three bad calibrations already, and a
-    guessed fraction here would be the fourth. This is incident 12's rule (a
-    per-item fallback needs a global sanity check) applied to a stage that
-    publishes a verdict rather than spends money. Every verdict is now decided
-    before any is written, and the writes go in one transaction, because the
-    connection is autocommit and the stage used to commit the first rows before
-    it had looked at the last.
+    counted and printed, never flipped.** `quote_verified` is `NOT NULL DEFAULT
+    false`, so there is no "unknown" to write: leaving it true perpetuates the
+    stale claim the flag exists to kill, and writing false asserts a check that
+    never ran and would mass-flip stamps on any worker whose disk is incomplete.
+    Choosing between those two is a decision about the product, still open; the
+    script's job is to make the number impossible to miss. An empty or
+    whitespace-only text file — what an interrupted `extract_text.py` or a full
+    `DATA_DIR` leaves behind — is missing text, not text the quote is absent
+    from: a distinction of kind, not a threshold on file size.
+    **And the run as a whole is refused if nothing at all grounded.** One
+    definition failing is a finding; every definition failing is what a broken
+    disk looks like, and this stage cannot tell the two apart, so it writes
+    nothing and exits non-zero. The boundary is zero, deliberately, not a
+    percentage: decision 3, incident 9 and the turning-point cutoff are three bad
+    calibrations already, and a guessed fraction here would be the fourth. This
+    is incident 12's rule (a per-item fallback needs a global sanity check)
+    applied to a stage that publishes a verdict rather than spends money. Every
+    verdict is decided before any is written and the writes go in one
+    transaction, because the connection is autocommit and the stage used to
+    commit the first rows before it had looked at the last.
     There is deliberately **no override flag**: Stage D and Stage F took the same
     all-failed abort with no escape, and if the loss is genuinely real the answer
-    is to re-extract rather than to mass-flip stamps from here. The cost of that
-    choice is that a map whose every quote is honestly stale cannot be corrected
-    by this tool; that is the trade, taken in the direction that changes nothing.
-
+    is to re-extract rather than to mass-flip stamps from here. The cost is that
+    a map whose every quote is honestly stale cannot be corrected by this tool;
+    that trade is taken in the direction that changes nothing.
 20. **Stage D owns the edge lifecycle, and Stage C clears only what it has
-    invalidated** (2026-08-01). `stage_c_cluster.py` used to run
-    `DELETE FROM edges` unconditionally straight after the node upsert, on the
-    reasoning that re-clustering invalidates the old edges and Stage D rebuilds
-    them. **That is the reasoning Stage D itself held before incident 12**, and
-    it made incident 12's fix worthless: Stage D now defers its own DELETE until
-    the first successful classification, but the edges were already gone before
-    Stage D was reached, so a Stage D that failed for any reason left a map with
-    fresh concept-states and no relationships while its guard reported that
-    nothing had been touched.
-    **Node ids are positional, and that is what makes this more than a
-    tidy-up.** Stage C names clusters `n1..nk` by their earliest member year, so
-    an id is a name for a slot rather than for a concept-state, and two runs can
-    both produce `n3` and mean different things by it. So "the old edges are
-    stale" has two quite different meanings: an edge naming an id that is gone,
-    which is merely dangling, and an edge naming an id that survived and now
-    denotes different definitions, which is a **wrong displayed edge** between
-    two concept-states nobody ever claimed were related. `/g/<id>/evidence`
-    renders the second one in full, with both quotes and a verified stamp if the
-    quotes ground, and shows the raw id where the label should be. Under product
-    rule 1 that is worse than a missing edge.
+    invalidated** (2026-08-01). `stage_c_cluster.py` used to run `DELETE FROM
+    edges` unconditionally straight after the node upsert, on the reasoning that
+    re-clustering invalidates the old edges and Stage D rebuilds them. **That is
+    the reasoning Stage D itself held before incident 12**, and it made incident
+    12's fix worthless: Stage D defers its own DELETE until the first successful
+    classification, but the edges were already gone before Stage D was reached,
+    so a Stage D that failed for any reason left a map with fresh concept-states
+    and no relationships while its guard reported nothing had been touched.
+    **Node ids are positional, and that is what makes this more than a tidy-up.**
+    Stage C names clusters `n1..nk` by earliest member year, so an id names a
+    slot rather than a concept-state and two runs can both produce `n3` and mean
+    different things by it. "The old edges are stale" therefore has two meanings:
+    an edge naming an id that is gone, which is merely dangling, and an edge
+    naming an id that survived and now denotes different definitions, which is a
+    **wrong displayed edge** between two concept-states nobody claimed were
+    related. `/g/<id>/evidence` renders the second in full, with both quotes and
+    a verified stamp if they ground; under product rule 1 that is worse than a
+    missing edge.
     So the condition is the clustering itself, **per endpoint rather than per
-    map**. An edge survives iff both the ids it names still denote the
-    definitions they denoted; anything else clears. Whole-map equality was the
-    first attempt and it over-cleared: a re-cluster that merely APPENDS a
-    concept-state leaves every existing edge valid and every existing id
-    untouched, and comparing the maps wholesale threw all of them away. Labels,
-    year ranges and `representative_arxiv_id` are not compared, because none of
-    them changes what a node groups; renaming is in fact the only curatorial act
-    that leaves denotation intact, and the only one that does not invalidate an
-    edge. Clearing in the changed case is not incident 12 again: what is
-    destroyed there is already invalid, and incident 12's rule is about not
-    destroying something valid before its replacement exists.
+    map**: an edge survives iff both ids still denote the definitions they
+    denoted. Whole-map equality was the first attempt and over-cleared — a
+    re-cluster that merely APPENDS a concept-state leaves every existing edge and
+    id untouched, and comparing wholesale threw them all away. Labels, year
+    ranges and `representative_arxiv_id` are not compared, because none changes
+    what a node groups; renaming is the only curatorial act that leaves
+    denotation intact. Clearing in the changed case is not incident 12 again:
+    what is destroyed there is already invalid, and incident 12's rule is about
+    not destroying something valid before its replacement exists.
     **The gate is one transaction**, covering the read of the old blob, the
-    upsert and the DELETE. The connection is autocommit, so without that the new
-    clustering commits the moment the upsert runs, and anything raising between
-    there and the edge decision produces precisely the state this decision
-    exists to prevent. That window is the gate's own creation — the old code had
-    the upsert and an unconditional DELETE back to back — so the gate owns it. It
-    was reachable without hand-edited SQL: `restore_genealogy.py` validates no
-    shape, so pointing it at a truncated JSON gives a malformed `nodes` blob with
-    a full edge set, and a plain re-cluster then walks into it.
-    A malformed blob is also no longer a raise. `node_denotation` in `common.py`
-    is the single reader of `genealogies.nodes` for both stages, with one posture
-    on malformed input: dropped, never guessed at and never raised on.
-    **The posture is shared; the response is not, and the difference is
-    deliberate.** Stage C clears the edges it cannot vouch for. Stage E, faced
-    with a blob so bad that every edge would go, refuses, deletes nothing and
-    names the cause. That is not an inconsistency to be tidied away: in Stage C
-    the unreadable blob is the *previous* one, already being replaced, with Stage
-    D to rebuild behind it, so clearing costs a rebuild; in Stage E it is the
-    *current* one, about to be published, so deleting on its authority would
-    destroy a map on the word of something unreadable. Each stage fails in the
-    direction that is cheap for it.
-    The two also answer differently about the same node, and correctly: a node
-    with a usable id and unreadable `definition_ids` exists, so Stage E vouches
-    for it and an edge naming it is not dangling, while Stage C cannot say it
-    denotes what it denoted, so that edge clears. Stage E asks whether a
-    concept-state is there; Stage C asks whether it still means the same.
-    A node that does not say which definitions it holds denotes
-    **unknown, and unknown is never equal to unknown** — each gets a fresh
-    sentinel. Reading absence as the empty set would have made two silent blobs
-    compare equal and KEEP their edges, which is the one direction this must not
-    fail in.
+    upsert and the DELETE, because the connection is autocommit and without it
+    the new clustering commits the moment the upsert runs. That window is the
+    gate's own creation, and it was reachable without hand-edited SQL:
+    `restore_genealogy.py` validates no shape, so a truncated JSON gives a
+    malformed `nodes` blob with a full edge set and a plain re-cluster walks into
+    it.
+    `node_denotation` in `common.py` is the single reader of `genealogies.nodes`
+    for both stages, with one posture on malformed input: dropped, never guessed
+    at, never raised on. **The posture is shared; the response is not, and the
+    difference is deliberate rather than an inconsistency to tidy away.** In
+    Stage C the unreadable blob is the *previous* one, already being replaced
+    with Stage D to rebuild behind it, so clearing costs a rebuild; in Stage E it
+    is the *current* one, about to be published, so deleting on its authority
+    would destroy a map on the word of something unreadable — Stage E therefore
+    refuses, deletes nothing and names the cause. The same asymmetry decides one
+    node two ways, correctly: a node with a usable id and unreadable
+    `definition_ids` exists, so Stage E vouches for it, while Stage C cannot say
+    it still denotes what it denoted, so that edge clears. Stage E asks whether a
+    concept-state is there; Stage C asks whether it still means the same. A node
+    that does not say which definitions it holds denotes **unknown, and unknown
+    is never equal to unknown** — each gets a fresh sentinel, because reading
+    absence as the empty set would make two silent blobs compare equal and KEEP
+    their edges, the one direction this must not fail in.
     The dangling case is settled in Stage E, which sweeps edges naming absent
-    concept-states before it grounds anything, reports the count, and refuses if
-    more than one edge exists and every one of them would go. That refusal is the
-    twin of the `--reground` guard (decision 19), not of anything in Stage C.
-    Stage C for its part reports the cause it actually has: when nothing about
-    the previous concept-states could be read it says so, rather than reporting a
-    clustering change it never established. A corrupt restore and an ordinary
-    wholesale re-cluster used to print byte-identical lines, and the cost of that
-    was an operator re-running Stage D, which spends, on a diagnosis nobody had
-    made.
-    **What this buys.** Driven directly against the code: the gate block executed
-    over synthetic node blobs and edge sets, showing an appended cluster now
-    keeps all its edges where whole-map equality cleared them, a single changed
-    cluster clears only the edges touching it, and a forced raise inside the gate
-    rolls back rather than committing new nodes over old edges. Reasoned, not
-    measured: that a re-run at the same threshold reproduces the same clustering,
-    since Stage C cannot run here (`cluster()` needs sklearn and real vectors) —
-    what was executed is `node_denotation` on stored blobs, not the clustering
-    that produces them. The sweep alone, as originally scoped, would have left
-    the changed-clustering case showing misattributed edges; that is why Stage C
-    still has a DELETE.
-
+    concept-states before grounding anything and refuses if more than one edge
+    exists and every one would go — the twin of the `--reground` guard (decision
+    19). Stage C reports the cause it actually has: a corrupt restore and an
+    ordinary wholesale re-cluster used to print byte-identical lines, and the
+    cost was an operator re-running Stage D, which spends, on a diagnosis nobody
+    had made.
+    **What this buys, driven directly against the code**: an appended cluster
+    keeps all its edges where whole-map equality cleared them, a changed cluster
+    clears only the edges touching it, and a forced raise inside the gate rolls
+    back rather than committing new nodes over old edges. Reasoned, not measured:
+    that a re-run at the same threshold reproduces the same clustering, since
+    `cluster()` needs sklearn and real vectors and cannot run here. The sweep
+    alone, as originally scoped, would have left the changed-clustering case
+    showing misattributed edges; that is why Stage C still has a DELETE.
 21. **A verdict about a file is cleared by whatever rewrites the file**
-    (2026-08-01). `papers.extraction_verdict` was the last derived value in the
-    system with no path back to the thing it describes, and unlike a definition
-    stamp (decision 19) it had no recompute either: `extract_text.py` rewrote a
-    paper's text and updated `extracted_text_path` and `text_title_match` while
-    leaving the verdict, the signals and the checked-at exactly where they were,
-    and `check_extraction.py --only-unchecked` — the free pass the worker runs at
+    (2026-08-01). `papers.extraction_verdict` was the last derived value with no
+    path back to the thing it describes, and unlike a definition stamp (decision
+    19) it had no recompute either: `extract_text.py` rewrote a paper's text and
+    updated `extracted_text_path` and `text_title_match` while leaving the
+    verdict, the signals and the checked-at where they were, and
+    `check_extraction.py --only-unchecked` — the free pass the worker runs at
     every boot and every trace — selects on the checked-at being null. A stamped
-    row was therefore unreachable forever, by construction. The whole table was
-    in that state; see item 11 of section 11 for what it cost a reader.
+    row was therefore unreachable forever, by construction, and the whole table
+    was in that state; see item 11 of section 11 for what it cost a reader.
     `extract_text.py` now nulls all three in the same statement that records the
-    new path, so the row goes back to "unchecked" and the free pass collects it.
-    `extraction_signals` is `NOT NULL DEFAULT '[]'` (migration 013), so it
-    empties rather than nulls; nulling it would abort the extraction.
+    new path. `extraction_signals` is `NOT NULL DEFAULT '[]'` (migration 013), so
+    it empties rather than nulls; nulling it would abort the extraction.
     **Clearing a verdict and computing one are separate tools on purpose.**
     `check_extraction.py --clear-verdicts [--concept C] [--only IDS] [--dry-run]`
     removes the three columns and reads nothing else at all: no text, no quote,
-    no definition. That looks like a weaker version of `--write` without
-    `--only-unchecked`, which recomputes in place and leaves no gap, and where
-    the corpus is present that IS the better instrument. The clear exists because
-    the two are run from different machines. The corpus lives on the Render disk;
-    the owner has the database and not the papers, and a `--write` run from a
-    machine with a partial `DATA_DIR` writes verdicts describing text that is not
-    the text the map was built from. The clear is the only honest thing such a
-    machine can do: hand the papers back to the machine that can measure them.
-    **The gap is real, it is not the safe direction, and the output says so.**
-    The first draft of this entry called it safe on the grounds that an absent
-    note claims nothing. That is wrong about where the note sits. On the dossier
-    it renders directly beneath "verified verbatim against the source text" and
-    it is the **only qualifier on that tick**, so clearing it does not leave the
-    page saying less: it leaves the page saying *more*, with the verification
-    stamp standing alone and unqualified. Between the clear and the next audit
-    the map is making a stronger claim than it was a moment before, which is the
-    one direction this product is not allowed to drift in.
-    Nothing re-audits on a timer. The Render worker runs the free pass at boot,
-    and a background worker boots on a deploy, on a manual restart, or on a
-    crash. So the restart is part of the operation and not the next line of a
-    runbook: `--clear-verdicts` ends by telling the operator to restart the
-    worker now, and says what is standing unqualified until they do.
+    no definition. That looks like a weaker `--write` without `--only-unchecked`,
+    which recomputes in place and leaves no gap, and where the corpus is present
+    that IS the better instrument. The clear exists because the two are run from
+    different machines: the corpus lives on the Render disk, the owner has the
+    database and not the papers, and a `--write` from a partial `DATA_DIR` writes
+    verdicts describing text that is not the text the map was built from.
+    **The gap is real, it is not the safe direction, and the output says so.** On
+    the dossier the note renders directly beneath "verified verbatim against the
+    source text" and is the **only qualifier on that tick**, so clearing it does
+    not leave the page saying less: it leaves the page saying *more*, with the
+    verification stamp standing alone. Between the clear and the next audit the
+    map makes a stronger claim than it did a moment before, which is the one
+    direction this product may not drift in. Nothing re-audits on a timer — the
+    Render worker runs the free pass at boot, and a background worker boots on a
+    deploy, a manual restart or a crash — so the restart is part of the operation
+    and not the next line of a runbook: `--clear-verdicts` ends by telling the
+    operator to restart the worker now, and says what is standing unqualified
+    until they do.
     **It takes a copy first.** The preview is a `GROUP BY`, so it says three
     papers were damaged and not which three, and the wet run would otherwise
     destroy the only per-paper record there is. Every row in scope is written to
@@ -1441,107 +1382,100 @@ The why behind the load-bearing choices, in one place:
     Scoped, because `papers` is shared across every concept ever traced;
     `--concept` uses the same `EXISTS` on `definitions` that `extract_text.py
     --concept` uses, prompt version and all (it has none), so the tool that
-    invalidates a verdict and the tool that clears it can name the same papers.
+    invalidates a verdict and the tool that clears it name the same papers.
     Unscoped it says it is about to touch every audited paper in the table, in
     the same words `extract_text.py --force` uses. `--dry-run` renders a
     different statement rather than branching inside one, so the preview cannot
     become the write by one edit.
-
 22. **A Python process can be told it may not reach the database, and cannot
     untell itself** (2026-08-01). `LINEAGE_NO_DB`, set to anything non-blank,
     makes `common.env("DATABASE_URL")` refuse. Every connection **in the Python
-    pipeline, the worker and the migrator** takes its DSN from that one
-    function, and none of them reads the variable directly, so one branch closes
-    all twenty call sites. That was verified by enumerating them.
+    pipeline, the worker and the migrator** takes its DSN from that one function
+    and none reads the variable directly, so one branch closes all twenty call
+    sites; that was verified by enumerating them.
     **It does not cover the Node side, and the first draft of this entry said it
     covered everything.** `app/lib/db.ts:13` passes `process.env.DATABASE_URL`
-    straight to `neon()`, so `npm run dev` connects to whatever is configured
-    regardless of this flag. `app/scripts/check-db.mjs`,
-    `check-auth-env.mjs` and `security-test.mjs` do not read the environment at
-    all: each regexes `DATABASE_URL` out of `app/.env.local`, and
+    straight to `neon()`, so `npm run dev` connects regardless of this flag.
+    `app/scripts/check-db.mjs`, `check-auth-env.mjs` and `security-test.mjs` do
+    not read the environment at all: each regexes `DATABASE_URL` out of
+    `app/.env.local`, which exists on the development machine, and
     `security-test.mjs` fires mutation payloads at every Server Action id it
-    harvests. `app/.env.local` exists on the development machine. So the true
-    claim is "every Python entry point", and the reach of a guard is exactly the
-    kind of sentence incident 13 is about.
+    harvests. So the true claim is "every Python entry point", and the reach of a
+    guard is exactly the kind of sentence incident 13 is about.
     This exists because incident 14 proved that an instruction is not a control.
-    An agent was told not to touch the database, believed it was not touching
-    the database, and touched it twice. Three properties are load-bearing, and
-    each is drawn from how that actually failed rather than from what sounds
-    careful.
+    Three properties are load-bearing, each drawn from how that actually failed.
     **It is immune to the pop.** The harness "sandboxed" itself with
     `os.environ.pop("DATABASE_URL")`, which is the move that let it through:
     `load_dotenv` does not override a variable that is already set, so removing
     it is precisely what allows `.env` to refill it. The guard records at import
     whether it was on and honours that afterwards, so it can be turned on and
     never off, and popping it does nothing.
-    **It raises a `BaseException`.** The harness looped over eight cases, which
-    means it was absorbing whatever each raised and continuing, which is how one
-    mistake became two writes. `sys.exit` raises `SystemExit`; an
-    `except Exception` eats everything else. `BaseException` is what an ordinary
-    catch-and-continue cannot quietly swallow.
+    **It raises a `BaseException`.** The harness looped over eight cases,
+    absorbing whatever each raised and continuing, which is how one mistake
+    became two writes. `sys.exit` raises `SystemExit`; an `except Exception` eats
+    everything else. `BaseException` is what an ordinary catch-and-continue
+    cannot quietly swallow.
     **Any non-blank value counts, including `0` and `false`.** A guard that
     parses its own setting has a way to be wrong about it, and the safe reading
     of an ambiguous value is to refuse.
     Considered and rejected: making refusal the default and requiring an opt-out
     to run for real. It fails closed, which is this project's habit elsewhere,
-    but it would put a new deploy-time failure mode into the worker (a missing
-    variable in `render.yaml` and the worker cannot start) in order to prevent a
-    development-time mistake. The cost lands on production to protect the
+    but it would put a new deploy-time failure mode into the worker — a missing
+    variable in `render.yaml` and the worker cannot start — in order to prevent a
+    development-time mistake, landing the cost on production to protect the
     workbench. Opt-in, named in every agent brief, is the trade taken.
-    **The residue, stated so nobody has to rediscover it.** A harness nobody
-    told about the flag is unguarded, which is the point of opt-in. Beyond that,
-    three ways past it are known and none is closed:
+    **The residue, stated so nobody has to rediscover it.** A harness nobody told
+    about the flag is unguarded, which is the point of opt-in. Beyond that, three
+    ways past it are known and none is closed:
     (a) The Node side above.
-    (b) **`importlib.reload`, or any fresh import after the variable is
-    popped.** "On, never off" holds for a module object, not for a process: the
-    import-time reading is stored in that object, so reloading `common` or
-    importing it in a subinterpreter re-reads an environment that no longer has
-    the flag. Popping cannot lift it; popping and then reloading can.
+    (b) **`importlib.reload`, or any fresh import after the variable is popped.**
+    "On, never off" holds for a module object, not for a process: the import-time
+    reading lives in that object, so reloading `common` or importing it in a
+    subinterpreter re-reads an environment that no longer has the flag. Popping
+    cannot lift it; popping and then reloading can.
     (c) **A child process handed a deliberately minimal `env=`.** A parent that
     builds a clean environment for a subprocess, which is the careful-looking
     thing to do, does not pass a flag it was never told to pass; `load_dotenv`
-    then refills `DATABASE_URL` from `.env` in the child and the child is
-    unguarded. Copying `os.environ` and stripping secrets is safe here and
-    handing over a minimal environment is not, and the two look equally careful,
-    which is the whole shape of incident 14 repeating one level down.
-    None of these is fixed in code on purpose. Each fix has a way to be wrong
-    about it, and an accurate description of the residue is worth more today
-    than a second guard whose reach would need its own paragraph.
-
+    then refills `DATABASE_URL` from `.env` in the child. Copying `os.environ`
+    and stripping secrets is safe here and handing over a minimal environment is
+    not, and the two look equally careful, which is incident 14's whole shape one
+    level down.
+    None of these is fixed in code on purpose: each fix has a way to be wrong
+    about it, and an accurate description of the residue is worth more today than
+    a second guard whose reach would need its own paragraph.
 23. **Report the damage you measured, never the cleanliness you did not
     establish** (2026-08-01). Six of `check_extraction.py`'s signals need the
-    paper's source archive: the length ratio, the two macro counts and the
-    symbol survival rate. `source_latex_for` returned a bare `None` when the
-    archive was not on the machine, the whole block was skipped in silence, and
-    the paper fell out of the bottom as `clean` with an empty signals array.
-    `--write` stored that. **Measured by the tester: same 224 papers, same text
-    files, archives removed and nothing else changed, and 47 verdicts move, 39
-    of them to `clean`.** The docstring above the function had promised the
-    opposite since the day it was written, and it was true of the text file and
-    false of the archive.
-    This is worse than a wrong warning, and the asymmetry is the point. A
-    warning that is wrong is visible: it is on the page, a reader can weigh it,
-    and somebody eventually checks it. A reassurance nobody computed is
-    invisible by construction, and on the dossier it is not even a sentence, it
-    is the absence of one.
+    paper's source archive: the length ratio, the two macro counts and the symbol
+    survival rate. `source_latex_for` returned a bare `None` when the archive was
+    not on the machine, the whole block was skipped in silence, and the paper
+    fell out of the bottom as `clean` with an empty signals array. `--write`
+    stored that. **Measured by the tester: same 224 papers, same text files,
+    archives removed and nothing else changed, and 47 verdicts move, 39 of them
+    to `clean`.** The docstring above the function had promised the opposite
+    since the day it was written, and it was true of the text file and false of
+    the archive.
+    This is worse than a wrong warning, and the asymmetry is the point. A wrong
+    warning is visible: it is on the page, a reader can weigh it, somebody
+    eventually checks it. A reassurance nobody computed is invisible by
+    construction, and on the dossier it is not even a sentence, it is the absence
+    of one.
     So the two failures are separated: `absent` (not on THIS machine, the answer
     exists elsewhere, incident 7c) and `unusable` (an archive holding only a PDF,
-    or one with no main `.tex`, the same on every machine). Either way the scan
+    or none with a main `.tex`, the same on every machine). Either way the scan
     is incomplete, and an incomplete scan **may still return `suspect` or
     `damaged`** — residue, undecodable bytes, gaps and missing headings are read
     off the text alone, so a finding there is true whatever else was skipped —
     but it **may not return `clean`**, because `clean` is the only verdict that
-    asserts an absence. It gets a verdict of its own instead, joins
-    `no text on this machine`, is counted and named in the output, and `--write`
-    skips it. None of the three could be stored anyway: migration 013's CHECK
-    allows only the three real verdicts, so the alternative to skipping was
-    always a constraint violation or a lie.
-    **A PDF-sourced paper is not incomplete for this.** There is no LaTeX to
-    measure its text against, so those six signals are inapplicable rather than
+    asserts an absence. It gets a verdict of its own, joins `no text on this
+    machine`, is counted and named in the output, and `--write` skips it. None of
+    the three could be stored anyway: migration 013's CHECK allows only the three
+    real verdicts, so the alternative to skipping was a constraint violation or a
+    lie. **A PDF-sourced paper is not incomplete for this**: there is no LaTeX to
+    measure against, so those six signals are inapplicable rather than
     uncomputed, and its verdict still comes from the signals that do apply.
     Inapplicable and uncomputed look identical in a code path and are opposites
     in what they license.
-    **What was considered and rejected: refusing `--write` when the corpus looks
+    **Considered and rejected: refusing `--write` when the corpus looks
     partial.** It is the obvious control and it cannot be written. The Render
     worker's own disk was visibly partial on the run that produced the frozen
     batch — 12 of its papers had no text on it — so any threshold low enough to
@@ -1553,76 +1487,71 @@ The why behind the load-bearing choices, in one place:
     could be scanned through, which is an unmounted or wrong `DATA_DIR` and
     nothing else. `refuse_if_nothing_scanned` is split out so it can be driven
     with a list of scans and no database.
-    The remaining exposure is a machine that holds *part* of the corpus writing
+    The remaining exposure is a machine holding *part* of the corpus writing
     verdicts about text the maps were not built from. Nothing in the data
-    distinguishes that machine from the worker, so it is covered by the operator
-    controls rather than by a heuristic: `LINEAGE_NO_DB` (decision 22), the
-    runbook saying `--write` belongs on the worker, and `--clear-verdicts` being
-    the thing a database-only machine runs instead.
-
+    distinguishes that machine from the worker, so it is covered by operator
+    controls rather than a heuristic: `LINEAGE_NO_DB` (decision 22), the runbook
+    saying `--write` belongs on the worker, and `--clear-verdicts` being what a
+    database-only machine runs instead.
 24. **The instrument is built and read before the calibration is changed**
     (2026-08-01). The extraction verdict has been recalibrated four times and
     every round did the same thing: run the corpus, read the rate, move a
-    pattern. That is the detector agreeing with itself, and the reason it could
-    keep happening is that a rate is the only number the tool produced. It says
-    the check is wrong. It cannot say **which signal** is wrong, and it cannot
-    say what removing one would cost, so the next change was always a guess.
-    `--compare-verdicts` is separated from the change it exists to inform, and
-    it is deliberately the whole of its own ticket. It adds a machine key to
-    every signal, lifts `verdict_from` out of `scan_paper` so a current and a
-    proposed verdict cannot come from two copies of the arithmetic, and prints a
-    cross-tab and a sole-cause table. It moves no threshold.
-    **The proposal is a module constant and not a flag.** One hypothesis,
-    `PROPOSED_NOTE_SIGNALS = frozenset({"gaps", "package_macros"})`, hardcoded
-    and in version control where it can be reviewed and argued with. It shipped
-    as `NOTE_SIGNALS` on the same day (decision 25), and the proposal constant is
-    now empty and waiting for the sixth round. A config
-    file rots and a `--what-if` taking arbitrary thresholds is unreviewable:
-    neither leaves any record of what was actually proposed on the day the
-    number was taken, which is precisely what is missing from the four rounds
-    already spent. A key here that no signal emits raises at import, because a
-    typo would demote nothing and print two identical columns that look like a
-    finding.
-    **A preview that can write is one edit away from being the write**, which is
-    the rule `PREVIEW_VERDICTS` was already built on, so `--compare-verdicts`
-    refuses `--write`, `--clear-verdicts` and `--dry-run` at the argparse block,
-    ahead of the older guards so the message names the flag the operator typed.
-    Verified by capture: the mode issues two `SELECT`s and calls `commit()`
-    never. Only the `--json` path writes anything, and it writes a local file.
+    pattern. That is the detector agreeing with itself, and it could keep
+    happening because a rate is the only number the tool produced. It says the
+    check is wrong. It cannot say **which signal** is wrong, nor what removing
+    one would cost, so the next change was always a guess.
+    `--compare-verdicts` is separated from the change it exists to inform and is
+    deliberately the whole of its own ticket. It adds a machine key to every
+    signal, lifts `verdict_from` out of `scan_paper` so a current and a proposed
+    verdict cannot come from two copies of the arithmetic, and prints a cross-tab
+    and a sole-cause table. It moves no threshold.
+    **The proposal is a module constant, not a flag.** One hypothesis,
+    `PROPOSED_NOTE_SIGNALS = frozenset({"gaps", "package_macros"})`, hardcoded in
+    version control where it can be reviewed and argued with; it shipped as
+    `NOTE_SIGNALS` the same day (decision 25), and the proposal constant is now
+    empty and waiting for the sixth round. A config file rots and a `--what-if`
+    taking arbitrary thresholds is unreviewable: neither leaves a record of what
+    was proposed on the day the number was taken, which is precisely what is
+    missing from the four rounds already spent. A key no signal emits raises at
+    import, because a typo would demote nothing and print two identical columns
+    that look like a finding.
+    **A preview that can write is one edit away from being the write**, the rule
+    `PREVIEW_VERDICTS` was already built on, so `--compare-verdicts` refuses
+    `--write`, `--clear-verdicts` and `--dry-run` at the argparse block, ahead of
+    the older guards so the message names the flag the operator typed. Verified
+    by capture: the mode issues two `SELECT`s and calls `commit()` never; only
+    `--json` writes anything, and it writes a local file.
     **Two sole-cause columns, not one.** "The only reason this paper is not
-    clean" is the question worth asking; "the only reason it carries the note"
-    is the same question asked of the page, and the two differ exactly on papers
+    clean" is the question worth asking; "the only reason it carries the note" is
+    the same question asked of the page, and the two differ exactly on papers
     whose source archive is not on this disk, where removing the last signal
-    leaves "we did not look" rather than "clean". Printing one as if it were the
-    other is how a signal gets blamed for a missing file.
+    leaves "we did not look" rather than "clean". Printing one as the other is
+    how a signal gets blamed for a missing file.
     **The prose stays the prose.** `extraction_signals` still stores
     `"{level}: {sentence}"` and the dossier is untouched; only the in-process
-    tuple grew a key, and the per-paper `--json` audit accordingly now holds
-    three-element signal arrays instead of two.
-
+    tuple grew a key, so the per-paper `--json` audit now holds three-element
+    signal arrays instead of two.
 25. **A signal can be true, worth reporting and deliberately outside the
     verdict; and a verdict is invalidated by the code that computes it as well
-    as by the text it describes** (2026-08-01, migration 014). Two separate
-    rules, shipped together because the second is what makes the first safe to
-    apply to a live corpus.
-    **The first.** `stale` invented the position and `gaps` and
-    `package_macros` joined it, after the measurement decision 24 exists to take
-    and not before. The test is not how often a signal fires or how sure it is:
-    it is whether the action the signal implies is a warning to a reader. Those
-    three imply re-extract the corpus, open this paper on arXiv, and teach the
-    extractor a package. The dossier note can say exactly one thing — that the
-    passage in front of you may be missing wording the paper had — so a signal
-    whose finding is not that sentence has no business deciding whether the
-    sentence appears. `NOTE_SIGNALS` is the set and `NOTE_LEVELS` is the pair of
-    levels a verdict ignores; the thresholds still compute the level they always
-    did, and one list comprehension at the end of `scan_paper` demotes what the
-    set names, so promoting a signal back is a change to a frozenset and to
-    nothing else.
-    **Reported means reported.** The signals are still emitted, still stored (as
-    `note: ...` rather than `suspect: ...`, which is the one visible difference)
-    and still printed by the audit and by the sole-cause table. 134 of 304
-    papers drop package macros and that number is worth an operator's attention;
-    what changed is who it is addressed to.
+    as by the text it describes** (2026-08-01, migration 014). Two rules, shipped
+    together because the second is what makes the first safe on a live corpus.
+    **The first.** `stale` invented the position and `gaps` and `package_macros`
+    joined it, after the measurement decision 24 exists to take and not before.
+    The test is not how often a signal fires or how sure it is: it is whether the
+    action the signal implies is a warning to a reader. Those three imply
+    re-extract the corpus, open this paper on arXiv, and teach the extractor a
+    package. The dossier note can say exactly one thing — that the passage in
+    front of you may be missing wording the paper had — so a signal whose finding
+    is not that sentence has no business deciding whether the sentence appears.
+    `NOTE_SIGNALS` is the set and `NOTE_LEVELS` the pair of levels a verdict
+    ignores; the thresholds still compute the level they always did and one list
+    comprehension at the end of `scan_paper` demotes what the set names, so
+    promoting a signal back is a change to a frozenset and nothing else.
+    **Reported means reported**: the signals are still emitted, still stored (as
+    `note: ...` rather than `suspect: ...`, the one visible difference) and still
+    printed by the audit and the sole-cause table. 134 of 304 papers drop package
+    macros and that number is worth an operator's attention; what changed is who
+    it is addressed to.
     **What this cost, measured on the Render disk over all 304 papers before it
     shipped**: the dossier note falls from 218 papers (72%) to 113 (37%), 105
     papers move `suspect` to `clean`, and **nothing moves stricter** — every
@@ -1641,35 +1570,31 @@ The why behind the load-bearing choices, in one place:
     computed by a calibration three commits replaced between 10:19 and 10:31, and
     they sat frozen for weeks because `--only-unchecked` filtered on the
     timestamp alone. A version somebody has to remember to raise is a version
-    somebody forgets, and that is not a hypothetical here, it is the incident.
-    **It is strictly better than the `--clear-verdicts` plus restart ritual it
-    retires** for this job. A clear NULLs the verdict, and the note is the only
-    qualifier on the dossier's "verified verbatim against the source text", so a
-    cleared row leaves the tick standing alone and the page claiming *more* than
-    it did (decision 21). A version mismatch leaves the old verdict in place
-    until the new one replaces it: replace before destroying, applied to the
-    verdict itself. `--clear-verdicts` stays for the job it was actually built
-    for, which is a machine that holds the database and not the papers.
-    **What the digest does not cover, stated so nobody assumes otherwise.** It
-    hashes the calibration inputs, not the file, so a change to the arithmetic
-    that touches none of them will not move it. The mitigation is that the
-    arithmetic's own data is in the hash: `NOTE_SIGNALS` and `NOTE_LEVELS` are
-    inputs precisely because this decision's first half is a change of data, and
-    a demotion the stored verdicts could not see would be the same defect again.
-    Verified: the digest is byte-identical across five processes with different
-    `PYTHONHASHSEED`s, moves for each of eighteen calibration inputs including a
-    regex flag and the note set, and does not move when `0.20` is rewritten as
-    `0.2`.
+    somebody forgets, and that is not hypothetical here, it is the incident. It
+    also beats the `--clear-verdicts` plus restart ritual it retires for this
+    job, because a mismatch leaves the old verdict in place until the new one
+    replaces it instead of opening decision 21's unqualified-tick gap;
+    `--clear-verdicts` stays for the machine that holds the database and not the
+    papers.
+    **What the digest does not cover.** It hashes the calibration inputs, not the
+    file, so a change to the arithmetic touching none of them will not move it.
+    The mitigation is that the arithmetic's own data is in the hash:
+    `NOTE_SIGNALS` and `NOTE_LEVELS` are inputs precisely because this decision's
+    first half is a change of data, and a demotion the stored verdicts could not
+    see would be the same defect again. Verified: the digest is byte-identical
+    across five processes with different `PYTHONHASHSEED`s, moves for each of
+    eighteen calibration inputs including a regex flag and the note set, and does
+    not move when `0.20` is rewritten `0.2`.
     **The risk this creates, which is real and was accepted.** On the worker's
     first boot after the deploy every audited paper mismatches, and the startup
     `--only-unchecked --write` rewrites the verdict, the signals and the
     checked-at on up to 304 rows across both live maps in one pass with nobody
-    watching. That is the intended behaviour and it is still a live rewrite of
-    reader-facing state, so the runbook requires a full `--clear-verdicts
-    --dry-run` dump on the Render shell *before* deploying — it writes the
-    per-paper JSON to `DATA_DIR/snapshots/` and touches the database not at all —
-    and requires the re-audit to be lenient-only, which the crosstab above is
-    where that was checked.
+    watching. That is intended and it is still a live rewrite of reader-facing
+    state, so the runbook requires a full `--clear-verdicts --dry-run` dump on
+    the Render shell *before* deploying — it writes the per-paper JSON to
+    `DATA_DIR/snapshots/` and touches the database not at all — and requires the
+    re-audit to be lenient-only, which the crosstab above is where that was
+    checked.
 
 ---
 
@@ -1707,36 +1632,31 @@ Recorded because the system's shape is partly their consequence.
    above) was kept anyway because it makes the heartbeat check robust against
    viewer clocks that really are wrong.
 7. **The first cloud trace: seven deployment-only bugs (2026-07-21..23).**
-   Nothing here could surface locally, where `DATA_DIR` sits inside the repo
-   and RAM is plentiful. In order: (a) unbounded embedding batch: fastembed
-   defaults to 256 and allocated ~2.4 GB of activations for a 130 MB model,
-   OOM-killing the worker; capped to 8 (measured 2440 MB -> 342 MB). (b) Paths
-   stored relative to the repo root broke when `DATA_DIR` became a separate
-   mounted disk. (c) A shared DB with per-machine disks: papers flagged
-   extracted elsewhere had no local text file. (d) Those same papers were
-   silently dropped from the corpus until extraction learned to re-run on a
-   missing file. (e) An invalid `ANTHROPIC_API_KEY` on the worker. (f) The
-   1024-dim model itself could not load in 2 GB, and the fix was not a bigger box
-   but removing local models entirely (decision 13). (g) A single arXiv 403
-   aborted a 150-paper fetch. **Lesson: a first real cloud run is a test in
-   its own right; local success proves very little about a deployed
-   environment.** Two wrong diagnoses along the way (blaming instance size,
-   then model file size) were corrected only by measuring rather than
-   reasoning; the batch-size measurement in fresh processes was decisive.
-8. **Generated paraphrase wearing the verified stamp (2026-07-28).** Building
-   the export surfaced it: migration 012 specifies that each river paper's
-   `quote` is a string-verified span, and the generation wrote a summary of the
-   paper instead. All 102 were checked against the definition spans Stage E
-   actually matched, and **none** was a passage from its paper. The thread page
-   had been rendering them under a green "verified" check since the river
-   shipped. Both the page and the export now read `definitions.verbatim_quote`
-   with its real `quote_verified` verdict, the same source the dossier already
-   used. **Lesson: a stamp must be derived from the check, never from the
-   field's documented intent.** The contract said verified; nothing verified it.
-   The generated prose was never the problem: it is honest as an account and
-   stays, labelled as the tool's reading. The problem was one field claiming a
-   grounding it never had, in the one place the product cannot afford to be
-   wrong.
+   Nothing here could surface locally, where `DATA_DIR` sits inside the repo and
+   RAM is plentiful. (a) Unbounded embedding batch: fastembed defaults to 256 and
+   allocated ~2.4 GB of activations for a 130 MB model, OOM-killing the worker;
+   capped to 8 (measured 2440 MB -> 342 MB). (b) Paths stored relative to the
+   repo root broke when `DATA_DIR` became a separate mounted disk. (c) A shared
+   DB with per-machine disks: papers flagged extracted elsewhere had no local
+   text file. (d) Those same papers were silently dropped from the corpus until
+   extraction learned to re-run on a missing file. (e) An invalid
+   `ANTHROPIC_API_KEY` on the worker. (f) The 1024-dim model could not load in
+   2 GB, and the fix was not a bigger box but removing local models entirely
+   (decision 13). (g) A single arXiv 403 aborted a 150-paper fetch. **Lesson: a
+   first real cloud run is a test in its own right; local success proves very
+   little about a deployed environment.** Two wrong diagnoses along the way
+   (instance size, then model file size) were corrected only by measuring.
+8. **Generated paraphrase wearing the verified stamp (2026-07-28).** Migration
+   012 specifies that each river paper's `quote` is a string-verified span, and
+   the generation wrote a summary of the paper instead. All 102 were checked
+   against the definition spans Stage E actually matched, and **none** was a
+   passage from its paper; the thread page had been rendering them under a green
+   "verified" check since the river shipped. Both the page and the export now
+   read `definitions.verbatim_quote` with its real `quote_verified` verdict, the
+   same source the dossier already used. **Lesson: a stamp must be derived from
+   the check, never from the field's documented intent.** The contract said
+   verified; nothing verified it. The generated prose was never the problem and
+   stays, labelled as the tool's reading.
 9. **An absolute threshold silenced the signal it was guarding (2026-07-29).**
    The influence map added "movers" by displacement but only from papers with
    `attention >= 1`. Displacement exists to catch papers the citation graph
@@ -1746,140 +1666,129 @@ Recorded because the system's shape is partly their consequence.
    the bar and all 20 were already selected, so no mover was ever added and four
    of nine threads had no paper on the map while still being listed beneath it.
    Caught by the owner counting channels against the list. **Lesson: this is
-   decision 3 again.** A cosine threshold once deleted the field's most important
-   paper and the rule that came out of it was rank, never threshold. The rule was
-   right and was not applied here, because the flaw is invisible on the corpus
-   you tune against and only appears on the second one.
+   decision 3 again** — rank, never threshold. The rule was right and was not
+   applied here, because the flaw is invisible on the corpus you tune against
+   and only appears on the second one.
 10. **The extractor ate the citations, and the papers looked illiterate
-    (2026-07-29).** pylatexenc knows `\cite` and renders it `<cit.>`. It does
-    not know natbib, biblatex, or a paper's own `
-ewcommand`, and an unknown
-    macro is dropped in silence: the citation vanished and its punctuation
-    stayed, so a stored quote read "a model should, detect the objects, and ,
-    segment them" and the paper wore the blame for our parser. Found by the
-    owner reading a quote on a thread page. The fix is a rule, not a list: any
-    macro whose name contains "cite" is folded to one mark before parsing, so
-    names nobody has enumerated are covered too. **The knock-on was the
-    interesting part.** Cleaning the text would have un-grounded every quote
-    copied out of the dirty text, and re-grounding would have reported a
-    collapse in verified counts as the result of a fix. 66 definition quotes and
-    367 edge-quote copies were re-anchored to their new spans instead: an exact
-    match modulo whitespace and citation marks, never a guess, leaving anything
-    not confidently located untouched. But re-anchoring makes the later check
-    pass by construction, so the check was moved to where it belongs:
-    `quote_is_grounded` now folds whitespace and citation marks itself, and the
-    grounding is honest without any repair step. Verified edges went from 233 to
-    286 of 305 on embedding and 211 to 287 of 287 on attention, most of which
-    was never a quoting problem at all: it was where a line happened to break.
-    **Lesson: when a check fails on things that are yours rather than the
-    source's, it is the check that is wrong, and repairing the data to satisfy
-    it hides that.**
+    (2026-07-29).** pylatexenc knows `\cite` and renders it `<cit.>`. It does not
+    know natbib, biblatex, or a paper's own `\newcommand`, and an unknown macro
+    is dropped in silence: the citation vanished and its punctuation stayed, so a
+    stored quote read "a model should, detect the objects, and , segment them"
+    and the paper wore the blame for our parser. Found by the owner reading a
+    quote on a thread page. The fix is a rule, not a list: any macro whose name
+    contains "cite" is folded to one mark before parsing, so names nobody has
+    enumerated are covered too. **The knock-on was the interesting part.**
+    Cleaning the text would have un-grounded every quote copied out of the dirty
+    text, and re-grounding would have reported a collapse in verified counts as
+    the result of a fix. 66 definition quotes and 367 edge-quote copies were
+    re-anchored instead — exact match modulo whitespace and citation marks, never
+    a guess — but re-anchoring makes the later check pass by construction, so the
+    check was moved to where it belongs: `quote_is_grounded` now folds whitespace
+    and citation marks itself. Verified edges went 233 to 286 of 305 on embedding
+    and 211 to 287 of 287 on attention, most of which was never a quoting problem
+    at all: it was where a line happened to break. **Lesson: when a check fails on
+    things that are yours rather than the source's, it is the check that is
+    wrong, and repairing the data to satisfy it hides that.**
 11. **The recorded diagnosis was wrong, and the bug was incident 10 again
     (2026-07-31).** Open item 3 had said for days that *Attention Is All You
     Need* reads "vectors of dimension ." because `$d_{model}$` extracted to
-    nothing. It does not. Run against the extractor we actually ship,
+    nothing. It does not: run against the extractor we actually ship,
     `$d_{model}$` extracts correctly to `d_model`. What extracts to nothing is
-    `$\dmodel$`, because the paper writes `\newcommand{\dmodel}{d_{model}}` in
-    its preamble and pylatexenc drops an unknown macro in silence along with its
-    content. **That is incident 10 exactly, one class wider.** The rule drawn
-    from incident 10 covered every macro whose name contains "cite". The general
-    case is every macro a paper defines for itself, and it was sitting in the
-    same document, correctly described, while the fix was scoped to citations.
-    The fix has the shape the last one should have had: expand the definitions
-    rather than enumerate the names.
-    **Two lessons, and the second is the uncomfortable one.** First, a diagnosis
-    written from a plausible reading is not a measurement: two minutes running
-    both forms through the extractor would have shown maths mode works, and
-    nobody spent them, because the explanation sounded right. Second, incident
-    10's own text names `
-ewcommand` as a thing pylatexenc does not know, and the fix that followed
-    covered only "cite". **A lesson recorded at the width of the symptom will be
-    applied at that width.** The habit this argues for is asking, of every fix,
-    what class the failure belongs to and whether the fix covers the class.
-    Consequence: `expand_own_macros`, and `check_extraction.py`, which exists
-    because none of this was visible from inside the system. Every quote passed.
-
+    `$\dmodel$`, because the paper writes `\newcommand{\dmodel}{d_{model}}` in its
+    preamble and pylatexenc drops an unknown macro in silence along with its
+    content. **That is incident 10 exactly, one class wider.** The fix has the
+    shape the last one should have had: expand the definitions rather than
+    enumerate the names.
+    **Two lessons, and the second is the uncomfortable one.** A diagnosis written
+    from a plausible reading is not a measurement: two minutes running both forms
+    through the extractor would have shown maths mode works, and nobody spent
+    them, because the explanation sounded right. And incident 10's own text names
+    `\newcommand` as a thing pylatexenc does not know, while the fix that followed
+    covered only "cite": **a lesson recorded at the width of the symptom will be
+    applied at that width.** Ask of every fix what class the failure belongs to
+    and whether the fix covers the class. Consequence: `expand_own_macros`, and
+    `check_extraction.py`, which exists because none of this was visible from
+    inside the system — every quote passed.
 12. **An empty credit balance rebuilt the showcase map into nothing
-    (2026-07-31).** Mid-repair of `embedding`, the Anthropic balance ran out. Every
-    call returned `400 invalid_request_error: Your credit balance is too low`, and
-    four stages in a row treated that as ordinary per-item failure, because each
-    had been written to survive one bad item (decision 14). Stage B's refresh died.
-    Stage D **deleted all 305 edges before classifying a single one**, classified
-    none, and left the map with 27 concept-states and no edges. Stage E dutifully
-    grounded zero edges. Stage F scored all 533 citations neutral and **persisted
-    them**, overwriting the real uptake ranking with a uniform number that looks
-    like data. Stage G crashed, which is the only one that behaved well, because
-    it is the only one that did not have a fallback.
+    (2026-07-31).** Mid-repair of `embedding`, the Anthropic balance ran out.
+    Every call returned `400 invalid_request_error: Your credit balance is too
+    low`, and four stages in a row treated that as ordinary per-item failure,
+    because each had been written to survive one bad item (decision 14). Stage B's
+    refresh died. Stage D **deleted all 305 edges before classifying a single
+    one**, classified none, and left the map with 27 concept-states and no edges.
+    Stage E dutifully grounded zero edges. Stage F scored all 533 citations
+    neutral and **persisted them**, overwriting the real uptake ranking with a
+    uniform number that looks like data. Stage G crashed, which is the only one
+    that behaved well, because it is the only one without a fallback.
     **Three lessons, and the third is the general one.** Destroy nothing until you
-    can replace something: Stage D now defers its DELETE until the first successful
-    classification, so a run that classifies nothing leaves the previous map
-    untouched. A per-item fallback needs a global sanity check: "one failure is
-    neutral" is right, "every failure is neutral" is a broken call wearing a
-    result's clothes, so Stage D and Stage F now abort when nothing at all has
-    succeeded. And an error swallowed to its class name is not a log: 305 lines
-    reading `BadRequestError` said nothing, while one line of `str(exc)` would have
-    named the cause immediately. All three now print the message.
-    Recovery is from `snapshot_map.py`, taken minutes earlier, which is the only
+    can replace something: Stage D now defers its DELETE until the first
+    successful classification. A per-item fallback needs a global sanity check:
+    "one failure is neutral" is right, "every failure is neutral" is a broken call
+    wearing a result's clothes, so Stage D and Stage F now abort when nothing at
+    all has succeeded. And an error swallowed to its class name is not a log: 305
+    lines reading `BadRequestError` said nothing, while one line of `str(exc)`
+    would have named the cause immediately. All three now print the message.
+    Recovery was from `snapshot_map.py`, taken minutes earlier, which is the only
     reason this is an incident rather than a loss.
-
 13. **This document asserted a compiler-enforced invariant that the compiler did
     not enforce, and it propagated within hours (2026-08-01).** Decision 18
-    shipped saying that `recordEdit`'s actor parameter is a `Viewer`, that a
-    `Viewer` can only come from `getViewer()` or `requireOwner()`, and that the
-    compiler therefore keeps unauthenticated text out of `by`. `Viewer` was
-    `{ login: string; name?: string | null; image?: string | null }`. TypeScript
-    compares object types by shape, so
-    `recordEdit(1, "rename", {}, { login: "attacker" })` compiled clean under
-    `--strict` with no cast, no `any`, and no import from `authz.ts`. The
-    guarantee was a comment wearing a compiler's clothes, and the same sentence
-    was in the design, in the commit message and here. Caught by the tester with
-    a `@ts-expect-error` control, which reported the directive as *unused* —
-    the cheapest possible probe and one nobody had run. By then an architecture
-    review had already read the claim out of this document and repeated it back
-    verbatim, so the false invariant had a second source before it had a fix.
-    **Two lessons.** A claim about what a type system enforces is a testable
-    claim, and `@ts-expect-error` tests it in one line; a security property
-    asserted without such a probe has not been checked, it has been hoped for.
-    And this document is load-bearing enough to be quoted, which means an
-    over-claim in it does not stay in it. The fix is a `unique symbol` brand on
-    `Viewer` (decision 18), whose whole purpose is to make the sentence already
-    written here true.
-
+    shipped saying `recordEdit`'s actor parameter is a `Viewer` obtainable only
+    from `getViewer()` or `requireOwner()`, so the compiler keeps unauthenticated
+    text out of `by`. `Viewer` was a plain shape alias, and TypeScript compares
+    object types by shape, so `recordEdit(1, "rename", {}, { login: "attacker" })`
+    compiled clean under `--strict` with no cast, no `any` and no import from
+    `authz.ts`. Caught by the tester with a `@ts-expect-error` control that
+    reported the directive as *unused* — the cheapest possible probe and one
+    nobody had run. By then an architecture review had read the claim out of this
+    document and repeated it back verbatim, so the false invariant had a second
+    source before it had a fix.
+    **Closed** by the `unique symbol` brand on `Viewer` (`app/lib/authz.ts`,
+    decision 18), which makes the sentence already written here true. What pins it
+    is thin: the brand itself, plus the convention of re-driving the five forgery
+    variants through the compiler. **No probe is checked in**, so nothing re-runs
+    them when `authz.ts` changes.
+    **Lesson.** A claim about what a type system enforces is a testable claim and
+    `@ts-expect-error` tests it in one line; asserted without such a probe it has
+    been hoped for, not checked. And this document is load-bearing enough to be
+    quoted, so an over-claim in it does not stay in it — which runs both ways:
+    `docs/FIX-LOG.md` sat public for nine days telling readers the product's core
+    claim was undermined by a defect migration 010 had already fixed, referenced
+    by nothing, so nothing prompted anyone to revise it (folded into the backlog,
+    commit `d5625a6`). A document goes on asserting in the present tense until
+    somebody edits it, in both directions.
 14. **A test harness written to be offline wrote to production, because
-    `common.py` loads `.env` at import (2026-08-01).** While building decision
-    21, a scratch script exercised `check_extraction.main()`'s argument guards
-    with a set of `sys.argv` values. It was written to be safe by doing
-    `os.environ.pop("DATABASE_URL")` first, on the belief that a script with no
-    connection string cannot reach a database. **`load_dotenv` runs at
-    `common.py` import time and fills in exactly the variable that was just
-    removed**, because `load_dotenv` does not override what is already set, and
-    popping it made it not already set. Removing the variable is what re-armed
-    it. Two of the eight cases were write paths, and both ran against live Neon:
-    `--clear-verdicts --concept embedding` cleared the verdict, signals and
-    checked-at on 187 papers, and `--only-unchecked --write` then re-audited 199
-    papers against the laptop's partial `DATA_DIR` and stored 156 verdicts
-    computed from text that is not the text on the Render disk. The remaining 43
-    were skipped as "no text on this machine" and are unstamped. Nothing else
-    was touched: the mode writes three columns and no others, so no text file,
-    quote, definition, edge or map was altered, and the loss is the per-paper
-    record of what the 2026-07-31 batch said about `embedding` — a batch this
-    document already describes as measuring text that is gone with thresholds
-    that were replaced twenty minutes later. Its totals survive in item 11.
-    **Three lessons.** Popping an environment variable does not isolate a
-    pipeline script from the database; nothing in this repo is offline by
-    construction, and the only reliable isolation is not calling `main()` at all.
-    Every earlier harness in this project drove a *function* through a fake
-    connection, which is why none of them could do this, and the moment the test
-    reached for `main()` to exercise argparse it acquired every side effect
-    `main()` has. And a dry run is not a safe default: the two destructive cases
-    were in the list precisely to show they were refused, and refusal was the
-    only thing that could be observed without a database, so the harness proved
-    the guards by running the things the guards do not stop.
-    The state this left is not a new class of wrong: those 199 rows now carry the
-    same defect the branch exists to fix, one machine over. The repair is the
-    branch's own procedure, run once merged — clear the whole table, restart the
-    Render worker, let the free pass measure every paper against the corpus the
-    maps were actually built from.
+    `common.py` loads `.env` at import (2026-08-01).** While building decision 21,
+    a scratch script exercised `check_extraction.main()`'s argument guards over a
+    set of `sys.argv` values. It was written to be safe by doing
+    `os.environ.pop("DATABASE_URL")` first. **`load_dotenv` runs at `common.py`
+    import time and does not override what is already set, so removing the
+    variable is exactly what re-armed it.** Two of the eight cases were write
+    paths and both ran against live Neon: `--clear-verdicts --concept embedding`
+    cleared the verdict, signals and checked-at on 187 papers, and
+    `--only-unchecked --write` then re-audited 199 against the laptop's partial
+    `DATA_DIR` and stored 156 verdicts computed from text that is not the text on
+    the Render disk; the remaining 43 were skipped as "no text on this machine".
+    The mode writes three columns and no others, so no text file, quote,
+    definition, edge or map was altered, and the loss is the per-paper record of
+    what the 2026-07-31 batch said about `embedding` — whose totals survive in
+    item 11 of section 11.
+    **Three lessons.** Popping an environment variable does not isolate a script
+    from the database, and nothing in this repo is offline by construction: the
+    only reliable isolation is not calling `main()` at all. Every earlier harness
+    here drove a *function* through a fake connection, which is why none of them
+    could do this; reaching for `main()` to exercise argparse acquired every side
+    effect `main()` has. And a dry run is not a safe default: the two destructive
+    cases were in the list precisely to show they were refused, refusal was the
+    only thing observable without a database, so the harness proved the guards by
+    running the things the guards do not stop.
+    **Closed (2026-08-01).** The control that replaces the instruction shipped as
+    `LINEAGE_NO_DB` (decision 22). The database credential that reached an agent
+    memory file as evidence has been **verified dead** by the owner — substituted
+    into the live DSN it was auth-rejected while the real password connected — so
+    no rotation is needed; the literal is redacted from memory and the lesson
+    kept as `placeholders-inside-runnable-commands`. What remains is data, not
+    exposure: the 199 stamped rows carry the same defect one machine over, and
+    the repair is item 12(e) of section 11.
 
 ---
 
@@ -1995,93 +1904,34 @@ Open engineering work, in priority order:
     doing a lot of work. The full figure lives on `/g/<id>/evidence`.
 
 11. ~~Every extraction verdict in the database predates the re-extraction it
-    describes, and nothing will ever refresh one~~ **FIXED IN CODE, and the
-    stored rows still need one run to correct (2026-08-01, decision 21).**
-    `extract_text.py` now clears the verdict, the signals and the checked-at in
-    the same statement that records the new text path, so no future
-    re-extraction can leave a stamp behind, and `check_extraction.py
-    --clear-verdicts` hands the already-frozen rows back to the free audit. What
-    the fix has NOT done is run: the corrected verdicts do not exist until the
-    Render worker's boot pass measures the corpus again. The procedure is in
-    section 8.
-    **A second finding, from the commit times, that makes the case stronger.**
-    The frozen verdicts are stamped `10:08:43.957021+00`. The three commits that
-    repaired this audit's calibration land at `10:19:20`, `10:22:36` and
-    `10:26:12`, and the one that took "stale" out of the verdict at `10:31:02`.
-    So those verdicts were not merely computed against text that has since been
-    replaced; they were computed by the code this file's own section 4 describes
-    as having failed three times, before any of the four repairs. The live spread
-    agrees: 160 of `embedding`'s papers stamped `damaged`, against section 4's
-    account of the pre-repair run finding "160 of 182 papers came back damaged,
-    driven almost entirely by dropped package macros". The same number.
-    **Every one of the four repairs moved in the lenient direction** — package
-    macros can no longer reach `damaged` at all, the residue bars went from 4/30
-    to 25/150, the gap detector stopped guessing at vocabulary and stopped
-    treating an indented line as a hole, and stale marks left the verdict. So a
-    re-audit should remove warnings rather than add them, which is a prediction
-    the run can be checked against rather than a hope. Confirmed offline by the
-    tester before the run: the pre-repair `scan_paper` against the current one
-    over 227 real papers gives **183 milder, 0 stricter**, from a pre-repair rate
-    of 86% `damaged`.
-    **What that prediction does NOT say, and the run will show anyway**: the
-    verdicts get much milder without getting much rarer. On those same 227
-    papers the current code still puts a warning on 174 of them (76%), because
-    `GAP_STRONG` fires on the space pylatexenc leaves after `\left(`. So expect
-    `damaged` to collapse and the total warned to stay high, and read that as
-    backlog item 1 rather than as this fix having failed. That is what happened:
-    `damaged` fell from 250 to 15 table-wide and 218 of 304 (72%) still carried a
-    warning, and item 1 then closed it at 37% (decision 25).
-    **`clean` and `damaged` are the same decision here, and the asymmetry is in
-    the gap, not in the clearing.** Clearing a `clean` verdict costs a free
-    re-measurement. Clearing a `damaged` one also removes a warning a reader is
-    being shown, until the audit runs. The audit is not on a timer: the worker
-    runs the free pass at boot (`worker/run.py` `startup_task`) and at step 4 of
-    a trace, and a Render background worker boots on a deploy, a manual restart
-    or a crash. So the gap is "until somebody restarts the worker", which is
-    minutes if the clear is followed by a restart and unbounded if it is not.
-    That is why the clear says so in its own output, and why the restart is part
-    of the operation. **It is not the safe direction**, which the first draft of
-    this entry claimed: the note is the only qualifier on the verified stamp, so
-    removing it leaves the stamp unqualified and the page claiming more than it
-    did (decision 21).
-    **The boot pass has time to spare, which an earlier draft of this entry
-    doubted.** `check_extraction.py` decides every verdict before writing any and
-    commits once, and `startup_task` kills the subprocess at 900 seconds, so a
-    scan that overran would write nothing and repeat the timeout on every boot.
-    Measured since: 227 papers in **8.7 seconds**, mean 0.038s, worst case 0.32s.
-    Two orders of magnitude of headroom. The hazard is real in shape and is not
-    a constraint on how this is run, so one map at a time stands on blast radius
-    and rehearsal alone.
-    **The state on the database is not what this entry originally described**,
-    because of incident 14: 187 of `embedding`'s papers were cleared and 156 of
-    them re-stamped from a laptop's partial corpus on 2026-08-01. That is the
-    same defect one machine over and the same procedure repairs it.
-    The original finding, kept because the record of what it cost is the reason
-    the fix exists:
-    Measured against the live database: every non-null `extraction_checked_at`
-    in `papers` carries the identical timestamp `2026-07-31 10:08:43.957021+00`,
-    so the audit was one batch. Section 4's own account of that run is the other
-    half: its fourth pass concluded that the marks it kept finding cannot survive
-    the current extractor, so "the corpus on the Render disk is text an older
-    pipeline produced and nothing has re-extracted". The audit therefore
-    describes the *pre*-re-extraction corpus. `embedding`'s papers were
-    re-extracted later the same day (decision 19), and its restore entry is
-    stamped `13:13:24Z`, three hours after the audit.
-    The spread, whole table: 250 `damaged`, 39 `suspect`, 3 `clean`, 12 never
-    checked. Restricted to `embedding`'s 187 papers: 160 `damaged`, 25
-    `suspect`, 2 `clean`. So the dossier's "our reading of this paper lost some
-    of its text" is currently rendered on 86% of that map's papers from a
-    measurement of text that no longer exists. It is wrong in whichever
-    direction the re-extraction moved it, and a paper the re-extraction *fixed*
-    is indistinguishable from one it did not.
-    Nothing corrects this by itself. `check_extraction.py --only-unchecked`
-    filters on `extraction_checked_at IS NULL`, and `extract_text.py` updates
-    `extracted_text_path` and `text_title_match` without clearing the verdict or
-    the timestamp, so the automatic run at worker startup and at trace step 4
-    skips every one of these rows forever. The fix was one line beside the
-    existing `UPDATE papers SET extracted_text_path...`, and it is now there,
-    plus `--clear-verdicts` for the rows that line came too late for.
-
+    describes, and nothing will ever refresh one~~ **FIXED IN CODE; the stored
+    rows still need one run (2026-08-01, decisions 21 and 25).** Kept because the
+    record of what it cost is the reason the fix exists.
+    **The finding.** Every non-null `extraction_checked_at` in `papers` carried
+    the identical timestamp `2026-07-31 10:08:43.957021+00`, so the audit was one
+    batch, and section 4's account of that run says the corpus it measured is
+    text an older pipeline produced. Whole table: 250 `damaged`, 39 `suspect`, 3
+    `clean`, 12 never checked. `embedding`'s 187 papers: 160 `damaged`, 25
+    `suspect`, 2 `clean` — so "our reading of this paper lost some of its text"
+    was rendered on 86% of that map's papers from a measurement of text that no
+    longer existed, and a paper the re-extraction *fixed* was indistinguishable
+    from one it did not.
+    They were also computed by pre-repair code: three commits replaced this
+    audit's calibration between 10:19 and 10:31, twenty minutes after the stamp
+    (decision 25), so the verdicts came from the code section 4 describes as
+    having failed three times. The 160 is section 4's own pre-repair number.
+    **The prediction, and what the run did.** All four repairs moved lenient, so
+    a re-audit had to remove warnings rather than add them: a claim the run could
+    be checked against rather than a hope. Confirmed offline first — pre-repair
+    `scan_paper` against the current one over 227 real papers gives **183 milder,
+    0 stricter**. Then on the run, `damaged` fell from 250 to 15 table-wide while
+    218 of 304 (72%) still carried a warning, which decision 25 took to 37%.
+    **Still outstanding.** The corrected verdicts do not exist until the Render
+    worker's boot pass measures the corpus again; that pass has headroom (227
+    papers in 8.7 s against `startup_task`'s 900 s kill). The database state is no
+    longer what this entry first described: incident 14 cleared 187 of
+    `embedding`'s papers and re-stamped 156 of them from a laptop's partial
+    corpus. Same defect one machine over, same procedure repairs it — item 12(e).
 12. **The `embedding` refresh spend is parked deliberately, not forgotten**
     (Product Owner, 2026-08-01). Finishing `/g/10` costs $8.45 of Anthropic
     credit, which is exhausted and is separate from the Max plan. The decision is
