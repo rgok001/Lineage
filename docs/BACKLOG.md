@@ -315,11 +315,23 @@ Fix: cache `[]` only on a definitive 404. Every other failure returns empty for
 this run and writes nothing, so the next run retries. Remediating what is already
 cached is deleting the affected files; the next Stage D run refetches them.
 
-**Unmeasured:** the count on the Render disk, which is the cache serving the live
-maps. The local figure is from a laptop whose cache may be older or newer. That
-count is a one-line read on the Render shell and should be taken before sizing
-this.
-Cost: $0, under an hour, plus one read to size it.
+**Measured on the Render disk, 2026-08-01.** 205 papers cached, 3 empty, and
+each of the three checked against Semantic Scholar with no key:
+
+- `1412.7755` returns 404. S2 does not hold it, so caching empty is correct.
+- `1706.02263` and `2005.04966` both return references. **Poisoned.**
+
+So the bug has fired on the cache serving the live maps: 2 of 205, 1.0%, against
+1 of 102 on the laptop. A steady low rate rather than one bad run. Those two
+papers contribute no citation contexts, so every edge touching them renders
+without the basis, and the runs that produced them reported success.
+
+Remediation is deleting the two files. Do **not** re-run Stage D for it: the
+fetch is free but the classification that follows is not, and there is no
+standalone refetch. Deleting them now means the correction lands for nothing on
+the next trace that covers those papers, at the cost of the maps staying two
+papers thin until then, which for 2 of 205 is the proportionate trade.
+Cost: $0, under an hour.
 
 ---
 
