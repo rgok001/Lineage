@@ -972,10 +972,41 @@ python pipeline/check_extraction.py --clear-verdicts --dry-run
 
 2. **Satisfy yourself the re-audit is lenient-only, before the deploy rather
    than after.** `--compare-verdicts` on the Render shell is where that is
-   checked: name the change in `PROPOSED_NOTE_SIGNALS`, read the crosstab, and
-   look for an occupied cell below the diagonal. A calibration that can make a
-   paper stricter is one to stage rather than to deploy, because the pass runs
-   unattended and there is no approval step in it.
+   checked: name the change in `PROPOSED_NOTE_SIGNALS` and read the crosstab.
+   Rows are today's verdict and columns are the proposal's, both in
+   `VERDICT_ORDER`, so **a stricter move lands above and to the right of the
+   diagonal** — `clean → suspect`, `clean → damaged`, `suspect → damaged`. Any
+   cell there is a calibration to stage rather than deploy, because the pass
+   runs unattended and there is no approval step in it. Below and to the left is
+   the milder region and is where the intended change appears: the 2026-08-01
+   run put 105 papers at row `suspect`, column `clean`, which is the whole point
+   of it.
+   **Read the `no source` and `unusable` columns too, and they are not milder.**
+   A paper moving there has not lost its warning; `--write` cannot store an
+   unstorable verdict, so the row keeps its old, stricter verdict *and* its old
+   check version, which means it is selected and skipped again on every
+   subsequent boot and the stale warning stands indefinitely. That is decision
+   23 working as designed and it is still a reader seeing a note this
+   calibration would not give. Zero papers on the 2026-08-01 run, because every
+   audited paper scanned through.
+
+3. **Write down what the boot should produce, before it produces it.** A number
+   arrived at afterwards is not a check. For the 2026-08-01 demotion of `gaps`
+   and `package_macros`, taken from the crosstab of the compare run that
+   authorised it:
+
+   ```
+   Wrote 292 verdicts        12 skipped, all "no text on this machine"
+   clean 179    suspect 98    damaged 15
+   dossier note: 218 papers before, 113 after
+   ```
+
+   `damaged` must not exceed 15 and no paper may be `damaged` that was `suspect`,
+   which is what the dump from step 1 is for. The expected split is the
+   crosstab's proposed column and nothing else: the 12 unauditable papers belong
+   in neither `clean` nor `suspect`, and counting them into the split is how an
+   earlier draft of this procedure arrived at 191 and 86 and would have made a
+   correct deploy look twelve papers wrong.
 
 **Refreshing the extraction verdicts.** When a verdict describes text that has
 been replaced, the free audit has to be told to look again. `--clear-verdicts`
