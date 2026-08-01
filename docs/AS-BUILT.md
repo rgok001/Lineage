@@ -367,6 +367,8 @@ is a draft for curation, not a result. Claude labels each cluster (pennies).
 edge endpoint, it compares what each node id denoted before against what it
 denotes now, and removes only the edges whose concept-states have changed
 underneath them; the rest are left for Stage D to replace on its first success.
+When nothing about the previous concept-states could be read, every edge clears
+and it says *that* rather than reporting a clustering change it cannot support.
 A re-run at the same threshold on an unchanged corpus **with cached embeddings**
 reproduces the same clustering and so keeps every edge. Not with `--force`,
 which re-embeds: vectors are stored at six decimal places, so a pair sitting on
@@ -1065,18 +1067,37 @@ The why behind the load-bearing choices, in one place:
     shape, so pointing it at a truncated JSON gives a malformed `nodes` blob with
     a full edge set, and a plain re-cluster then walks into it.
     A malformed blob is also no longer a raise. `node_denotation` in `common.py`
-    is the single reader of `genealogies.nodes` for both stages, with one posture:
-    anything malformed is dropped, never guessed at and never raised on, because
-    both callers treat "not a concept-state I can vouch for" as a reason to
-    remove an edge, and removing one is recoverable while displaying a wrong one
-    is not. A node that does not say which definitions it holds denotes
+    is the single reader of `genealogies.nodes` for both stages, with one posture
+    on malformed input: dropped, never guessed at and never raised on.
+    **The posture is shared; the response is not, and the difference is
+    deliberate.** Stage C clears the edges it cannot vouch for. Stage E, faced
+    with a blob so bad that every edge would go, refuses, deletes nothing and
+    names the cause. That is not an inconsistency to be tidied away: in Stage C
+    the unreadable blob is the *previous* one, already being replaced, with Stage
+    D to rebuild behind it, so clearing costs a rebuild; in Stage E it is the
+    *current* one, about to be published, so deleting on its authority would
+    destroy a map on the word of something unreadable. Each stage fails in the
+    direction that is cheap for it.
+    The two also answer differently about the same node, and correctly: a node
+    with a usable id and unreadable `definition_ids` exists, so Stage E vouches
+    for it and an edge naming it is not dangling, while Stage C cannot say it
+    denotes what it denoted, so that edge clears. Stage E asks whether a
+    concept-state is there; Stage C asks whether it still means the same.
+    A node that does not say which definitions it holds denotes
     **unknown, and unknown is never equal to unknown** — each gets a fresh
     sentinel. Reading absence as the empty set would have made two silent blobs
     compare equal and KEEP their edges, which is the one direction this must not
     fail in.
     The dangling case is settled in Stage E, which sweeps edges naming absent
     concept-states before it grounds anything, reports the count, and refuses if
-    more than one edge exists and every one of them would go.
+    more than one edge exists and every one of them would go. That refusal is the
+    twin of the `--reground` guard (decision 19), not of anything in Stage C.
+    Stage C for its part reports the cause it actually has: when nothing about
+    the previous concept-states could be read it says so, rather than reporting a
+    clustering change it never established. A corrupt restore and an ordinary
+    wholesale re-cluster used to print byte-identical lines, and the cost of that
+    was an operator re-running Stage D, which spends, on a diagnosis nobody had
+    made.
     **What this buys.** Driven directly against the code: the gate block executed
     over synthetic node blobs and edge sets, showing an appended cluster now
     keeps all its edges where whole-map equality cleared them, a single changed

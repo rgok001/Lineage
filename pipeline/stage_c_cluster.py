@@ -280,6 +280,11 @@ def main() -> None:
             new_d = node_denotation(nodes)
             safe = sorted(nid for nid, d in new_d.items()
                           if nid in prior_d and prior_d[nid] == d)
+            # The ids whose previous denotation is actually known. Empty means
+            # nothing about the old map could be established, which is a
+            # different cause from "the clustering moved" and is reported as one.
+            known_prior = [nid for nid, d in prior_d.items()
+                           if isinstance(d, frozenset)]
             cleared = conn.execute(CLEAR_STALE_EDGES,
                                    {"gid": gen_id, "safe": safe}).rowcount
             kept = edges_now - cleared
@@ -287,6 +292,29 @@ def main() -> None:
                 print(f"  every concept-state these {kept} edge(s) name still holds the "
                       f"same definitions, so all {kept} were kept.\n"
                       f"  Stage D will replace them on its first successful classification.")
+            elif not known_prior:
+                # The clearing is right, the usual explanation for it is not. A
+                # prior blob nothing can be read out of empties `safe` and removes
+                # every edge, and saying "the clustering changed" there asserts
+                # something that was never established: a corrupt restore and an
+                # ordinary wholesale re-cluster produced byte-identical output.
+                # The cost of that was an operator re-running Stage D, which
+                # spends, on a diagnosis nobody made, while the corruption that
+                # caused it went unread.
+                if not prior[1]:
+                    why = "were not recorded at all"
+                elif not prior_d:
+                    why = "could not be read"
+                else:
+                    why = (f"did not say which definitions they held "
+                           f"({len(prior_d)} recorded)")
+                print(f"  the map's previous concept-states {why}, so none of the "
+                      f"{edges_now} existing edge(s) could be vouched for and all "
+                      f"were removed.")
+                print("  This is NOT a finding that the clustering changed. Read "
+                      "genealogies.nodes as it was before you trust the new map, and "
+                      "check any recent restore.")
+                print("  Run Stage D to rebuild the edges.")
             else:
                 print(f"  {cleared} of {edges_now} edge(s) named a concept-state that no "
                       f"longer holds the same definitions, and were removed.")

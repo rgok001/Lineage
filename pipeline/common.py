@@ -370,15 +370,26 @@ def node_denotation(nodes: object) -> dict:
         defs = n.get("definition_ids")
         # object() rather than a shared constant: a shared one would compare
         # equal to itself and reintroduce absence-as-sameness.
+        # `type(d) is int`, not isinstance: bool subclasses int, so isinstance
+        # let [True] compare equal to [1]. No writer emits booleans here, but a
+        # type gate that reads stricter than it is will be trusted as if it were.
         out[nid.strip()] = (frozenset(defs)
                             if isinstance(defs, list) and defs
-                            and all(isinstance(d, int) for d in defs)
+                            and all(type(d) is int for d in defs)
                             else object())
     return out
 
 
 def node_ids(nodes: object) -> list[str]:
-    """The concept-state ids a map actually has, sorted. Same posture as above,
-    so a node Stage C would refuse to compare is also one Stage E will not
-    vouch for."""
+    """The concept-state ids a map actually has, sorted.
+
+    Same posture on malformed input as `node_denotation` — dropped, never raised
+    on — but deliberately NOT the same answer, because the two callers ask
+    different questions. Stage E asks whether a concept-state exists, so a node
+    whose `definition_ids` are unreadable still counts: the id is there and an
+    edge naming it is not dangling. Stage C asks whether it denotes what it
+    denoted, and unreadable is not an answer, so that same node is not safe and
+    its edges clear. A node with a usable id and junk definitions is therefore in
+    this list and out of Stage C's safe set, which is correct for both.
+    """
     return sorted(node_denotation(nodes))
