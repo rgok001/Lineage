@@ -1186,6 +1186,39 @@ The why behind the load-bearing choices, in one place:
     different statement rather than branching inside one, so the preview cannot
     become the write by one edit.
 
+22. **A process can be told it may not reach the database, and cannot untell
+    itself** (2026-08-01). `LINEAGE_NO_DB`, set to anything non-blank, makes
+    `common.env("DATABASE_URL")` refuse. Every connection in the repo takes its
+    DSN from that one function, in the pipeline, in the worker and in the
+    migrator, and nothing reads the variable directly, so one branch closes all
+    twenty call sites.
+    This exists because incident 14 proved that an instruction is not a control.
+    An agent was told not to touch the database, believed it was not touching
+    the database, and touched it twice. Three properties are load-bearing, and
+    each is drawn from how that actually failed rather than from what sounds
+    careful.
+    **It is immune to the pop.** The harness "sandboxed" itself with
+    `os.environ.pop("DATABASE_URL")`, which is the move that let it through:
+    `load_dotenv` does not override a variable that is already set, so removing
+    it is precisely what allows `.env` to refill it. The guard records at import
+    whether it was on and honours that afterwards, so it can be turned on and
+    never off, and popping it does nothing.
+    **It raises a `BaseException`.** The harness looped over eight cases, which
+    means it was absorbing whatever each raised and continuing, which is how one
+    mistake became two writes. `sys.exit` raises `SystemExit`; an
+    `except Exception` eats everything else. `BaseException` is what an ordinary
+    catch-and-continue cannot quietly swallow.
+    **Any non-blank value counts, including `0` and `false`.** A guard that
+    parses its own setting has a way to be wrong about it, and the safe reading
+    of an ambiguous value is to refuse.
+    Considered and rejected: making refusal the default and requiring an opt-out
+    to run for real. It fails closed, which is this project's habit elsewhere,
+    but it would put a new deploy-time failure mode into the worker (a missing
+    variable in `render.yaml` and the worker cannot start) in order to prevent a
+    development-time mistake. The cost lands on production to protect the
+    workbench. Opt-in, named in every agent brief, is the trade taken; the
+    residue is that a harness nobody told about the flag is still unguarded.
+
 ---
 
 ## 10. Incidents and lessons

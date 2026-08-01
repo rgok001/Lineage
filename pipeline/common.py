@@ -23,7 +23,59 @@ load_dotenv(REPO_ROOT / ".env")
 USER_AGENT = "Lineage/0.1 (concept genealogy demonstrator; mailto:{mailto})"
 
 
+# ── refusing the database on purpose ────────────────────────────────────────
+#
+# Incident 14. An agent told not to touch the database wrote a harness that
+# drove a CLI's main() over a list of argv values, and made it "safe" with
+# os.environ.pop("DATABASE_URL"). That pop is what let it through:
+# load_dotenv() above does not override a variable that is already set, so
+# removing the variable is precisely what allows .env to refill it. Two of the
+# eight cases were write paths and both ran against production.
+#
+# The guard therefore lives at the one place that hands out the DSN. Every
+# connection in this repo, in the pipeline, in the worker and in the migrator,
+# takes it from env("DATABASE_URL"), and nothing reads the variable directly,
+# so this single branch closes all twenty of them.
+#
+# Two deliberate choices, both from how the incident actually unfolded:
+#
+# It raises a BaseException. The harness looped over its cases, which means it
+# was absorbing whatever each case raised and moving on to the next one, which
+# is how a single mistake became two writes. `sys.exit` raises SystemExit and
+# an `except Exception` swallows everything else; BaseException is the one
+# thing an ordinary catch-and-continue cannot quietly eat.
+#
+# And it is sticky: once set at import, popping the variable later cannot turn
+# it off, because popping an environment variable to sandbox a harness is the
+# exact move that caused this. It can be turned on, never off.
+
+NO_DB = "LINEAGE_NO_DB"
+
+
+class DatabaseAccessRefused(BaseException):
+    """LINEAGE_NO_DB is set and something asked for the connection string."""
+
+
+_NO_DB_AT_IMPORT = bool(os.environ.get(NO_DB, "").strip())
+
+
+def db_refused() -> bool:
+    """True if this process has been told it may not reach the database.
+
+    Any non-blank value counts, including "0" and "false". A guard that has to
+    parse its own setting is a guard with a way to be wrong about it, and the
+    safe reading of an ambiguous value here is to refuse.
+    """
+    return _NO_DB_AT_IMPORT or bool(os.environ.get(NO_DB, "").strip())
+
+
 def env(name: str, default: str | None = None) -> str:
+    if name == "DATABASE_URL" and db_refused():
+        raise DatabaseAccessRefused(
+            f"{NO_DB} is set, so this process may not reach the database. "
+            "Nothing was connected and nothing was written. "
+            f"Unset {NO_DB} and run again to work against real data."
+        )
     val = os.environ.get(name, default)
     if val is None:
         sys.exit(f"Missing required env var {name} (set it in .env — see .env.example)")
