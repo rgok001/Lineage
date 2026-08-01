@@ -930,11 +930,17 @@ python pipeline/check_extraction.py --compare-verdicts --json /data/verdict_comp
 ```
 
 It stores nothing, changes no threshold, and refuses `--write`,
-`--clear-verdicts` and `--dry-run` (decision 24). Read the sole-cause table
-before deciding anything: a rate says the check is wrong, and only that table
-says which signal is. Leave `--only-unchecked` off. It is in the worker's boot
-command and would scope this to the papers nobody has audited, which is usually
-none of them.
+`--clear-verdicts`, `--dry-run`, `--only-unchecked` and `--sample` (decision 24).
+**Read the crosstab first, then the sole-cause table, and read them for
+different things.** The crosstab is the joint effect of the proposal on trial:
+how many papers would still show the dossier note if every signal it names were
+demoted together. The sole-cause columns are per signal and say which one to
+suspect. **They do not add up.** A paper carrying two of the named signals is
+sole-caused by neither and appears in neither row, so the rows understate the
+proposal by however much the signals co-occur. Measured on the corpus that
+produced the 76%: `gaps` alone frees 31 papers, `package_macros` alone 28, both
+together 87. Reading 31 and 28 as 59 is the arithmetic that makes "fix one
+cause" look reasonable, and it is the reason this work was split into 1a and 1b.
 
 **Observing a trace.** The queue and progress panel on `/trace` is the primary
 view.

@@ -673,9 +673,19 @@ def print_comparison(report: dict) -> None:
         print(f"      would show the dossier note:  now {now} ({now / n:.0%})"
               f"   proposed {prop} ({prop / n:.0%})\n")
 
+    # These two columns are MARGINAL, and saying so is load-bearing. A paper
+    # carrying two of these signals is sole-caused by neither and appears in
+    # neither row, so the column does not sum to the effect of demoting several
+    # at once. Measured on the corpus: gaps alone frees 31, package_macros alone
+    # 28, both together 87. An operator who adds 31 and 28 concludes that fixing
+    # both buys 59, which is the "fix one and land at 63%" reasoning this ticket
+    # was split in two to prevent.
     print("  Sole cause: papers this signal fires on, and how many of them it is "
-          "the only\n  reason for. A rate says the check is wrong; this says which "
-          "signal is.\n")
+          "the only\n  reason for. Use it to find which signal to suspect, not to "
+          "add up.\n  These columns are per signal: a paper carrying two of them "
+          "is counted in\n  neither, so demoting several frees more papers than "
+          "the rows suggest. The\n  joint effect of the proposal on trial is the "
+          "crosstab above.\n")
     print(f"      {'signal':<24}{'fires on':>10}{'only reason':>13}{'only reason':>13}")
     print(f"      {'':<24}{'':>10}{'not clean':>13}{'for the note':>13}")
     for s in report["signals"]:
@@ -940,11 +950,21 @@ def main() -> None:
     # is the one PREVIEW_VERDICTS was built on: a preview that can write is one
     # edit away from being the write, and this one exists to be run before
     # anything is changed and argued with afterwards.
-    if args.compare_verdicts and (args.write or args.clear_verdicts or args.dry_run):
-        sys.exit("--compare-verdicts reads and prints only. It stores no verdict, "
-                 "clears none\nand rehearses nothing, so --write, --clear-verdicts "
-                 "and --dry-run have no\nmeaning alongside it. Run it on its own, "
-                 "read both tables, then decide.")
+    if args.compare_verdicts and (args.write or args.clear_verdicts or args.dry_run
+                                  or args.only_unchecked or args.sample):
+        # --only-unchecked is in here because it is the flag most likely to be
+        # copied by hand: it sits in the worker's own boot command. After a
+        # refresh it selects only the papers nobody could audit, so the
+        # comparison would come back over a handful of unscannable rows, with
+        # percentages, every reader-facing cell at zero, and look like a finding.
+        sys.exit("--compare-verdicts reads and prints only, over every audited "
+                 "paper. It\nstores no verdict, clears none and rehearses nothing, "
+                 "and it compares whole\ncolumns rather than sampling, so --write, "
+                 "--clear-verdicts, --dry-run,\n--only-unchecked and --sample have "
+                 "no meaning alongside it. --only-unchecked\nwould scope it to the "
+                 "papers nobody has audited, which after a refresh is\nusually none "
+                 "of them. Run it on its own, read the crosstab and then the sole\n"
+                 "cause table, and decide.")
     if args.clear_verdicts and (args.write or args.only_unchecked):
         sys.exit("--clear-verdicts is the opposite job to --write: it removes the stored\n"
                  "verdicts so the free audit will measure again, and it reads no text at\n"

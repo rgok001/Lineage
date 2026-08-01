@@ -124,11 +124,16 @@ each verdict on the paper (migration 013) so the app can tell a reader what it
 knows about the text a quote was matched against.
 
 `--compare-verdicts` prints today's verdicts against the ones a named proposal
-would give, and a table of which signal is the sole reason each paper is not
-clean. It changes no threshold and stores nothing, and it refuses `--write`,
-`--clear-verdicts` and `--dry-run`. It exists because this check has been
-recalibrated four times off its own corpus rate, and a rate says the check is
-wrong without ever saying which signal is.
+would give, and a table of how often each signal is the sole reason a paper is
+not clean. It changes no threshold and stores nothing, and it refuses `--write`,
+`--clear-verdicts`, `--dry-run`, `--only-unchecked` and `--sample`. It exists
+because this check has been recalibrated four times off its own corpus rate, and
+a rate says the check is wrong without pointing at a signal.
+
+Read the two tables for different things. The sole cause columns are per signal
+and tell you which one to suspect; they do not add up, because a paper carrying
+two of them is counted in neither. The joint effect of demoting several at once
+is the crosstab.
 
 ### Repairing a map after the extracted text changes
 
