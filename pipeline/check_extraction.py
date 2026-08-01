@@ -630,7 +630,14 @@ def clear_verdicts(conn, concept: str | None, only: list[str] | None,
     # produce the file has not rehearsed the part that matters.
     dumped = conn.execute(DUMP_VERDICTS.format(scope=scope), params).fetchall()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    tag = re.sub(r"[^a-z0-9]+", "_", (concept or "all").lower())
+    # The filename outlives the printed line by months, so it carries every
+    # scope the statement carried. A two-paper copy filed as "all" is how
+    # somebody later restores the wrong thing, or believes they already hold a
+    # whole-table backup they never took.
+    parts = [re.sub(r"[^a-z0-9]+", "_", concept.lower())] if concept else []
+    if only:
+        parts.append(f"{len(only)}paper" + ("s" if len(only) > 1 else ""))
+    tag = "_".join(parts) or "all"
     dump = Path(out_path) if out_path else (
         data_dir() / "snapshots" / f"extraction_verdicts_{tag}_{stamp}.json")
     dump.parent.mkdir(parents=True, exist_ok=True)
@@ -693,7 +700,9 @@ def main() -> None:
                          "remove (default DATA_DIR/snapshots/, timestamped)")
     ap.add_argument("--dry-run", action="store_true",
                     help="with --clear-verdicts, report what would be cleared and "
-                         "write nothing")
+                         "write nothing to the database. It still saves the copy, "
+                         "because a rehearsal that skips the file has not "
+                         "rehearsed the part that can fail")
     args = ap.parse_args()
 
     if args.clear_verdicts and (args.write or args.only_unchecked):
