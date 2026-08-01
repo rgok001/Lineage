@@ -780,6 +780,7 @@ separate GitHub OAuth apps.
 | `TRACE_SPEND_CAP_USD` | root `.env` | 15 |
 | `DATA_DIR` | root `.env`, Render (`/data`) | absolute paths honoured |
 | `OPENALEX_MAILTO` | root `.env`, Render | polite-pool contact |
+| `LINEAGE_NO_DB` | set per shell, never committed | any non-blank value and every Python entry point refuses to hand out `DATABASE_URL` (decision 22). Set it in any shell running pipeline code to inspect it rather than to operate on real data. Does not reach the Node side |
 | `AUTH_SECRET`, `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, `OWNER_GITHUB_LOGIN` | `app/.env.local`, Vercel | Auth.js reads exactly these names |
 
 **Local development.** App: `cd app && npm run dev` (port 3000). Worker:
@@ -818,17 +819,28 @@ python pipeline/check_extraction.py --clear-verdicts --concept "embedding"
 
 Then restart the worker from the Render dashboard (Manual Deploy -> Restart
 service) and watch its log for `[startup] audit extracted text` and a
-`Wrote N verdicts` line. **Between the two the paper dossiers show no extraction
-note at all, and nothing brings it back but that restart** (decision 21). One
-map at a time keeps the boot scan inside `startup_task`'s 900-second budget;
-repeat without `--concept` for the rest of the table once the first has been
-seen to work. `--only <arxiv id>` clears a single paper, which is the smallest
-end-to-end rehearsal of the whole loop.
+`Wrote N verdicts` line. **Restart it straight away, and treat that as part of
+the operation.** Until it boots, those papers show no note about their text at
+all, which leaves the verified stamp on each of them standing with nothing next
+to it: the page claims more than it did before the clear, not less (decision 21).
+The clear takes a per-paper copy of what it removes into
+`DATA_DIR/snapshots/`, on `--dry-run` as well, so the record survives the
+operation whatever happens next.
+
+Do one map at a time, and repeat without `--concept` for the rest of the table
+once the first has been seen to work. The reason is blast radius and rehearsal,
+not runtime: the audit was measured at **8.7 seconds for 227 papers**, mean
+0.038s and worst case 0.32s, against `startup_task`'s 900-second kill, so there
+is no time pressure here at all. `--only <arxiv id>` clears a single paper,
+which is the smallest end-to-end rehearsal of the whole loop.
 
 On a machine that has the corpus, `python pipeline/check_extraction.py --write`
 without `--only-unchecked` does the same job in one step and leaves no gap. Do
 not run it anywhere else: a partial `DATA_DIR` produces verdicts about text the
-maps were not built from (incident 14).
+maps were not built from (incident 14). The scan will now decline to call a
+paper `clean` when it could not read that paper's source archive (decision 23),
+so a run off the worker writes fewer verdicts and names what it skipped, but it
+still writes some, and they are still about the wrong text.
 
 **Observing a trace.** The queue and progress panel on `/trace` is the primary
 view.
@@ -1170,13 +1182,30 @@ The why behind the load-bearing choices, in one place:
     machine with a partial `DATA_DIR` writes verdicts describing text that is not
     the text the map was built from. The clear is the only honest thing such a
     machine can do: hand the papers back to the machine that can measure them.
-    **The gap is real and is named in the output.** Between the clear and the
-    next audit the dossier says nothing about the extraction rather than
-    something false, which is the safe direction but is still a warning silently
-    absent. Nothing re-audits on a timer: the Render worker runs the free pass at
-    boot, and a background worker boots on deploy, on a manual restart, or on a
-    crash. So the clear tells the operator, in as many words, that the verdicts
-    do not come back until the worker is restarted.
+    **The gap is real, it is not the safe direction, and the output says so.**
+    The first draft of this entry called it safe on the grounds that an absent
+    note claims nothing. That is wrong about where the note sits. On the dossier
+    it renders directly beneath "verified verbatim against the source text" and
+    it is the **only qualifier on that tick**, so clearing it does not leave the
+    page saying less: it leaves the page saying *more*, with the verification
+    stamp standing alone and unqualified. Between the clear and the next audit
+    the map is making a stronger claim than it was a moment before, which is the
+    one direction this product is not allowed to drift in.
+    Nothing re-audits on a timer. The Render worker runs the free pass at boot,
+    and a background worker boots on a deploy, on a manual restart, or on a
+    crash. So the restart is part of the operation and not the next line of a
+    runbook: `--clear-verdicts` ends by telling the operator to restart the
+    worker now, and says what is standing unqualified until they do.
+    **It takes a copy first.** The preview is a `GROUP BY`, so it says three
+    papers were damaged and not which three, and the wet run would otherwise
+    destroy the only per-paper record there is. Every row in scope is written to
+    `DATA_DIR/snapshots/extraction_verdicts_<scope>_<stamp>.json` before the
+    UPDATE, and on `--dry-run` too, since a rehearsal that skips the part that
+    matters has not rehearsed. Restoring is deliberately not automated, for
+    `snapshot_map.py`'s reason and one more: these values are stale by
+    construction, so putting one back is a decision somebody makes deliberately.
+    Commit `3b65766` is the rule ("destroy nothing until you can replace
+    something") and incident 14 is what having no copy costs.
     Scoped, because `papers` is shared across every concept ever traced;
     `--concept` uses the same `EXISTS` on `definitions` that `extract_text.py
     --concept` uses, prompt version and all (it has none), so the tool that
@@ -1186,12 +1215,22 @@ The why behind the load-bearing choices, in one place:
     different statement rather than branching inside one, so the preview cannot
     become the write by one edit.
 
-22. **A process can be told it may not reach the database, and cannot untell
-    itself** (2026-08-01). `LINEAGE_NO_DB`, set to anything non-blank, makes
-    `common.env("DATABASE_URL")` refuse. Every connection in the repo takes its
-    DSN from that one function, in the pipeline, in the worker and in the
-    migrator, and nothing reads the variable directly, so one branch closes all
-    twenty call sites.
+22. **A Python process can be told it may not reach the database, and cannot
+    untell itself** (2026-08-01). `LINEAGE_NO_DB`, set to anything non-blank,
+    makes `common.env("DATABASE_URL")` refuse. Every connection **in the Python
+    pipeline, the worker and the migrator** takes its DSN from that one
+    function, and none of them reads the variable directly, so one branch closes
+    all twenty call sites. That was verified by enumerating them.
+    **It does not cover the Node side, and the first draft of this entry said it
+    covered everything.** `app/lib/db.ts:13` passes `process.env.DATABASE_URL`
+    straight to `neon()`, so `npm run dev` connects to whatever is configured
+    regardless of this flag. `app/scripts/check-db.mjs`,
+    `check-auth-env.mjs` and `security-test.mjs` do not read the environment at
+    all: each regexes `DATABASE_URL` out of `app/.env.local`, and
+    `security-test.mjs` fires mutation payloads at every Server Action id it
+    harvests. `app/.env.local` exists on the development machine. So the true
+    claim is "every Python entry point", and the reach of a guard is exactly the
+    kind of sentence incident 13 is about.
     This exists because incident 14 proved that an instruction is not a control.
     An agent was told not to touch the database, believed it was not touching
     the database, and touched it twice. Three properties are load-bearing, and
@@ -1216,8 +1255,78 @@ The why behind the load-bearing choices, in one place:
     but it would put a new deploy-time failure mode into the worker (a missing
     variable in `render.yaml` and the worker cannot start) in order to prevent a
     development-time mistake. The cost lands on production to protect the
-    workbench. Opt-in, named in every agent brief, is the trade taken; the
-    residue is that a harness nobody told about the flag is still unguarded.
+    workbench. Opt-in, named in every agent brief, is the trade taken.
+    **The residue, stated so nobody has to rediscover it.** A harness nobody
+    told about the flag is unguarded, which is the point of opt-in. Beyond that,
+    three ways past it are known and none is closed:
+    (a) The Node side above.
+    (b) **`importlib.reload`, or any fresh import after the variable is
+    popped.** "On, never off" holds for a module object, not for a process: the
+    import-time reading is stored in that object, so reloading `common` or
+    importing it in a subinterpreter re-reads an environment that no longer has
+    the flag. Popping cannot lift it; popping and then reloading can.
+    (c) **A child process handed a deliberately minimal `env=`.** A parent that
+    builds a clean environment for a subprocess, which is the careful-looking
+    thing to do, does not pass a flag it was never told to pass; `load_dotenv`
+    then refills `DATABASE_URL` from `.env` in the child and the child is
+    unguarded. Copying `os.environ` and stripping secrets is safe here and
+    handing over a minimal environment is not, and the two look equally careful,
+    which is the whole shape of incident 14 repeating one level down.
+    None of these is fixed in code on purpose. Each fix has a way to be wrong
+    about it, and an accurate description of the residue is worth more today
+    than a second guard whose reach would need its own paragraph.
+
+23. **Report the damage you measured, never the cleanliness you did not
+    establish** (2026-08-01). Six of `check_extraction.py`'s signals need the
+    paper's source archive: the length ratio, the two macro counts and the
+    symbol survival rate. `source_latex_for` returned a bare `None` when the
+    archive was not on the machine, the whole block was skipped in silence, and
+    the paper fell out of the bottom as `clean` with an empty signals array.
+    `--write` stored that. **Measured by the tester: same 224 papers, same text
+    files, archives removed and nothing else changed, and 47 verdicts move, 39
+    of them to `clean`.** The docstring above the function had promised the
+    opposite since the day it was written, and it was true of the text file and
+    false of the archive.
+    This is worse than a wrong warning, and the asymmetry is the point. A
+    warning that is wrong is visible: it is on the page, a reader can weigh it,
+    and somebody eventually checks it. A reassurance nobody computed is
+    invisible by construction, and on the dossier it is not even a sentence, it
+    is the absence of one.
+    So the two failures are separated: `absent` (not on THIS machine, the answer
+    exists elsewhere, incident 7c) and `unusable` (an archive holding only a PDF,
+    or one with no main `.tex`, the same on every machine). Either way the scan
+    is incomplete, and an incomplete scan **may still return `suspect` or
+    `damaged`** — residue, undecodable bytes, gaps and missing headings are read
+    off the text alone, so a finding there is true whatever else was skipped —
+    but it **may not return `clean`**, because `clean` is the only verdict that
+    asserts an absence. It gets a verdict of its own instead, joins
+    `no text on this machine`, is counted and named in the output, and `--write`
+    skips it. None of the three could be stored anyway: migration 013's CHECK
+    allows only the three real verdicts, so the alternative to skipping was
+    always a constraint violation or a lie.
+    **A PDF-sourced paper is not incomplete for this.** There is no LaTeX to
+    measure its text against, so those six signals are inapplicable rather than
+    uncomputed, and its verdict still comes from the signals that do apply.
+    Inapplicable and uncomputed look identical in a code path and are opposites
+    in what they license.
+    **What was considered and rejected: refusing `--write` when the corpus looks
+    partial.** It is the obvious control and it cannot be written. The Render
+    worker's own disk was visibly partial on the run that produced the frozen
+    batch — 12 of its papers had no text on it — so any threshold low enough to
+    catch a laptop holding half a corpus would have stopped the worker auditing
+    anything at all, and a stage that refuses on the machine it was built for is
+    worse than the defect. A fraction between those two cases is exactly the
+    guessed calibration this project has shipped three of. What is guarded
+    instead is the degenerate case: `--write` refuses when not one paper in scope
+    could be scanned through, which is an unmounted or wrong `DATA_DIR` and
+    nothing else. `refuse_if_nothing_scanned` is split out so it can be driven
+    with a list of scans and no database.
+    The remaining exposure is a machine that holds *part* of the corpus writing
+    verdicts about text the maps were not built from. Nothing in the data
+    distinguishes that machine from the worker, so it is covered by the operator
+    controls rather than by a heuristic: `LINEAGE_NO_DB` (decision 22), the
+    runbook saying `--write` belongs on the worker, and `--clear-verdicts` being
+    the thing a database-only machine runs instead.
 
 ---
 
@@ -1565,7 +1674,16 @@ Open engineering work, in priority order:
     to 25/150, the gap detector stopped guessing at vocabulary and stopped
     treating an indented line as a hole, and stale marks left the verdict. So a
     re-audit should remove warnings rather than add them, which is a prediction
-    the run can be checked against rather than a hope.
+    the run can be checked against rather than a hope. Confirmed offline by the
+    tester before the run: the pre-repair `scan_paper` against the current one
+    over 227 real papers gives **183 milder, 0 stricter**, from a pre-repair rate
+    of 86% `damaged`.
+    **What that prediction does NOT say, and the run will show anyway**: the
+    verdicts get much milder without getting much rarer. On those same 227
+    papers the current code still puts a warning on 174 of them (76%), because
+    `GAP_STRONG` fires on the space pylatexenc leaves after `\left(`. So expect
+    `damaged` to collapse and the total warned to stay high, and read that as
+    backlog item 1 rather than as this fix having failed.
     **`clean` and `damaged` are the same decision here, and the asymmetry is in
     the gap, not in the clearing.** Clearing a `clean` verdict costs a free
     re-measurement. Clearing a `damaged` one also removes a warning a reader is
@@ -1574,18 +1692,19 @@ Open engineering work, in priority order:
     a trace, and a Render background worker boots on a deploy, a manual restart
     or a crash. So the gap is "until somebody restarts the worker", which is
     minutes if the clear is followed by a restart and unbounded if it is not.
-    That is why the clear says so in its own output, and why the procedure ends
-    with the restart rather than leaving it implied. It is still the safe
-    direction: an absent note claims nothing, where the present one claims
-    something measured from text that is gone.
-    **One risk in the boot pass, reasoned and not measured.**
-    `check_extraction.py` decides every verdict before writing any of them and
-    commits once, and `startup_task` kills the subprocess at 900 seconds and
-    carries on. If a whole-table scan of ~300 papers, each of which decompresses
-    a source archive and expands its macros, exceeds that, nothing is written
-    and every subsequent boot repeats the same timeout. Clearing one map at a
-    time bounds the job, which is the other reason the procedure does
-    `embedding` first. Worth watching the boot log for "Wrote N verdicts".
+    That is why the clear says so in its own output, and why the restart is part
+    of the operation. **It is not the safe direction**, which the first draft of
+    this entry claimed: the note is the only qualifier on the verified stamp, so
+    removing it leaves the stamp unqualified and the page claiming more than it
+    did (decision 21).
+    **The boot pass has time to spare, which an earlier draft of this entry
+    doubted.** `check_extraction.py` decides every verdict before writing any and
+    commits once, and `startup_task` kills the subprocess at 900 seconds, so a
+    scan that overran would write nothing and repeat the timeout on every boot.
+    Measured since: 227 papers in **8.7 seconds**, mean 0.038s, worst case 0.32s.
+    Two orders of magnitude of headroom. The hazard is real in shape and is not
+    a constraint on how this is run, so one map at a time stands on blast radius
+    and rehearsal alone.
     **The state on the database is not what this entry originally described**,
     because of incident 14: 187 of `embedding`'s papers were cleared and 156 of
     them re-stamped from a laptop's partial corpus on 2026-08-01. That is the
@@ -1645,10 +1764,12 @@ Open engineering work, in priority order:
     vectors, so no test here reaches it the way a trace does.
     (e) Item 11 above. The code shipped; the run has not happened. Needs no
     spend, only a worker restart: confirm the boot pass prints "Wrote N
-    verdicts" inside its 900-second budget, that the new spread is much less
-    severe than 250 `damaged` (the prediction in item 11), and that the 156 rows
-    incident 14 stamped from a laptop have been replaced by measurements of the
-    Render corpus.
+    verdicts", that the new spread is much less severe than 250 `damaged` (the
+    prediction in item 11), that the 156 rows incident 14 stamped from a laptop
+    have been replaced by measurements of the Render corpus, and that the
+    `no source archive on this machine` count on the worker is small, since a
+    large one means the Render disk is missing archives rather than that the
+    guard is firing wrongly (decision 23).
     Closed already and not needing the spend: `CLEAR_STALE_EDGES`,
     `SELECT_ORPHANS` and `DELETE_ORPHANS` have been parsed and planned by the
     live server, and `with conn.transaction()` on an autocommit connection has

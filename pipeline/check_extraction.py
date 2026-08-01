@@ -76,6 +76,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import psycopg
@@ -178,6 +179,14 @@ GAP_SUSPECT = 3
 SECTION_HINTS = (re.compile(r"^[\s§]*(?:\d+\.?\s*)?references\b", re.I | re.M),
                  re.compile(r"^[\s§]*(?:\d+\.?\s*)?(?:introduction|abstract)\b", re.I | re.M))
 
+# Verdicts that are not verdicts: the scan could not be finished, so there is
+# nothing to store. `--write` skips them, they are counted and printed, and the
+# row stays unaudited so the machine that can answer will.
+NO_TEXT = "no text on this machine"
+NO_SOURCE = "no source archive on this machine"
+SOURCE_UNUSABLE = "source archive unusable"
+UNSTORABLE = (NO_TEXT, NO_SOURCE, SOURCE_UNUSABLE)
+
 _known_cache: dict[str, bool] = {}
 
 
@@ -276,32 +285,58 @@ def symbol_survival(source_latex: str, text: str) -> tuple[int, int, list[str]]:
     return checked, missing, examples
 
 
-def source_latex_for(raw_path: Path) -> str | None:
-    """The inlined LaTeX body the extractor would have parsed, or None when the
-    raw file is a PDF, is unreadable, or is simply not on this machine. The last
-    case is ordinary rather than exceptional: the database is shared and the
-    disks are not (incident 7c)."""
+def source_latex_for(raw_path: Path) -> tuple[str | None, str | None]:
+    """(inlined LaTeX body, why not) for the source the extractor would have parsed.
+
+    The two failures used to be the same `None`, and that is what let a paper the
+    scanner never looked at come back "clean": the archive-fed signals were
+    skipped in silence and the absence of a finding read as the finding of an
+    absence. They are separated because they mean opposite things about where
+    the answer lives.
+
+      absent    not on THIS machine. Ordinary rather than exceptional, because
+                the database is shared and the disks are not (incident 7c), and
+                the answer exists on the machine that holds the file.
+      unusable  here and no use to us: an archive holding only a PDF, one
+                pylatexenc cannot open, one with no main .tex. The answer is the
+                same on every machine, so nothing is gained by waiting for one.
+    """
     try:
         raw = raw_path.read_bytes()
     except OSError:
-        return None
+        return None, "absent"
     try:
         texs, _ = read_archive(raw)
     except Exception:
-        return None
+        return None, "unusable"
     main = find_main_tex(texs)
     if not main:
-        return None
+        return None, "unusable"
     try:
-        return inline_inputs(main, texs)
+        return inline_inputs(main, texs), None
     except (KeyError, RecursionError):
-        return texs[main]
+        return texs[main], None
 
 
 def scan_paper(row: dict) -> dict:
     """One paper's signals and verdict. Absent evidence is recorded as absent,
     never as a pass: a paper whose text file is missing gets its own verdict so
-    it cannot quietly inflate the clean rate."""
+    it cannot quietly inflate the clean rate.
+
+    That promise was kept for the text file and broken for the source archive.
+    Six of the signals below need the archive, `source_latex_for` returned a
+    silent `None` when it was not on this machine, and the paper fell through to
+    "clean" with an empty signals array. Measured on 224 papers with the archives
+    removed and nothing else changed: 47 verdicts moved and 39 of them became
+    "clean". `--write` stored those. A warning that is wrong is at least visible;
+    a reassurance nobody computed is not.
+
+    So the rule is now: **report the damage you measured, never the cleanliness
+    you did not establish.** A partial scan may still return "suspect" or
+    "damaged", because residue, undecodable bytes and gaps are read off the text
+    alone and a finding there is true whatever else was skipped. It may not
+    return "clean", because "clean" is the one verdict that asserts an absence.
+    """
     out: dict = {
         "arxiv_id": row["arxiv_id"], "title": row["title"],
         "source_format": row["source_format"], "title_match": row["text_title_match"],
@@ -310,7 +345,7 @@ def scan_paper(row: dict) -> dict:
     try:
         text = (data_dir() / row["extracted_text_path"]).read_text(encoding="utf-8")
     except OSError:
-        out["verdict"] = "no text on this machine"
+        out["verdict"] = NO_TEXT
         return out
 
     out["chars"] = len(text)
@@ -345,8 +380,14 @@ def scan_paper(row: dict) -> dict:
     if not any(p.search(text) for p in SECTION_HINTS):
         out["signals"].append(("suspect", "no references or introduction heading"))
 
-    if row["source_format"] == "latex" and row["raw_path"]:
-        source = source_latex_for(data_dir() / row["raw_path"])
+    # PDF papers are not scanned here and are not incomplete for it: there is no
+    # LaTeX to measure the text against, so these six signals are inapplicable
+    # rather than uncomputed. A LaTeX paper with no raw_path recorded IS
+    # incomplete, because the archive exists and we simply never got it.
+    if row["source_format"] == "latex":
+        source, why = (source_latex_for(data_dir() / row["raw_path"])
+                       if row["raw_path"] else (None, "absent"))
+        out["source_scan"] = why or "complete"
         if source:
             ratio = len(text) / max(len(source), 1)
             out["length_ratio"] = round(ratio, 3)
@@ -383,7 +424,18 @@ def scan_paper(row: dict) -> dict:
     # answer to it, and that is a decision about the corpus rather than a
     # warning about a paper.
     levels = {s[0] for s in out["signals"]} - {"stale"}
-    out["verdict"] = "damaged" if "damaged" in levels else "suspect" if levels else "clean"
+    if "damaged" in levels:
+        out["verdict"] = "damaged"
+    elif levels:
+        out["verdict"] = "suspect"
+    elif out.get("source_scan") in ("absent", "unusable"):
+        # Nothing was found, and six of the signals never ran. "Clean" here would
+        # mean "we looked and found nothing" when what happened is that we did
+        # not look. The two are indistinguishable on the page and opposite in
+        # what they are worth to a reader.
+        out["verdict"] = NO_SOURCE if out["source_scan"] == "absent" else SOURCE_UNUSABLE
+    else:
+        out["verdict"] = "clean"
     return out
 
 
@@ -464,6 +516,23 @@ WHERE p.extraction_checked_at IS NOT NULL
 ORDER BY 1
 """
 
+# What is about to be destroyed, one row per paper, written to a file before the
+# UPDATE runs and on --dry-run too. `snapshot_map.py` is the precedent and commit
+# 3b65766 is the rule: destroy nothing until you can replace something. The
+# preview above is GROUP BY, so it says three papers were damaged and not WHICH
+# three, and incident 14 has already lost this exact data once by having no copy
+# of it. Restoring is deliberately not automated, for the same reason it is not
+# in snapshot_map.py and one more: these values are stale by construction, so
+# putting one back is a decision somebody has to make deliberately, and the file
+# is plain JSON so the decision stays available.
+DUMP_VERDICTS = """
+SELECT p.arxiv_id, p.extraction_verdict, p.extraction_signals,
+       p.extraction_checked_at
+FROM papers p
+WHERE p.extraction_checked_at IS NOT NULL
+{scope}ORDER BY p.arxiv_id
+"""
+
 # The papers table is shared across every concept ever traced, so an unscoped
 # statement here reaches another map's rows. Scoped exactly as extract_text.py
 # --concept scopes itself, prompt version and all (it has none): a rewrite of the
@@ -475,18 +544,52 @@ CONCEPT_SCOPE = ("   AND EXISTS (SELECT 1 FROM definitions d\n"
 ONLY_SCOPE = "   AND p.arxiv_id = ANY(%(only_ids)s)\n"
 
 
+def refuse_if_nothing_scanned(papers: list[dict]) -> None:
+    """Incident 12's rule, in the one stage that publishes straight to readers: a
+    per-item skip needs a global check.
+
+    Some papers unscannable is an incomplete disk, which is ordinary here and
+    always was (incident 7c). EVERY paper unscannable is an empty, unmounted or
+    wrong `DATA_DIR`, and a run that writes nothing while reporting success is
+    how that stays invisible until somebody wonders why no verdict ever changes.
+
+    The boundary is zero and not a fraction, on the same reasoning as the
+    `--reground` guard: three bad calibrations have shipped already and a guessed
+    proportion here would be the fourth. It is deliberately NOT a "this machine
+    looks partial" test. That test cannot be written: the Render worker's own
+    disk was visibly partial on the run that produced the frozen batch, 12 of its
+    papers having no text on it, so any threshold low enough to catch a laptop
+    would have stopped the worker auditing anything at all (decision 23).
+
+    Split out of `main` so it can be driven with a list of scans and no database.
+    """
+    unfinished = [p for p in papers if p["verdict"] in UNSTORABLE]
+    if len(papers) > 1 and len(unfinished) == len(papers):
+        sys.exit(
+            f"\nRefusing to write: not one of {len(papers)} papers could be scanned "
+            "through on this machine.\n"
+            "  That is what an empty, unmounted or wrong DATA_DIR looks like, and this "
+            "scan\n  cannot tell it apart from a corpus that genuinely is not here.\n"
+            "  Nothing was written and every stored verdict stands.\n"
+            f"  Looked in: {data_dir()}")
+
+
 def clear_verdicts(conn, concept: str | None, only: list[str] | None,
-                   dry_run: bool) -> None:
+                   dry_run: bool, out_path: str | None = None) -> None:
     """Hand these papers back to the free audit.
 
     Costs nothing and calls nothing: three columns of `papers`, no model, no
-    network, no disk. Deliberately shaped like stage_b_extract.py --reground and
+    network, no LLM. Deliberately shaped like stage_b_extract.py --reground and
     stage_h_claims.py --recheck minus the recompute, because the recompute needs
     the corpus and this exists for the machine that has not got one.
 
-    A cleared verdict is not "clean". It is "unchecked", which is what these rows
-    honestly are, and while it stands the dossier says nothing about the text
-    rather than something false about it.
+    A cleared verdict is not "clean", it is "unchecked", which is what these rows
+    honestly are. But it is not therefore the safe direction, and decision 21
+    says why: on the dossier the note sits directly under "verified verbatim
+    against the source text" and is the only qualifier on that tick, so clearing
+    it leaves the tick standing alone and the page claiming MORE than it did.
+    That is the argument for treating the restart as part of this operation
+    rather than as the next line of a runbook.
     """
     scope, params = "", {}
     if concept:
@@ -497,7 +600,13 @@ def clear_verdicts(conn, concept: str | None, only: list[str] | None,
         params["only_ids"] = list(only)
 
     rows = conn.execute(PREVIEW_VERDICTS.format(scope=scope), params).fetchall()
-    named = f'"{concept}"' if concept else "every concept"
+    # Every scope the statement carries, in the line an operator reads before
+    # deciding to proceed. --only used to print "every concept", which is the
+    # widest possible reading of the narrowest possible scope.
+    named = " and ".join(
+        p for p in (f'"{concept}"' if concept else "",
+                    f"{len(only)} named paper{'' if only and len(only) == 1 else 's'}"
+                    if only else "") if p) or "every concept"
     if not rows:
         print(f"No stored verdicts in scope ({named}); nothing to clear.")
         return
@@ -517,9 +626,27 @@ def clear_verdicts(conn, concept: str | None, only: list[str] | None,
         print("  This is EVERY audited paper in the table, across all concepts. "
               "--concept scopes it to one map.")
 
+    # Before the UPDATE, and on the rehearsal too: a dry run that does not
+    # produce the file has not rehearsed the part that matters.
+    dumped = conn.execute(DUMP_VERDICTS.format(scope=scope), params).fetchall()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    tag = re.sub(r"[^a-z0-9]+", "_", (concept or "all").lower())
+    dump = Path(out_path) if out_path else (
+        data_dir() / "snapshots" / f"extraction_verdicts_{tag}_{stamp}.json")
+    dump.parent.mkdir(parents=True, exist_ok=True)
+    dump.write_text(json.dumps(
+        {"taken_at": stamp, "concept": concept, "only": only,
+         "papers": [{"arxiv_id": a, "extraction_verdict": v,
+                     "extraction_signals": s, "extraction_checked_at": t}
+                    for a, v, s, t in dumped]},
+        indent=2, default=str), encoding="utf-8")
+    print(f"\n  {len(dumped)} verdicts copied to {dump}")
+    print("  Restoring one is a decision and is deliberately not automated; the "
+          "file is plain JSON.")
+
     if dry_run:
-        print("\n[dry-run] Nothing was written. Re-run without --dry-run to clear "
-              "these verdicts.")
+        print("\n[dry-run] Nothing was written to the database. Re-run without "
+              "--dry-run to clear these verdicts.")
         return
 
     cleared = conn.execute(CLEAR_VERDICTS.format(scope=scope), params).rowcount
@@ -528,9 +655,14 @@ def clear_verdicts(conn, concept: str | None, only: list[str] | None,
           f"text,\n  the quotes and the stamps on them are exactly as they were.")
     print("  These papers are now unaudited, so the free pass at the worker's next "
           "start\n  (--only-unchecked --write) will re-measure them against the text "
-          "as it is now.\n  Until it does, their dossiers say nothing about the "
-          "extraction rather than\n  something computed from text that is gone. "
-          "Nothing else re-audits them, so if\n  the worker is never restarted the "
+          "as it is now.")
+    # Not "the safe direction". On the dossier this note is the only qualifier on
+    # "verified verbatim against the source text", so removing it leaves the tick
+    # unqualified and the page claiming more than it did a moment ago.
+    print("\n  RESTART THE WORKER NOW. Until it boots, those papers show no note "
+          "about\n  their text at all, which leaves the verified stamp on each of "
+          "them standing\n  with nothing next to it. Nothing else re-audits them: "
+          "not a timer, not the\n  app. If the worker is never restarted the "
           "verdicts never come back.")
 
 
@@ -556,6 +688,9 @@ def main() -> None:
                          "machine; scope it with --concept or --only")
     ap.add_argument("--only", metavar="ARXIV_ID", nargs="+",
                     help="restrict --clear-verdicts to these arxiv ids")
+    ap.add_argument("--out", metavar="PATH",
+                    help="where --clear-verdicts copies the verdicts it is about to "
+                         "remove (default DATA_DIR/snapshots/, timestamped)")
     ap.add_argument("--dry-run", action="store_true",
                     help="with --clear-verdicts, report what would be cleared and "
                          "write nothing")
@@ -575,6 +710,9 @@ def main() -> None:
     if args.only and not args.clear_verdicts:
         sys.exit("--only scopes --clear-verdicts. To audit selected papers, use "
                  "--concept.")
+    if args.out and not args.clear_verdicts:
+        sys.exit("--out is where --clear-verdicts copies the verdicts it removes. "
+                 "The audit's own\nreport goes to --json.")
 
     # Cheap re-runs are what let this live in the worker's startup rather than in
     # somebody's terminal history.
@@ -585,7 +723,7 @@ def main() -> None:
             # Ahead of the scan, and it returns rather than falling through: this
             # mode asks the database only, and the machine most likely to run it
             # has no corpus for the scan below to read.
-            clear_verdicts(conn, args.concept, args.only, args.dry_run)
+            clear_verdicts(conn, args.concept, args.only, args.dry_run, args.out)
             return
 
         if args.concept:
@@ -613,12 +751,15 @@ def main() -> None:
         quotes = scan_quotes(conn, args.concept, args.prompt_version)
 
         if args.write:
-            # A paper whose text is not on this machine is left alone rather than
-            # recorded as unchecked: another machine has the file, and its verdict
-            # is the one worth keeping (incident 7c).
+            # A paper this machine could not scan through is left alone rather
+            # than recorded: another machine has the file, and its verdict is the
+            # one worth keeping (incident 7c). The row stays unaudited, which is
+            # what it is, and the free pass collects it wherever the file lives.
+            unfinished = [p for p in papers if p["verdict"] in UNSTORABLE]
+            refuse_if_nothing_scanned(papers)
             stored = 0
             for p in papers:
-                if p["verdict"] == "no text on this machine":
+                if p["verdict"] in UNSTORABLE:
                     continue
                 conn.execute("""
                     UPDATE papers SET extraction_verdict = %(v)s,
@@ -630,6 +771,19 @@ def main() -> None:
                 stored += 1
             conn.commit()
             print(f"  Wrote {stored} verdicts to papers.extraction_verdict.\n")
+            if unfinished:
+                # Named, not just counted. This is the line that says the corpus
+                # on this machine is not the whole corpus, and it is the one an
+                # operator running --write off the worker needs to see.
+                print(f"  {len(unfinished)} of {len(papers)} could not be scanned "
+                      f"through here and were left unaudited:")
+                for verdict in UNSTORABLE:
+                    c = sum(1 for p in unfinished if p["verdict"] == verdict)
+                    if c:
+                        print(f"      {verdict}: {c}")
+                print("  Their rows are untouched, so whichever machine holds the "
+                      "files will\n  audit them. If that is not this machine, "
+                      "these verdicts are not yours to write.\n")
 
     scope = f'"{args.concept}"' if args.concept else "every extracted paper"
     print(f"\nExtraction audit: {scope} ({len(papers)} papers)\n")
@@ -640,7 +794,7 @@ def main() -> None:
             continue
         n = len(group)
         tally = {v: sum(1 for p in group if p["verdict"] == v) for v in
-                 ("clean", "suspect", "damaged", "no text on this machine")}
+                 ("clean", "suspect", "damaged") + UNSTORABLE}
         print(f"  {str(fmt or 'unknown'):<8} {n:>4} papers   "
               + "   ".join(f"{v}: {c} ({c / n:.0%})" for v, c in tally.items() if c))
 
