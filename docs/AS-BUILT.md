@@ -294,6 +294,9 @@ frozen before `extract_text.py` learned to clear its own (decision 21), and for
 a machine that holds the database but not the papers. `--dry-run` prints the
 tally and the range of dates it would clear, and renders a `SELECT` rather than
 the `UPDATE`.
+`--compare-verdicts` is the instrument for the fifth calibration, added
+2026-08-01 and described under "The fifth attempt" below. It stores nothing and
+refuses `--write`, `--clear-verdicts` and `--dry-run`.
 
 **First real measurement (2026-07-31, "embedding", 187 papers, 182 LaTeX).**
 The macro fix was worth more than the incident that prompted it suggested.
@@ -347,6 +350,82 @@ call damage did. **Thresholds guessed against a synthetic sample are a
 hypothesis, and the first real corpus is the test.** Twice now the corpus has
 said the hypothesis was wrong, and both times the tell was the same: a check
 that fires on most of its input is measuring itself.
+
+**The fifth attempt does not adjust anything, it measures first**
+(`--compare-verdicts`, 2026-08-01). Four rounds of calibration went 88%, 73%,
+100%, 76%, and every one of them read the corpus rate, disliked it and moved a
+pattern or a number. A rate can only say the check is wrong. It cannot say which
+signal is wrong, so each round had to guess and find out afterwards, and the
+thing that made the loop possible was that a signal had no name: it was a
+sentence written for a reader, with counts in it, and nothing could group by it.
+
+Three changes, none of which alters a verdict:
+
+- **Every signal now carries a machine key.** A signal is `(level, key, prose)`.
+  The prose is unchanged and is still what `--write` stores; the key is what the
+  comparison groups by. The prose is deliberately not the identifier: it carries
+  counts and percentages, and parsing it back would make every wording change a
+  silent behaviour change.
+- **`verdict_from(signals, demoted, source_scan)`** is the tail of `scan_paper`
+  lifted out, so today's verdict and a proposed one are one implementation given
+  two inputs rather than two copies that drift. `source_scan` is a parameter and
+  not a convenience: without it, demoting a paper's last signal would return
+  `clean` for a paper whose archive was never read, which is decision 23's
+  failure reappearing in a preview.
+- **`PROPOSED_NOTE_SIGNALS = frozenset({"gaps", "package_macros"})`**, a module
+  constant. One hypothesis, hardcoded and reviewable, rather than a config file
+  or a `--what-if` taking arbitrary thresholds, neither of which leaves a record
+  of what was proposed on the day the measurement was taken.
+
+`--compare-verdicts` prints two tables and writes nothing. The cross-tab is
+today's verdict against the proposal's, per source format, with the count of
+papers that would carry the dossier note under each. **The sole-cause table is
+the one all four previous attempts lacked**: for each signal, how many papers it
+fires on and on how many it is the only reason that paper is not clean. It also
+prints the quote tells twice, as counted today and with a literal `...` folded
+to `…`, so that effect is previewed rather than assumed.
+
+Two causes of near-equal size sit behind the 76%, which is why the ticket that
+does the measuring is separate from the ticket that changes the calibration:
+fixing either alone lands around 63% and reads as failure. The measurement that
+decides it has to be taken on the Render disk, which is the only machine holding
+the corpus the 76% was measured on.
+
+**What was verified about the gap detector while building this** (2026-08-01,
+synthetic fixtures through the real extractor, plus 40 papers fetched fresh from
+arXiv to a scratch directory and deleted afterwards; that scratch corpus is
+today's extractor on today's papers and is therefore a **different population**
+from the 32 papers of older text on the Render disk, so no rate from it is
+comparable to the corpus rate):
+
+- `GAP_STRONG`'s paren branch fires on faithful renderings of `\left(`, `\big(`,
+  `\Big(`, a literal `$( x )$` and a thin space `$(\,x\,)$`. All four extract to
+  `( x` and none of them lost anything.
+- Its true positives are narrower than assumed. **A bare dropped macro consumes
+  the space after its own name**, so `(\dmodel dimensions)` extracts to
+  `(dimensions)` and `about (\dmodel 200 dimensions)` to `about (200 dimensions)`
+  — no gap in either, which is the commonest shape of the loss. The branch only
+  fires when the drop leaves the space standing, which needs math delimiters or
+  empty braces: `($\dmodel$ 200 dimensions)` does extract to `( 200 dimensions)`.
+- The second branch, two marks with nothing between them, has ordinary true
+  positives: `x, $\dmodel$, y` extracts to `x,, y`.
+- A literal `...` reaches that second branch, because `tidy_marks` closes the
+  space in front of the dots first: `$x_1, ..., x_n$` extracts to `x_1,..., x_n`
+  and `,.` matches. `\ldots` and `\dots` already render as `…` and score no hit,
+  so folding the literal form to the same character is the shape of the fix.
+  **Deleting the dots instead is not**: it turns `a,..., z` into `a,, z`, which
+  the same branch then matches, so it manufactures the false positive it was
+  removing.
+
+**And a finding about a different signal, not yet fixed.** `tidy_marks` is not
+idempotent: rule 4 deletes an emptied bracket pair after rule 3 has already
+closed the spaces before punctuation, so `word ( ) .` becomes `word .` in one
+pass and `word.` only in a second. The `stale` signal's premise is that these
+are marks today's extractor cannot make. It can. **Measured on the 40 freshly
+fetched papers: 5 of 40 carry stale marks, 25 marks in total, and a second
+`tidy_marks` pass removes every one of them.** `stale` stays out of the verdict
+so no reader sees this, but it is the signal behind backlog item 4's count of
+32 papers holding older text, and that count is therefore an upper bound.
 
 **Stage B: definition extraction** (`stage_b_extract.py <concept> [--corpus JSON] [--dry-run]`).
 For each paper with usable text, Claude answers: does this paper give the
@@ -842,6 +921,21 @@ paper `clean` when it could not read that paper's source archive (decision 23),
 so a run off the worker writes fewer verdicts and names what it skipped, but it
 still writes some, and they are still about the wrong text.
 
+**Measuring what a calibration change would do, before making it.** The Render
+disk is the only machine holding the corpus the current rate was measured on, so
+this runs on the Render shell:
+
+```
+python pipeline/check_extraction.py --compare-verdicts --json /data/verdict_compare.json
+```
+
+It stores nothing, changes no threshold, and refuses `--write`,
+`--clear-verdicts` and `--dry-run` (decision 24). Read the sole-cause table
+before deciding anything: a rate says the check is wrong, and only that table
+says which signal is. Leave `--only-unchecked` off. It is in the worker's boot
+command and would scope this to the papers nobody has audited, which is usually
+none of them.
+
 **Observing a trace.** The queue and progress panel on `/trace` is the primary
 view.
 Direct SQL: `SELECT id, concept, status, progress, updated_at FROM
@@ -1327,6 +1421,44 @@ The why behind the load-bearing choices, in one place:
     controls rather than by a heuristic: `LINEAGE_NO_DB` (decision 22), the
     runbook saying `--write` belongs on the worker, and `--clear-verdicts` being
     the thing a database-only machine runs instead.
+
+24. **The instrument is built and read before the calibration is changed**
+    (2026-08-01). The extraction verdict has been recalibrated four times and
+    every round did the same thing: run the corpus, read the rate, move a
+    pattern. That is the detector agreeing with itself, and the reason it could
+    keep happening is that a rate is the only number the tool produced. It says
+    the check is wrong. It cannot say **which signal** is wrong, and it cannot
+    say what removing one would cost, so the next change was always a guess.
+    `--compare-verdicts` is separated from the change it exists to inform, and
+    it is deliberately the whole of its own ticket. It adds a machine key to
+    every signal, lifts `verdict_from` out of `scan_paper` so a current and a
+    proposed verdict cannot come from two copies of the arithmetic, and prints a
+    cross-tab and a sole-cause table. It moves no threshold.
+    **The proposal is a module constant and not a flag.** One hypothesis,
+    `PROPOSED_NOTE_SIGNALS = frozenset({"gaps", "package_macros"})`, hardcoded
+    and in version control where it can be reviewed and argued with. A config
+    file rots and a `--what-if` taking arbitrary thresholds is unreviewable:
+    neither leaves any record of what was actually proposed on the day the
+    number was taken, which is precisely what is missing from the four rounds
+    already spent. A key here that no signal emits raises at import, because a
+    typo would demote nothing and print two identical columns that look like a
+    finding.
+    **A preview that can write is one edit away from being the write**, which is
+    the rule `PREVIEW_VERDICTS` was already built on, so `--compare-verdicts`
+    refuses `--write`, `--clear-verdicts` and `--dry-run` at the argparse block,
+    ahead of the older guards so the message names the flag the operator typed.
+    Verified by capture: the mode issues two `SELECT`s and calls `commit()`
+    never. Only the `--json` path writes anything, and it writes a local file.
+    **Two sole-cause columns, not one.** "The only reason this paper is not
+    clean" is the question worth asking; "the only reason it carries the note"
+    is the same question asked of the page, and the two differ exactly on papers
+    whose source archive is not on this disk, where removing the last signal
+    leaves "we did not look" rather than "clean". Printing one as if it were the
+    other is how a signal gets blamed for a missing file.
+    **The prose stays the prose.** `extraction_signals` still stores
+    `"{level}: {sentence}"` and the dossier is untouched; only the in-process
+    tuple grew a key, and the per-paper `--json` audit accordingly now holds
+    three-element signal arrays instead of two.
 
 ---
 

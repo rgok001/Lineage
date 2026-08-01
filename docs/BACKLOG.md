@@ -1,7 +1,8 @@
 # Backlog
 
 Everything known and not yet done, in the order it is worth doing. Last
-reviewed 2026-08-01.
+reviewed 2026-08-01, when item 1 was rewritten as two tickets because as it
+stood it named one of two causes and prescribed a fix that lands at 63%.
 
 The order is by what each item costs **if it fires**, not by effort. An item
 that puts a wrong claim in front of a reader outranks one that merely wastes
@@ -15,34 +16,70 @@ reproduced. **Parked** is a decision to wait, not an oversight.
 
 ## P1 — do next
 
-### 1. The gap detector rates undamaged papers suspect, on half the corpus
+### 1. The extraction verdict warns about three papers in four, on a corpus whose quotes are 97% clean
 **Confirmed, measured 2026-08-01 (tester, 227 papers).**
 
-`GAP_STRONG`'s first branch is `\(\x20+\S`, "an open paren with a space after
-it", and pylatexenc puts exactly that space in when it renders `\left(`, `\big(`
-and `\Big(`. It also fires on a literal `...`. `GAP_SUSPECT` is 3, so three sized
-parentheses in a paper of maths is enough. Measured on the 227 papers on this
-machine with the current code: **122 (54%) are over the threshold on gaps alone,
-and 174 of 227 (76%) carry some warning.** The dossier renders "our reading of
-this paper lost some of its text" from that, about papers whose text is fine.
+**174 of 227 (76%) carry some warning**, and 122 (54%) are over the gap
+threshold alone. The dossier renders "our reading of this paper lost some of its
+text" from that, about papers whose text is fine. Of 393 stored quotes, 11 carry
+any damage tell: the thing a reader is actually shown is 97% clean and the note
+above it says otherwise on three pages in four.
 
-Inherited from `master` and not introduced by the verdict refresh, but the
-refresh is what applies it to every paper in the table at once, so it stops being
-a latent miscalibration the moment that procedure runs.
+**There are two causes of near-equal size, and this item used to name only one.**
+As written before 2026-08-01 it described `GAP_STRONG`'s paren branch and
+prescribed the fix for it alone, which lands at 63-64% and reads as failure. The
+other half is dropped **package** macros reaching `suspect` at
+`OTHER_SUSPECT = 200`, which this same file already argues cost a reader nothing.
+Fixing either alone is worse than useless: it spends the change and keeps the
+complaint. How much the two overlap has never been measured, which is the gap
+1a closes.
+
+**This detector has already been calibrated four times: 88%, 73%, 100%, 76%**
+(as-built section 4). Every round read the rate, disliked it and moved a
+pattern. So the work is split, and ticket 1a exists to stop that happening a
+fifth time.
 
 **Why it is first.** It is the only confirmed item here that puts a false
 statement in front of a reader on every visit, which is the ordering rule this
-file opens with. It is also the rule `930b78f` set for this very file and then
-lost: a verdict that fires on most of a corpus is measuring itself, not the
-corpus. And it undercuts the one prediction the refresh is meant to test, since
-"much milder than 250 damaged" and "still warns about three papers in four" are
-both going to be true and only the first was expected.
+file opens with. Inherited from `master` and not introduced by the verdict
+refresh, but the refresh is what applied it to every paper in the table at once.
 
-Fix: exclude the sizing macros' space and the literal ellipsis before the shape
-test, the way `OUR_MARKS` is already excluded from the residue count, then
-re-measure the corpus rate before touching the threshold. The threshold is
-probably not the problem, again.
-Cost: $0, half a day. Needs no spend and no worker.
+#### 1a. Build the instrument. No calibration change. **(Done 2026-08-01.)**
+`check_extraction.py --compare-verdicts`: a machine key on every signal, one
+`verdict_from`, `PROPOSED_NOTE_SIGNALS` as a module constant, a cross-tab of
+today's verdict against the proposal's, and **a sole-cause table saying, for
+each signal, on how many papers it is the only reason that paper is not clean.**
+That table is what all four previous attempts lacked. Read-only, refuses
+`--write`, `--clear-verdicts` and `--dry-run`.
+
+#### 1b. Make the change, after one measurement.
+**Blocked on one command on the Render shell**, which is the only machine
+holding the corpus the 76% was measured on:
+
+```
+python pipeline/check_extraction.py --compare-verdicts --json /data/verdict_compare.json
+```
+
+The proposal on the table is that `gaps` and `package_macros` report as a note
+and stop deciding the verdict. What was verified while building 1a, on synthetic
+fixtures through the real extractor:
+
+- The paren branch fires on faithful renderings of `\left(`, `\big(`, `\Big(`,
+  `$( x )$` and the thin space `$(\,x\,)$`. None of those lost anything.
+- **Its true positives are narrower than this item used to assume.** A bare
+  dropped macro eats the space after its own name, so `(\dmodel dimensions)`
+  extracts to `(dimensions)` and `about (\dmodel 200 dimensions)` to
+  `about (200 dimensions)`: no gap in either, and that is the commonest shape of
+  the loss. It fires only when the drop leaves the space standing, which needs
+  math delimiters or empty braces.
+- The second branch has ordinary true positives: `x, $\dmodel$, y` extracts to
+  `x,, y`. It should stay.
+- A literal `...` reaches that second branch. Fold it to `…`, which is what
+  `\ldots` already renders as and scores no hit. **Do not delete the dots**:
+  `a,..., z` becomes `a,, z` and the same branch matches it.
+
+Cost: $0, half a day, no spend and no worker time. 1a is done; 1b needs the one
+measurement above and then the edit.
 
 ### 2. Stage D's rebuild is not atomic, and Stage E publishes whatever survives
 **Reported (architecture review, W3).**
@@ -87,7 +124,8 @@ run.**
 
 The re-audit of all 304 papers reported two things nobody had counted before:
 
-- **32 papers hold text produced by an older extractor** — 25 of 297 LaTeX
+- **32 papers hold text produced by an older extractor** (an upper bound: see
+  item 18, which found that the current extractor can leave the same mark) — 25 of 297 LaTeX
   papers (8%) and all 7 PDF papers (100%). The audit names them and says
   re-extracting applies the fixes. These are not damaged files; they are files
   the current pipeline would produce differently.
@@ -205,6 +243,18 @@ Cost: $0, an hour.
 17. **Brand documentation completeness.** Decision 18 names
     `as unknown as Viewer` as the cast escape; a single `as Viewer` and
     `Object.assign({}, real, {login})` also compile.
+18. **`tidy_marks` is not idempotent, so `stale` fires on text the current
+    extractor wrote.** Confirmed 2026-08-01 on 40 papers fetched fresh from
+    arXiv. Rule 4 deletes an emptied bracket pair *after* rule 3 has closed the
+    spaces before punctuation, so `word ( ) .` becomes `word .` in one pass and
+    `word.` only in a second. The `stale` signal's premise is that these are
+    marks the current extractor cannot make; it can. **5 of 40 freshly extracted
+    papers carry them, 25 marks in total, and a second `tidy_marks` pass removes
+    every one.** No reader sees it, because `stale` is reported and deliberately
+    kept out of the verdict, which is why this sits here and not in P1. It does
+    bear on item 4: that count of 32 papers holding older text comes from this
+    signal, so it is an upper bound. Fix is a second pass or a rule reorder, then
+    re-measure item 4.
 
 ---
 

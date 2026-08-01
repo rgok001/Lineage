@@ -70,6 +70,7 @@ Usage:
   python pipeline/check_extraction.py --concept "embedding" --sample 8
   python pipeline/check_extraction.py --json data/extraction_audit.json
   python pipeline/check_extraction.py --clear-verdicts --concept "embedding" --dry-run
+  python pipeline/check_extraction.py --compare-verdicts
 """
 
 import argparse
@@ -186,6 +187,46 @@ NO_TEXT = "no text on this machine"
 NO_SOURCE = "no source archive on this machine"
 SOURCE_UNUSABLE = "source archive unusable"
 UNSTORABLE = (NO_TEXT, NO_SOURCE, SOURCE_UNUSABLE)
+
+# ── naming the signals ──────────────────────────────────────────────────────
+#
+# A signal is (level, key, prose). The key exists because this detector has been
+# recalibrated four times (as-built section 4) and every attempt read the rate
+# and moved a number, which is the check agreeing with itself. Grouping by cause
+# needs a stable name for the cause, and the prose is not one: it carries counts
+# and percentages, it is written for a reader, and parsing it back out would make
+# every wording change a silent behaviour change. The prose is a sentence; the
+# key is the identifier.
+SIGNAL_KEYS = ("residue", "undecodable", "stale", "gaps", "no_headings",
+               "short_text", "own_macros", "package_macros", "symbols")
+
+# One hypothesis about which signals are miscalibrated, hardcoded and in version
+# control so it can be reviewed and argued with. Deliberately not a config file
+# and not a --what-if taking arbitrary thresholds: both rot, and neither leaves a
+# record of what was actually proposed on the day the measurement was taken.
+#
+# Nothing reads this except --compare-verdicts. It changes no verdict today.
+PROPOSED_NOTE_SIGNALS = frozenset({"gaps", "package_macros"})
+
+# A key here that no signal emits would demote nothing, and the comparison would
+# print two identical columns and look like a finding.
+_UNKNOWN_PROPOSED = PROPOSED_NOTE_SIGNALS - set(SIGNAL_KEYS)
+if _UNKNOWN_PROPOSED:
+    raise ValueError("PROPOSED_NOTE_SIGNALS names signals nothing emits: "
+                     f"{sorted(_UNKNOWN_PROPOSED)}")
+
+# Preview only. --compare-verdicts counts the quote tells with and without this
+# applied; nothing else in this file touches it, because this instrument changes
+# no calibration.
+#
+# `\ldots` and `\dots` already render as `…` and score no hit (measured), so
+# folding a literal `...` to the same character is the shape any fix would take.
+# The obvious alternative, deleting the dots, was tried on paper and rejected: it
+# turns "a,..., z" into "a,, z", which GAP_STRONG's second branch then matches,
+# so it manufactures the false positive it was removing. Two dots are folded as
+# well as three, since ",.." matches that branch exactly as ",..." does.
+LITERAL_ELLIPSIS = re.compile(r"\.{2,}")
+ELLIPSIS = "…"
 
 _known_cache: dict[str, bool] = {}
 
@@ -318,6 +359,40 @@ def source_latex_for(raw_path: Path) -> tuple[str | None, str | None]:
         return texs[main], None
 
 
+def verdict_from(signals: list, demoted: frozenset = frozenset(),
+                 source_scan: str | None = None) -> str:
+    """The verdict these signals add up to, with `demoted` treated as notes.
+
+    Split out of the tail of `scan_paper` so that today's verdict and a proposed
+    one are the same code given different inputs. Two copies of this arithmetic
+    would drift, and a comparison table computed from a drifted copy is worse
+    than no table: it would look like a finding.
+
+    "stale" says which extractor made this file, not how good the file is, so it
+    is reported and then kept out of the verdict. Re-extracting is the answer to
+    it, and that is a decision about the corpus rather than a warning about a
+    paper. `demoted` puts named signals in the same position without changing
+    what they measure.
+
+    `source_scan` is here because dropping it is decision 23's mistake wearing
+    different clothes: a paper whose archive is not on this machine had six
+    signals skipped, so once its remaining signals are demoted away the answer is
+    "we did not look", never "clean".
+    """
+    levels = {lvl for lvl, key, _ in signals if lvl != "stale" and key not in demoted}
+    if "damaged" in levels:
+        return "damaged"
+    if levels:
+        return "suspect"
+    if source_scan in ("absent", "unusable"):
+        # Nothing was found, and six of the signals never ran. "Clean" here would
+        # mean "we looked and found nothing" when what happened is that we did
+        # not look. The two are indistinguishable on the page and opposite in
+        # what they are worth to a reader.
+        return NO_SOURCE if source_scan == "absent" else SOURCE_UNUSABLE
+    return "clean"
+
+
 def scan_paper(row: dict) -> dict:
     """One paper's signals and verdict. Absent evidence is recorded as absent,
     never as a pass: a paper whose text file is missing gets its own verdict so
@@ -354,31 +429,31 @@ def scan_paper(row: dict) -> dict:
     residue = len(LATEX_RESIDUE.findall(OUR_MARKS.sub("", text)))
     out["latex_residue"] = residue
     if residue >= RESIDUE_DAMAGED:
-        out["signals"].append(("damaged", f"latex residue x{residue} (parse fell back to raw strip)"))
+        out["signals"].append(("damaged", "residue", f"latex residue x{residue} (parse fell back to raw strip)"))
     elif residue >= RESIDUE_SUSPECT:
-        out["signals"].append(("suspect", f"latex residue x{residue}"))
+        out["signals"].append(("suspect", "residue", f"latex residue x{residue}"))
 
     bad = text.count(REPLACEMENT)
     out["replacement_chars"] = bad
     if bad >= REPLACEMENT_DAMAGED:
-        out["signals"].append(("damaged", f"undecodable bytes x{bad}"))
+        out["signals"].append(("damaged", "undecodable", f"undecodable bytes x{bad}"))
     elif bad >= REPLACEMENT_SUSPECT:
-        out["signals"].append(("suspect", f"undecodable bytes x{bad}"))
+        out["signals"].append(("suspect", "undecodable", f"undecodable bytes x{bad}"))
 
     stale = len(STALE_MARKS.findall(text))
     out["stale_marks"] = stale
     if stale:
-        out["signals"].append(("stale", f"text predates the current extractor "
-                                        f"({stale} marks it can no longer make)"))
+        out["signals"].append(("stale", "stale", f"text predates the current extractor "
+                                                 f"({stale} marks it can no longer make)"))
 
     strong = len(GAP_STRONG.findall(text))
     out["gap_hits"] = strong
     out["gap_examples"] = [m.group(0) for m in list(GAP_STRONG.finditer(text))[:4]]
     if strong >= GAP_SUSPECT:
-        out["signals"].append(("suspect", f"gaps where a token was x{strong}"))
+        out["signals"].append(("suspect", "gaps", f"gaps where a token was x{strong}"))
 
     if not any(p.search(text) for p in SECTION_HINTS):
-        out["signals"].append(("suspect", "no references or introduction heading"))
+        out["signals"].append(("suspect", "no_headings", "no references or introduction heading"))
 
     # PDF papers are not scanned here and are not incomplete for it: there is no
     # LaTeX to measure the text against, so these six signals are inapplicable
@@ -392,9 +467,9 @@ def scan_paper(row: dict) -> dict:
             ratio = len(text) / max(len(source), 1)
             out["length_ratio"] = round(ratio, 3)
             if ratio < RATIO_DAMAGED:
-                out["signals"].append(("damaged", f"text is {ratio:.0%} of source (content dropped)"))
+                out["signals"].append(("damaged", "short_text", f"text is {ratio:.0%} of source (content dropped)"))
             elif ratio < RATIO_SUSPECT:
-                out["signals"].append(("suspect", f"text is {ratio:.0%} of source"))
+                out["signals"].append(("suspect", "short_text", f"text is {ratio:.0%} of source"))
 
             m = unknown_macros(source)
             out["own_macro_uses"], out["other_macro_uses"] = m["own"], m["other"]
@@ -402,11 +477,11 @@ def scan_paper(row: dict) -> dict:
             out["own_macro_uses_before_fix"] = m["before_own"]
             out["unknown_macros"] = m["ranked"][:8]
             if m["own"] >= OWN_DAMAGED:
-                out["signals"].append(("damaged", f"{m['own']} uses of the paper's own macros still dropped"))
+                out["signals"].append(("damaged", "own_macros", f"{m['own']} uses of the paper's own macros still dropped"))
             elif m["own"] >= OWN_SUSPECT:
-                out["signals"].append(("suspect", f"{m['own']} uses of the paper's own macros still dropped"))
+                out["signals"].append(("suspect", "own_macros", f"{m['own']} uses of the paper's own macros still dropped"))
             if m["other"] >= OTHER_SUSPECT:
-                out["signals"].append(("suspect", f"{m['other']} uses of unknown package macros dropped"))
+                out["signals"].append(("suspect", "package_macros", f"{m['other']} uses of unknown package macros dropped"))
 
             checked, missing, examples = symbol_survival(source, text)
             out["symbols_checked"], out["symbols_missing"] = checked, missing
@@ -415,27 +490,11 @@ def scan_paper(row: dict) -> dict:
                 rate = missing / checked
                 out["symbol_loss"] = round(rate, 3)
                 if rate >= SYMBOL_LOSS_DAMAGED:
-                    out["signals"].append(("damaged", f"{missing}/{checked} symbols left no trace"))
+                    out["signals"].append(("damaged", "symbols", f"{missing}/{checked} symbols left no trace"))
                 elif rate >= SYMBOL_LOSS_SUSPECT:
-                    out["signals"].append(("suspect", f"{missing}/{checked} symbols left no trace"))
+                    out["signals"].append(("suspect", "symbols", f"{missing}/{checked} symbols left no trace"))
 
-    # "stale" says which extractor made this file, not how good the file is, so
-    # it is reported and then kept out of the verdict. Re-extracting is the
-    # answer to it, and that is a decision about the corpus rather than a
-    # warning about a paper.
-    levels = {s[0] for s in out["signals"]} - {"stale"}
-    if "damaged" in levels:
-        out["verdict"] = "damaged"
-    elif levels:
-        out["verdict"] = "suspect"
-    elif out.get("source_scan") in ("absent", "unusable"):
-        # Nothing was found, and six of the signals never ran. "Clean" here would
-        # mean "we looked and found nothing" when what happened is that we did
-        # not look. The two are indistinguishable on the page and opposite in
-        # what they are worth to a reader.
-        out["verdict"] = NO_SOURCE if out["source_scan"] == "absent" else SOURCE_UNUSABLE
-    else:
-        out["verdict"] = "clean"
+    out["verdict"] = verdict_from(out["signals"], frozenset(), out.get("source_scan"))
     return out
 
 
@@ -462,9 +521,21 @@ def scan_quotes(conn, concept: str | None, pv: str) -> dict:
     """, params).fetchall()
 
     counts = {name: 0 for name, _ in QUOTE_TELLS}
-    touched, examples = 0, []
+    # The same tells against the same quotes with a literal "..." folded to "…".
+    # Counted here rather than in the comparison so the two numbers come off one
+    # query and one loop, and so nobody can claim the effect of that fold without
+    # the unfolded column standing next to it. Nothing reads these unless
+    # --compare-verdicts asks.
+    counts_folded = {name: 0 for name, _ in QUOTE_TELLS}
+    touched = touched_folded = 0
+    examples: list[dict] = []
     for arxiv_id, quote, verified in rows:
         hits = [name for name, test in QUOTE_TELLS if test(quote or "")]
+        folded = LITERAL_ELLIPSIS.sub(ELLIPSIS, quote or "")
+        hits_folded = [name for name, test in QUOTE_TELLS if test(folded)]
+        for name in hits_folded:
+            counts_folded[name] += 1
+        touched_folded += bool(hits_folded)
         if not hits:
             continue
         touched += 1
@@ -473,7 +544,159 @@ def scan_quotes(conn, concept: str | None, pv: str) -> dict:
         if len(examples) < 12:
             examples.append({"arxiv_id": arxiv_id, "verified": verified,
                              "tells": hits, "quote": (quote or "")[:240]})
-    return {"total": len(rows), "touched": touched, "counts": counts, "examples": examples}
+    return {"total": len(rows), "touched": touched, "counts": counts,
+            "touched_folded": touched_folded, "counts_folded": counts_folded,
+            "examples": examples}
+
+
+# ── the comparison ──────────────────────────────────────────────────────────
+#
+# This detector has been calibrated four times: 88% flagged, then 73%, then
+# 100%, then 76% (as-built section 4). Every attempt picked patterns, ran the
+# corpus, disliked the rate and adjusted, which is the detector agreeing with
+# itself four times over. A rate can only tell you the check is wrong. It cannot
+# tell you WHICH signal is wrong, and it cannot tell you what removing one would
+# cost, so each round guessed and each round found out afterwards.
+#
+# Two known causes sit behind today's 76%, of near-equal size, and fixing either
+# alone lands around 63% and reads as failure. That is the specific thing a rate
+# hides and the sole-cause table below shows: for each signal, how many papers
+# would be clean if it alone stopped deciding the verdict.
+#
+# --compare-verdicts is read-only by construction. It stores nothing, so the
+# measurement can be taken before anything is changed and disagreed with
+# afterwards. PREVIEW_VERDICTS is the precedent: a preview that can write is one
+# edit away from being the write.
+
+# Long verdicts make unreadable column headers, and the cross-tab needs the
+# incomplete-scan values in it or a paper would silently leave the table.
+VERDICT_ORDER = ("clean", "suspect", "damaged") + UNSTORABLE
+VERDICT_LABEL = {NO_TEXT: "no text", NO_SOURCE: "no source",
+                 SOURCE_UNUSABLE: "unusable"}
+
+# What the dossier renders the note on: `quality && quality !== "clean"` in
+# app/app/g/[id]/p/[arxiv]/page.tsx. The unstorable verdicts never reach the
+# column, so this is the reader-facing set exactly.
+READER_FACING = ("suspect", "damaged")
+
+
+def verdicts_for(paper: dict, demoted: frozenset) -> str:
+    """One paper's verdict under a proposal.
+
+    A paper whose text is not on this machine never reached a signal, so there is
+    nothing to demote and the answer is the same either way. Recomputing it from
+    the empty signals list would say "clean", which is the reassurance-nobody-
+    computed bug (decision 23) reappearing in the preview rather than the write.
+    """
+    if paper["verdict"] == NO_TEXT:
+        return NO_TEXT
+    return verdict_from(paper["signals"], demoted, paper.get("source_scan"))
+
+
+def compare_verdicts(papers: list[dict], quotes: dict) -> dict:
+    """Every number the two tables print, computed once so --json hands back
+    exactly what was on the screen."""
+    formats: list[dict] = []
+    groups = [(fmt, [p for p in papers if p["source_format"] == fmt])
+              for fmt in ("latex", "pdf", None)]
+    groups = [(f, g) for f, g in groups if g]
+    if len(groups) > 1:
+        groups.append(("all", papers))
+
+    for fmt, group in groups:
+        pairs = [(verdicts_for(p, frozenset()),
+                  verdicts_for(p, PROPOSED_NOTE_SIGNALS)) for p in group]
+        crosstab: dict[str, dict[str, int]] = {}
+        for now, proposed in pairs:
+            crosstab.setdefault(now, {})
+            crosstab[now][proposed] = crosstab[now].get(proposed, 0) + 1
+        formats.append({
+            "source_format": fmt if fmt else "unknown",
+            "papers": len(group),
+            "crosstab": crosstab,
+            "note_now": sum(1 for now, _ in pairs if now in READER_FACING),
+            "note_proposed": sum(1 for _, pr in pairs if pr in READER_FACING),
+        })
+
+    # Sole cause. "Only reason not clean" is the question the ticket asks and the
+    # one nobody has ever measured; "only reason for the note" is the same
+    # question asked of the page, and the two differ exactly on papers whose
+    # source archive is not on this disk, where removing the last signal leaves
+    # "we did not look" rather than "clean". Both are printed because reading one
+    # as the other is how a signal gets blamed for a missing file.
+    signals = []
+    for key in SIGNAL_KEYS:
+        fires = [p for p in papers if any(k == key for _, k, _ in p["signals"])]
+        sole_clean = sum(1 for p in fires
+                         if verdicts_for(p, frozenset()) != "clean"
+                         and verdicts_for(p, frozenset({key})) == "clean")
+        sole_note = sum(1 for p in fires
+                        if verdicts_for(p, frozenset()) in READER_FACING
+                        and verdicts_for(p, frozenset({key})) not in READER_FACING)
+        signals.append({"key": key, "papers": len(fires),
+                        "sole_cause_clean": sole_clean,
+                        "sole_cause_note": sole_note,
+                        "demoted_by_proposal": key in PROPOSED_NOTE_SIGNALS})
+
+    return {
+        "proposed_note_signals": sorted(PROPOSED_NOTE_SIGNALS),
+        "papers": len(papers),
+        "formats": formats,
+        "signals": signals,
+        "quotes": {"total": quotes["total"],
+                   "touched": quotes["touched"],
+                   "touched_folded": quotes["touched_folded"],
+                   "counts": quotes["counts"],
+                   "counts_folded": quotes["counts_folded"]},
+    }
+
+
+def print_comparison(report: dict) -> None:
+    proposed = ", ".join(report["proposed_note_signals"])
+    print(f"\nVerdict comparison over {report['papers']} papers. "
+          "Nothing was written and no verdict changed.")
+    print(f"  Proposal under test: {proposed} report as a note and stop deciding "
+          "the verdict.\n")
+
+    for f in report["formats"]:
+        n = f["papers"]
+        cols = [v for v in VERDICT_ORDER
+                if any(v in row for row in f["crosstab"].values())]
+        rows = [v for v in VERDICT_ORDER if v in f["crosstab"]]
+        head = "".join(f"{VERDICT_LABEL.get(v, v):>11}" for v in cols)
+        print(f"  {f['source_format']:<8} {n:>4} papers          proposed →")
+        print(f"      {'current ↓':<16}{head}")
+        for v in rows:
+            cells = "".join(f"{f['crosstab'][v].get(c, 0) or '·':>11}" for c in cols)
+            print(f"      {VERDICT_LABEL.get(v, v):<16}{cells}")
+        now, prop = f["note_now"], f["note_proposed"]
+        print(f"      would show the dossier note:  now {now} ({now / n:.0%})"
+              f"   proposed {prop} ({prop / n:.0%})\n")
+
+    print("  Sole cause: papers this signal fires on, and how many of them it is "
+          "the only\n  reason for. A rate says the check is wrong; this says which "
+          "signal is.\n")
+    print(f"      {'signal':<24}{'fires on':>10}{'only reason':>13}{'only reason':>13}")
+    print(f"      {'':<24}{'':>10}{'not clean':>13}{'for the note':>13}")
+    for s in report["signals"]:
+        mark = " (note)" if s["demoted_by_proposal"] else ""
+        print(f"      {s['key'] + mark:<24}{s['papers']:>10}"
+              f"{s['sole_cause_clean']:>13}{s['sole_cause_note']:>13}")
+    print("\n      'not clean' and 'for the note' differ only on papers whose source "
+          "archive\n      is not on this machine: removing their last signal leaves "
+          "\"we did not look\".")
+
+    q = report["quotes"]
+    if q["total"]:
+        print(f"\n  Quote tells over {q['total']} stored quotes, counted twice: as "
+              "today, and with a\n  literal \"...\" folded to \"…\". `\\ldots` "
+              "already renders as \"…\" and scores no hit.\n")
+        print(f"      {'tell':<50}{'today':>8}{'folded':>8}")
+        for name, _ in QUOTE_TELLS:
+            print(f"      {name:<50}{q['counts'][name]:>8}{q['counts_folded'][name]:>8}")
+        print(f"      {'quotes carrying any tell':<50}{q['touched']:>8}"
+              f"{q['touched_folded']:>8}")
+    print()
 
 
 # --clear-verdicts marks papers unaudited again, so the free pass that runs at
@@ -678,7 +901,15 @@ def main() -> None:
     ap.add_argument("--concept", help="scope to one corpus; omit to scan every extracted paper")
     ap.add_argument("--prompt-version", default=env("PROMPT_VERSION", "v2"))
     ap.add_argument("--sample", type=int, default=0, help="print this many flagged papers in full")
-    ap.add_argument("--json", help="write the full per-paper audit here")
+    ap.add_argument("--json", help="write the full per-paper audit here, or with "
+                                   "--compare-verdicts the comparison instead")
+    ap.add_argument("--compare-verdicts", action="store_true",
+                    help="scan as usual, then print today's verdicts against the "
+                         "ones a named proposal would give, and a table of which "
+                         "signal is the sole reason each paper is not clean. "
+                         "Stores nothing and changes no threshold; it exists so "
+                         "the next calibration is decided on a measurement rather "
+                         "than on a rate")
     ap.add_argument("--only-unchecked", action="store_true",
                     help="skip papers already audited. Makes this cheap enough to "
                          "run on every worker start, so the backfill needs nobody "
@@ -705,6 +936,15 @@ def main() -> None:
                          "rehearsed the part that can fail")
     args = ap.parse_args()
 
+    # First, so the refusal names the flag the operator actually typed. The rule
+    # is the one PREVIEW_VERDICTS was built on: a preview that can write is one
+    # edit away from being the write, and this one exists to be run before
+    # anything is changed and argued with afterwards.
+    if args.compare_verdicts and (args.write or args.clear_verdicts or args.dry_run):
+        sys.exit("--compare-verdicts reads and prints only. It stores no verdict, "
+                 "clears none\nand rehearses nothing, so --write, --clear-verdicts "
+                 "and --dry-run have no\nmeaning alongside it. Run it on its own, "
+                 "read both tables, then decide.")
     if args.clear_verdicts and (args.write or args.only_unchecked):
         sys.exit("--clear-verdicts is the opposite job to --write: it removes the stored\n"
                  "verdicts so the free audit will measure again, and it reads no text at\n"
@@ -759,6 +999,20 @@ def main() -> None:
         papers = [scan_paper(dict(zip(cols, r))) for r in rows]
         quotes = scan_quotes(conn, args.concept, args.prompt_version)
 
+        if args.compare_verdicts:
+            # Returns before the write block and before the usual report: the
+            # question here is what a proposal would do, and the corpus tallies
+            # underneath answer a different one loudly enough to be mistaken for
+            # it. Nothing above this line issues anything but SELECT.
+            comparison = compare_verdicts(papers, quotes)
+            print_comparison(comparison)
+            if args.json:
+                out = Path(args.json)
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text(json.dumps(comparison, indent=2), encoding="utf-8")
+                print(f"  Comparison written to {out}")
+            return
+
         if args.write:
             # A paper this machine could not scan through is left alone rather
             # than recorded: another machine has the file, and its verdict is the
@@ -776,7 +1030,9 @@ def main() -> None:
                                       extraction_checked_at = now()
                     WHERE arxiv_id = %(a)s
                 """, {"v": p["verdict"], "a": p["arxiv_id"],
-                      "s": json.dumps([f"{lvl}: {why}" for lvl, why in p["signals"]])})
+                      # The stored string is unchanged by the key: this column is
+                      # read by people and by the dossier, never parsed back.
+                      "s": json.dumps([f"{lvl}: {why}" for lvl, _key, why in p["signals"]])})
                 stored += 1
             conn.commit()
             print(f"  Wrote {stored} verdicts to papers.extraction_verdict.\n")
@@ -842,7 +1098,7 @@ def main() -> None:
 
     for p in sorted(flagged, key=lambda p: p["verdict"] != "damaged")[:args.sample]:
         print(f"  [{p['verdict']}] {p['arxiv_id']}  {p['title'][:70]}")
-        for level, why in p["signals"]:
+        for level, _key, why in p["signals"]:
             print(f"      {level}: {why}")
         if p.get("unknown_macros"):
             names = ", ".join(f"\\{n} x{c}{'' if own else ' (pkg)'}"

@@ -115,12 +115,20 @@ python pipeline/check_extraction.py                          # every extracted p
 python pipeline/check_extraction.py --concept "embedding"    # one corpus
 python pipeline/check_extraction.py --concept "embedding" --sample 8
 python pipeline/check_extraction.py --json data/extraction_audit.json
+python pipeline/check_extraction.py --compare-verdicts            # read-only
 ```
 
 It is a lower bound: it finds damage that leaves a mark, and the worst damage
 leaves none. Papers it flags are papers worth opening on arXiv. `--write` stores
 each verdict on the paper (migration 013) so the app can tell a reader what it
 knows about the text a quote was matched against.
+
+`--compare-verdicts` prints today's verdicts against the ones a named proposal
+would give, and a table of which signal is the sole reason each paper is not
+clean. It changes no threshold and stores nothing, and it refuses `--write`,
+`--clear-verdicts` and `--dry-run`. It exists because this check has been
+recalibrated four times off its own corpus rate, and a rate says the check is
+wrong without ever saying which signal is.
 
 ### Repairing a map after the extracted text changes
 
