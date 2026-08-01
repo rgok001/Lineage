@@ -81,7 +81,42 @@ Cost: $0 to build, protects about $4 per map. About a day.
 
 ## P2 — soon
 
-### 4. The home page lists every map regardless of status
+### 4. Some of the corpus on the worker's disk is stale, and some of it is absent
+**Confirmed 2026-08-01, measured on the Render disk by the audit's first clean
+run.**
+
+The re-audit of all 304 papers reported two things nobody had counted before:
+
+- **32 papers hold text produced by an older extractor** — 25 of 297 LaTeX
+  papers (8%) and all 7 PDF papers (100%). The audit names them and says
+  re-extracting applies the fixes. These are not damaged files; they are files
+  the current pipeline would produce differently.
+- **12 papers have no extracted text on that disk at all** (4%). They were
+  correctly left unaudited rather than stamped, which is decision 23 working,
+  but their dossiers now carry no note about their text because there is no text
+  to have an opinion about.
+
+Why this matters beneath the verdicts: a definition's quote is string-matched
+against the file on disk, so for those 32 papers the grounding is being decided
+against text the extractor no longer produces. Re-extracting could move a quote
+either way, and nothing today distinguishes "this quote is genuinely absent"
+from "this quote was copied out of a file we have since improved".
+
+Why P2 rather than P1: the measured blast radius on what a reader sees is small.
+Of 393 stored quotes, 11 carry any damage tell and **3** are flagged
+`copied from text the extractor has since fixed`. So this is a real correctness
+gap with a known and currently narrow effect, not a live misstatement on every
+page.
+
+Fix: re-extract the 32 with `extract_text.py --force --only <ids>` on the worker,
+and fetch plus extract the 12. Both must run on the Render shell, which is the
+only machine with the corpus. Since 2026-08-01 a re-extraction clears the paper's
+verdict automatically (decision 21), so the audit re-measures them free at the
+next boot with no manual clear.
+Cost: $0 in model spend, an hour of pipeline time. Risk: it will move some
+quotes from verified to inferred, or the reverse. That is the point.
+
+### 5. The home page lists every map regardless of status
 **Confirmed 2026-08-01.**
 
 `listGenealogies()` has no status filter and `app/app/page.tsx` renders the list
@@ -97,7 +132,7 @@ below. Whichever, the front page should not present an unfinished map as a
 finished one.
 Cost: $0, under an hour.
 
-### 5. The paper dossier's verified stamp fails open
+### 6. The paper dossier's verified stamp fails open
 **Confirmed 2026-08-01 (architecture review, W10).**
 
 `app/app/g/[id]/p/[arxiv]/page.tsx:154,159` render
@@ -108,7 +143,7 @@ is latent, but the TypeScript type says `boolean | null` and the polarity is the
 wrong way round in the one product where that matters most.
 Cost: $0, minutes.
 
-### 6. Stage F's global check only catches failure from the very first batch
+### 7. Stage F's global check only catches failure from the very first batch
 **Reported (architecture review, W7).**
 
 `if failed_batches == bi and bi >= 3` — two successful batches early and the
@@ -118,7 +153,7 @@ real ranking. The influence map then picks its papers and rings its top band
 from mostly-uniform numbers, and nothing looks broken.
 Cost: $0, half a day.
 
-### 7. Magnitude scores survive the definitions they describe
+### 8. Magnitude scores survive the definitions they describe
 **Reported (architecture review, W9).**
 
 `displacement` is a cosine distance from a centroid of definition vectors, and
@@ -132,7 +167,7 @@ one.
 Fix: `--displacement-only`, and add it to the documented repair path.
 Cost: $0, half a day.
 
-### 8. The as-built states a clustering threshold the code does not use
+### 9. The as-built states a clustering threshold the code does not use
 **Confirmed 2026-08-01 (architecture review, W8).**
 
 `stage_c_cluster.py:57` is `DEFAULT_THRESHOLD = 0.28`, with a full recalibration
@@ -147,27 +182,27 @@ Cost: $0, an hour.
 
 ## P3 — small, and none of them is a live defect
 
-9. **`--reground` does not catch partial disk corruption.** The all-failed
+10. **`--reground` does not catch partial disk corruption.** The all-failed
    refusal fires when nothing grounds; 6 of 12 files truncated flips 6 stamps
    and exits 0. Safe direction, recoverable, no paid stage downstream reads the
    column. The as-built implies broader coverage than the guard gives.
-10. **`--reground`'s refusal message should name the single-row escape.**
+11. **`--reground`'s refusal message should name the single-row escape.**
     `--reground --only <arxiv>` bypasses the guard by construction, which is the
     way out of a map that is honestly all-stale. The message does not say so.
-11. **`--reground --dry-run` exits 1 on an all-failed run.** Correct in
+12. **`--reground --dry-run` exits 1 on an all-failed run.** Correct in
     substance, surprising for a read-only mode that anyone scripts.
-12. **Nothing fails if `CURATORIAL_OPS` drifts.** The list is exactly right in
+13. **Nothing fails if `CURATORIAL_OPS` drifts.** The list is exactly right in
     both languages today. A test asserting it equals the workbench subparser
     names plus the `actions.ts` literals would keep it that way.
-13. **`--reground --limit` is rejected** on a rationale that applies equally to
+14. **`--reground --limit` is rejected** on a rationale that applies equally to
     `--only` and `--corpus`, which are allowed.
-14. **`workbench.py` prints success before it commits.** The actor is resolved
+15. **`workbench.py` prints success before it commits.** The actor is resolved
     before mutating, so the reported failure is fixed, but a database error in
     `record()` or at `commit()` still prints "Deleted n5 and 3 attached edge(s)."
     to an operator whose transaction rolls back.
-15. **Zero-branch wording.** "No curatorial changes have been made to it since"
+16. **Zero-branch wording.** "No curatorial changes have been made to it since"
     asserts a negative where "None recorded" says the same thing without it.
-16. **Brand documentation completeness.** Decision 18 names
+17. **Brand documentation completeness.** Decision 18 names
     `as unknown as Viewer` as the cast escape; a single `as Viewer` and
     `Object.assign({}, real, {login})` also compile.
 
@@ -186,12 +221,7 @@ behind the parked spend. Full list and rationale: as-built section 11 item 12.
   check is wrong rather than the map. Then `embedding`. Dry run, read, then wet.
 - **Stage C's gate reached through a real re-cluster.** It has only ever been
   driven directly; `cluster()` needs sklearn and real vectors.
-- **The verdict refresh itself.** Free, needs no spend, needs the worker:
-  `--clear-verdicts --concept "embedding" --dry-run`, read it, run it wet,
-  restart the worker immediately, confirm the boot log says `Wrote N verdicts`,
-  then repeat for the rest of the table. Until that runs, 199 papers carry
-  verdicts measured on a laptop and the rest carry the 2026-07-31 batch.
-  Runbook in section 8 of the as-built.
+  (Done 2026-08-01, see the closed list.)
 
 ## Parked by decision
 
@@ -216,9 +246,14 @@ behind the parked spend. Full list and rationale: as-built section 11 item 12.
   the live count of 160 `damaged` is the pre-repair run's own number. And every
   one of those repairs was lenient, so the re-audit should remove warnings
   rather than add them: 183 milder and 0 stricter over 227 papers, measured
-  offline. **The code shipped, the run has not**: see the blocked list, and
-  incident 14 for the state a test harness left on the database while this was
-  being built.
+  offline. **Both shipped and ran (2026-08-01).** The clear was run from the
+  laptop, all 304 rows, backed up first; the re-audit was run on the Render
+  shell, the only machine with the corpus. Measured: `damaged` fell from 250 to
+  15 table-wide and from 160 to 11 on `/g/10`, `clean` rose from 3 to 74, and
+  218 of 304 (72%) still carry some warning against the 76% predicted. Both
+  halves of the prediction held, and the residual is item 1 rather than this
+  having failed. See incident 14 for the state a test harness left on the
+  database while this was being built.
 - **The audit called a paper clean when it had not read that paper's source
   archive (2026-08-01).** Six signals need the archive and the whole block was
   skipped in silence when it was not on the machine, so 47 verdicts moved and 39
@@ -232,7 +267,7 @@ behind the parked spend. Full list and rationale: as-built section 11 item 12.
 - **The reader test passed (2026-08-01).** A reader with no context could tell
   the authenticated entry from the asserted one. Run against a standalone
   fixture rendering the real component, because a scratch map would have gone
-  on the public home page (item 4). What was not captured is *how* they told
+  on the public home page (item 5). What was not captured is *how* they told
   them apart, so this is evidence the current wording works rather than a
   specification of why. That closes the last open check in the actor design.
 - Definition stamps had no free recompute path — `--reground` shipped, wired in
