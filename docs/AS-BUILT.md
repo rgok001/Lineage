@@ -84,7 +84,8 @@ CLAUDE.md            product spec and non-negotiable rules
 README.md            setup and CLI usage
 render.yaml          Render blueprint for the trace worker
 docs/                ARCHITECTURE.md (design), AS-BUILT.md (this file)
-pipeline/            the eight stages + auxiliaries (Python, CLI-first)
+pipeline/            stages A-H + auxiliaries (Python, CLI-first; the worker
+                     runs thirteen steps, see section 4)
   common.py          env loading, polite HTTP session, data_dir()
   check_extraction.py  audit of extracted-text fidelity (no model, no network)
   db/migrate.py      ordered SQL migrations, schema_migrations table
@@ -200,9 +201,22 @@ database level because app-level checks can be raced by simultaneous submits.
 
 ## 4. The pipeline
 
-Eight stages plus auxiliaries, each a standalone CLI script reading root
-`.env`. The pipeline is CLI-first by rule: the worker orchestrates these same
-commands and adds nothing to them.
+Eight lettered stages, A to H, each a standalone CLI script reading root `.env`.
+The pipeline is CLI-first by rule: the worker orchestrates these same commands
+and adds nothing to them.
+
+**The worker runs thirteen steps, not eight**, and the difference is not
+decoration: three things that began as optional auxiliaries are now part of a
+finished trace. `check_extraction.py` audits the text the grounding check is
+about to rest on (incident 11), `stage_b_extract.py --reground` recomputes the
+definition stamps against the text actually on disk (decision 19), and
+`enrich_authors.py` fills the author metadata the export cannot invent. In
+order: select corpus, fetch papers, extract text, audit extracted text,
+extract definitions (B), cluster concept-states (C), classify edges (D),
+re-check definition quotes, ground and assemble (E), fill author metadata,
+score magnitude (F), compose threads (G), check each claim (H). Earlier drafts
+of this section said "eight stages plus auxiliaries", which was true of the
+letters and wrong about what a trace actually consists of.
 
 **Stage A part 1: corpus selection**
 (`corpus_select.py <concept> --limit N --field fields/K --gloss "..." --json PATH`).
@@ -349,6 +363,11 @@ the soft-alignment and self-attention cores sit ~0.16 apart, and a bridge pair
 the product exists to distinguish. 0.16 over-splits weak singletons on
 purpose: merge is a one-click curatorial act, un-merge is not. Stage C output
 is a draft for curation, not a result. Claude labels each cluster (pennies).
+**Stage C no longer clears the map's edges unconditionally** (decision 20). It
+compares what each node id denoted before against what it denotes now and clears
+only when that changed; when the clustering comes back identical, which a re-run
+at the same threshold on an unchanged corpus always does, the edges are left for
+Stage D to replace on its first success.
 
 **Stage D: edge classification** (`stage_d_edges.py <concept>`).
 Pulls references and citation contexts from Semantic Scholar (public endpoint,
@@ -362,7 +381,15 @@ text. Direction convention: cited = ancestor = source; citing = descendant =
 target.
 
 **Stage E: grounding and assembly** (`stage_e_ground.py <concept>`).
-Re-derives each edge's quote pair from `definitions.verbatim_quote` before
+First sweeps out any edge naming a concept-state `genealogies.nodes` no longer
+contains (decision 20), before the quote re-sync and before anything is judged,
+so nothing is repaired, stamped or assembled for an edge that is about to go and
+the reported verified count describes the map that will actually be published.
+The count is printed, and a sweep that would remove *every* edge refuses and
+exits non-zero instead, on the same reasoning as the `--reground` guard: no edge
+surviving is what an empty or swapped `nodes` blob looks like, not what a
+re-clustered map looks like.
+Then re-derives each edge's quote pair from `definitions.verbatim_quote` before
 judging anything. An edge's quotes ARE the two papers' definition quotes
 (decision 6); Stage D copies them onto the edge when it classifies, and that copy
 can go stale. Refreshing attention's definitions against re-extracted text did
@@ -987,6 +1014,42 @@ The why behind the load-bearing choices, in one place:
     is to re-extract rather than to mass-flip stamps from here. The cost of that
     choice is that a map whose every quote is honestly stale cannot be corrected
     by this tool; that is the trade, taken in the direction that changes nothing.
+
+20. **Stage D owns the edge lifecycle, and Stage C clears only what it has
+    invalidated** (2026-08-01). `stage_c_cluster.py` used to run
+    `DELETE FROM edges` unconditionally straight after the node upsert, on the
+    reasoning that re-clustering invalidates the old edges and Stage D rebuilds
+    them. **That is the reasoning Stage D itself held before incident 12**, and
+    it made incident 12's fix worthless: Stage D now defers its own DELETE until
+    the first successful classification, but the edges were already gone before
+    Stage D was reached, so a Stage D that failed for any reason left a map with
+    fresh concept-states and no relationships while its guard reported that
+    nothing had been touched.
+    **Node ids are positional, and that is what makes this more than a
+    tidy-up.** Stage C names clusters `n1..nk` by their earliest member year, so
+    an id is a name for a slot rather than for a concept-state, and two runs can
+    both produce `n3` and mean different things by it. So "the old edges are
+    stale" has two quite different meanings: an edge naming an id that is gone,
+    which is merely dangling, and an edge naming an id that survived and now
+    denotes different definitions, which is a **wrong displayed edge** between
+    two concept-states nobody ever claimed were related. `/g/<id>/evidence`
+    renders the second one in full, with both quotes and a verified stamp if the
+    quotes ground, and shows the raw id where the label should be. Under product
+    rule 1 that is worse than a missing edge.
+    So the condition is the clustering itself: Stage C compares what each node id
+    denoted (its set of `definition_ids`) before and after, keeps the edges when
+    that is unchanged, and clears them when it is not. Labels are not compared,
+    because relabelling a node does not change what it groups. Clearing in the
+    changed case is not incident 12 again: what is destroyed there is already
+    invalid, and incident 12's rule is about not destroying something valid
+    before its replacement exists.
+    The dangling case is settled in Stage E, which sweeps edges naming absent
+    concept-states before it grounds anything, reports the count, and refuses if
+    every edge would go. **What this buys, measured:** a re-run at the same
+    threshold followed by a Stage D that fails before its first classification
+    used to leave zero edges and now leaves all of them, sound. The sweep alone,
+    as originally scoped, would have left the changed-clustering case showing
+    misattributed edges; that is why Stage C still has a DELETE.
 
 ---
 
