@@ -31,7 +31,7 @@ import numpy as np
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import data_dir, env  # noqa: E402
+from common import data_dir, env, node_denotation  # noqa: E402
 from stage_b_extract import PRICING, cost_usd  # noqa: E402
 
 # Embeddings come from the Voyage hosted API (see common.voyage_embed), which
@@ -136,24 +136,19 @@ RETURNING id
 """
 
 COUNT_EDGES = "SELECT count(*) FROM edges WHERE genealogy_id = %s"
-CLEAR_EDGES = "DELETE FROM edges WHERE genealogy_id = %s"
 
-
-def denotation(nodes) -> dict:
-    """What each node id MEANS: {node_id: frozenset(definition_ids)}.
-
-    Node ids here are positional — `n1` is whichever cluster holds the earliest
-    member year (see the id assignment below) — so an id is not a name for a
-    concept-state, it is a name for a slot. Two runs can both produce `n3` and
-    mean different things by it. The definitions a node holds are what it
-    actually denotes, and comparing that is the only way to ask "do the stored
-    edges still mean what they meant".
-
-    Labels are deliberately not compared: relabelling a node does not change
-    which definitions it groups, so it does not invalidate an edge.
-    """
-    return {n["node_id"]: frozenset(n.get("definition_ids") or [])
-            for n in (nodes or [])}
+# Per endpoint, not per map. An edge asserts that a paper in concept-state
+# `source_node` did something to a paper in `target_node`; if both of those ids
+# still denote the definitions they denoted, the assertion still holds, whatever
+# happened elsewhere in the clustering. A whole-map comparison also cleared the
+# edges of untouched clusters when a re-cluster merely APPENDED one — every
+# existing edge still valid, all of them gone — which is a claim decision 20
+# should not have been making.
+CLEAR_STALE_EDGES = """
+DELETE FROM edges
+WHERE genealogy_id = %(gid)s
+  AND (NOT (source_node = ANY(%(safe)s)) OR NOT (target_node = ANY(%(safe)s)))
+"""
 
 
 def main() -> None:
@@ -236,56 +231,68 @@ def main() -> None:
             print(f"       {star} {rows[i][1]:<13} {rows[i][2]}  {(rows[i][3] or '')[:50]}")
         print()
 
-    # Read what this map means NOW, before the upsert overwrites it, so the two
-    # clusterings can be compared.
-    prior = conn.execute(
-        "SELECT id, nodes FROM genealogies WHERE concept = %s AND prompt_version = %s",
-        (args.concept, prompt_version)).fetchone()
+    # Read, decide and write as ONE transaction. The connection is autocommit, so
+    # without this the upsert commits the new clustering the instant it runs, and
+    # anything that raises between there and the edge decision leaves exactly the
+    # state this gate exists to prevent: new concept-states, previous
+    # clustering's edges, drawn in full on /g/<id>/evidence with the raw id where
+    # a label belongs. That window did not exist before the gate did — the old
+    # code put an unconditional DELETE immediately after the upsert — so the gate
+    # had to own it. Reached in practice by pointing restore_genealogy.py at a
+    # truncated JSON, which validates no shape, and then re-clustering.
+    with conn.transaction():
+        # What this map means NOW, read before the upsert overwrites it.
+        prior = conn.execute(
+            "SELECT id, nodes FROM genealogies WHERE concept = %s AND prompt_version = %s",
+            (args.concept, prompt_version)).fetchone()
 
-    # Persist in place: upsert on (concept, prompt_version) keeps the genealogy's
-    # id stable across re-runs, so /g/<id> links and trace_requests.genealogy_id
-    # survive a re-trace, and a requeued run reuses its row instead of orphaning
-    # a new one. user_edits is intentionally left untouched (the audit trail
-    # outlives a re-cluster).
-    gen_id = conn.execute(UPSERT_GENEALOGY, {
-        "concept": args.concept, "prompt_version": prompt_version,
-        "nodes": psycopg.types.json.Json(nodes),
-    }).fetchone()[0]
+        # Persist in place: upsert on (concept, prompt_version) keeps the
+        # genealogy's id stable across re-runs, so /g/<id> links and
+        # trace_requests.genealogy_id survive a re-trace, and a requeued run
+        # reuses its row instead of orphaning a new one. user_edits is
+        # intentionally left untouched (the audit trail outlives a re-cluster).
+        gen_id = conn.execute(UPSERT_GENEALOGY, {
+            "concept": args.concept, "prompt_version": prompt_version,
+            "nodes": psycopg.types.json.Json(nodes),
+        }).fetchone()[0]
 
-    # This DELETE used to be unconditional, with the reasoning that re-clustering
-    # invalidates the old edges and Stage D rebuilds them anyway. That is the
-    # reasoning Stage D itself held before incident 12: it cleared first and
-    # classified second, and an exhausted balance left a map with no edges at
-    # all. Stage D now defers its DELETE to the first successful classification,
-    # and this one made that guard worthless — the edges were already gone before
-    # Stage D was reached, so a Stage D that fails for any reason left fresh
-    # nodes and nothing joining them.
-    #
-    # The condition is the clustering itself. If every node id denotes exactly
-    # the definitions it denoted before, the stored edges still say what they
-    # said and there is nothing to invalidate; keeping them means a failed Stage D
-    # costs nothing. If the denotation changed, the edges are not merely at risk,
-    # they are WRONG: an edge naming `n3` would be drawn between two
-    # concept-states nobody ever claimed were related, and `/g/<id>/evidence`
-    # renders exactly that, with a verified stamp if Stage E can ground the
-    # quotes. A wrong displayed edge is worse than a missing one under product
-    # rule 1, so that case still clears — and the thing being destroyed there is
-    # already invalid, which is what makes it not a repeat of incident 12.
-    edges_now = conn.execute(COUNT_EDGES, (gen_id,)).fetchone()[0]
-    if prior is None or not edges_now:
-        pass
-    elif denotation(prior[1]) == denotation(nodes):
-        print(f"  clustering unchanged: {edges_now} existing edge(s) still refer to the "
-              f"same concept-states and were kept.\n"
-              f"  Stage D will replace them on its first successful classification.")
-    else:
-        conn.execute(CLEAR_EDGES, (gen_id,))
-        print(f"  clustering CHANGED: {edges_now} existing edge(s) referred to "
-              f"concept-states that no longer mean the same thing, and were removed.\n"
-              f"  Node ids are positional, so a kept edge would be drawn between two "
-              f"states never claimed to be related.\n"
-              f"  Run Stage D to rebuild them.")
-    conn.commit()
+        # This DELETE used to be unconditional, with the reasoning that
+        # re-clustering invalidates the old edges and Stage D rebuilds them
+        # anyway. That is the reasoning Stage D itself held before incident 12:
+        # it cleared first and classified second, and an exhausted balance left a
+        # map with no edges at all. Stage D now defers its DELETE to the first
+        # successful classification, and this one made that guard worthless — the
+        # edges were already gone before Stage D was reached, so a Stage D that
+        # failed for any reason left fresh nodes and nothing joining them.
+        #
+        # An edge survives iff BOTH the ids it names still denote the definitions
+        # they denoted. Where that holds the edge still says what it said, and
+        # keeping it means a failed Stage D costs nothing. Where it does not, the
+        # edge is not merely at risk, it is WRONG: node ids are positional, so a
+        # kept edge would be drawn between two concept-states nobody ever claimed
+        # were related, with a verified stamp if Stage E can ground the quotes. A
+        # wrong displayed edge is worse than a missing one under product rule 1,
+        # so those clear — and what is destroyed there is already invalid, which
+        # is what makes it not a repeat of incident 12.
+        edges_now = conn.execute(COUNT_EDGES, (gen_id,)).fetchone()[0]
+        if prior is not None and edges_now:
+            prior_d = node_denotation(prior[1])
+            new_d = node_denotation(nodes)
+            safe = sorted(nid for nid, d in new_d.items()
+                          if nid in prior_d and prior_d[nid] == d)
+            cleared = conn.execute(CLEAR_STALE_EDGES,
+                                   {"gid": gen_id, "safe": safe}).rowcount
+            kept = edges_now - cleared
+            if not cleared:
+                print(f"  every concept-state these {kept} edge(s) name still holds the "
+                      f"same definitions, so all {kept} were kept.\n"
+                      f"  Stage D will replace them on its first successful classification.")
+            else:
+                print(f"  {cleared} of {edges_now} edge(s) named a concept-state that no "
+                      f"longer holds the same definitions, and were removed.")
+                if kept:
+                    print(f"  {kept} edge(s) whose concept-states are unchanged were kept.")
+                print("  Run Stage D to rebuild the rest.")
     conn.close()
 
     print(f"Wrote genealogy: {len(nodes)} nodes for \"{args.concept}\" (prompt {prompt_version}).")

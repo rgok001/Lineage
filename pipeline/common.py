@@ -327,3 +327,58 @@ def quote_is_grounded(text: str, quote: str) -> bool:
     if not text or not quote:
         return False
     return _fold(quote) in _fold(text)
+
+
+# ── reading genealogies.nodes ───────────────────────────────────────────────
+#
+# `nodes` is JSONB written by Stage C and rewritten by the workbench, the two
+# restore scripts and anything holding the .env. Two stages have to reason about
+# it — Stage C to decide whether stored edges still mean what they meant, Stage E
+# to decide which edges name a concept-state that is still there — and they must
+# read it the same way, so it is read here.
+#
+# One posture, applied throughout: anything malformed is DROPPED, never guessed
+# at and never raised on. Dropping is the safe direction for both callers,
+# because both of them treat "not a concept-state I can vouch for" as a reason to
+# remove an edge, and removing an edge is recoverable while displaying a wrong
+# one is not. Raising is not safe: it used to happen between Stage C's node
+# upsert and its edge decision, which is precisely the window that leaves new
+# concept-states wired to old edges.
+
+
+def node_denotation(nodes: object) -> dict:
+    """{node_id: what that id denotes} for a genealogies.nodes blob.
+
+    A node id is positional (`n1` is whichever cluster holds the earliest member
+    year), so it names a slot rather than a concept-state. What it *denotes* is
+    the set of definitions it groups, and that is the only thing worth comparing
+    across two clusterings.
+
+    A node that does not say which definitions it holds denotes UNKNOWN, and
+    unknown is deliberately never equal to unknown: each gets a fresh sentinel,
+    so two blobs that both fail to say what they hold compare unequal and their
+    edges are cleared. Reading absence as "the empty set" would make them compare
+    EQUAL and keep the edges, which is the one direction this must not fail in.
+    """
+    out: dict[str, object] = {}
+    for n in nodes if isinstance(nodes, list) else []:
+        if not isinstance(n, dict):
+            continue
+        nid = n.get("node_id")
+        if not isinstance(nid, str) or not nid.strip():
+            continue
+        defs = n.get("definition_ids")
+        # object() rather than a shared constant: a shared one would compare
+        # equal to itself and reintroduce absence-as-sameness.
+        out[nid.strip()] = (frozenset(defs)
+                            if isinstance(defs, list) and defs
+                            and all(isinstance(d, int) for d in defs)
+                            else object())
+    return out
+
+
+def node_ids(nodes: object) -> list[str]:
+    """The concept-state ids a map actually has, sorted. Same posture as above,
+    so a node Stage C would refuse to compare is also one Stage E will not
+    vouch for."""
+    return sorted(node_denotation(nodes))

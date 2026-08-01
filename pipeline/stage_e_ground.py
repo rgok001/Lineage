@@ -20,7 +20,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import quote_is_grounded, REPO_ROOT, data_dir, env  # noqa: E402
+from common import quote_is_grounded, REPO_ROOT, data_dir, env, node_ids  # noqa: E402
 
 
 # An edge whose source_node or target_node is not in genealogies.nodes has no
@@ -37,16 +37,6 @@ WHERE genealogy_id = %(gid)s
   AND (NOT (source_node = ANY(%(live)s)) OR NOT (target_node = ANY(%(live)s)))
 ORDER BY id
 """
-# A map with no concept-states at all makes every edge an orphan, and it needs
-# its own statement rather than the one above with an empty array: an empty list
-# parameter has no element type Postgres can infer, so `= ANY(%s)` raises rather
-# than returning false for every row. This is the branch that walks straight
-# into the refusal below, which is where a nodeless map should end up.
-SELECT_ALL_EDGES = """
-SELECT id, source_node, target_node FROM edges
-WHERE genealogy_id = %(gid)s
-ORDER BY id
-"""
 DELETE_ORPHANS = "DELETE FROM edges WHERE id = ANY(%(ids)s)"
 
 
@@ -59,14 +49,12 @@ def sweep_orphan_edges(conn, gen_id: int, nodes) -> None:
     published. Nothing later needs these rows: no stage after this one reads
     source_node or target_node at all.
     """
-    live = sorted({n["node_id"] for n in (nodes or []) if n.get("node_id")})
+    live = node_ids(nodes)
     total = conn.execute("SELECT count(*) FROM edges WHERE genealogy_id = %s",
                          (gen_id,)).fetchone()[0]
     if not total:
         return
-    orphans = (conn.execute(SELECT_ORPHANS, {"gid": gen_id, "live": live}).fetchall()
-               if live else
-               conn.execute(SELECT_ALL_EDGES, {"gid": gen_id}).fetchall())
+    orphans = conn.execute(SELECT_ORPHANS, {"gid": gen_id, "live": live}).fetchall()
     if not orphans:
         print(f"  {total} edge(s), every one of them between concept-states this map has.\n")
         return
@@ -74,11 +62,14 @@ def sweep_orphan_edges(conn, gen_id: int, nodes) -> None:
     # Every edge an orphan is not a finding, it is a broken run wearing a
     # result's clothes: an empty or replaced `nodes` blob produces exactly this,
     # and so does pointing this stage at the wrong map. The same shape as the
-    # --reground guard (decision 19), and the boundary is likewise zero rather
-    # than a fraction — "not one edge survives" is a degenerate case, not a
-    # calibration. Refuse and change nothing; the map keeps its edges and its
-    # last honest stamps.
-    if len(orphans) == total:
+    # --reground guard (decision 19), down to `total > 1`, which that guard has
+    # as `checked > 1` for the same reason: with a single edge there is nothing
+    # for "all of them" to mean, and refusing there would abort a trace at step 9
+    # of 13, after every paid step, over one removable edge. The boundary is
+    # likewise zero rather than a fraction — "not one edge survives" is a
+    # degenerate case, not a calibration. Refuse and change nothing; the map
+    # keeps its edges and its last honest stamps.
+    if total > 1 and len(orphans) == total:
         sys.exit(
             f"\nRefusing to sweep: all {total} edge(s) of this map name concept-states "
             f"that genealogies.nodes does not contain.\n"

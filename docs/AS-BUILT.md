@@ -363,11 +363,15 @@ the soft-alignment and self-attention cores sit ~0.16 apart, and a bridge pair
 the product exists to distinguish. 0.16 over-splits weak singletons on
 purpose: merge is a one-click curatorial act, un-merge is not. Stage C output
 is a draft for curation, not a result. Claude labels each cluster (pennies).
-**Stage C no longer clears the map's edges unconditionally** (decision 20). It
-compares what each node id denoted before against what it denotes now and clears
-only when that changed; when the clustering comes back identical, which a re-run
-at the same threshold on an unchanged corpus always does, the edges are left for
-Stage D to replace on its first success.
+**Stage C no longer clears the map's edges unconditionally** (decision 20). Per
+edge endpoint, it compares what each node id denoted before against what it
+denotes now, and removes only the edges whose concept-states have changed
+underneath them; the rest are left for Stage D to replace on its first success.
+A re-run at the same threshold on an unchanged corpus **with cached embeddings**
+reproduces the same clustering and so keeps every edge. Not with `--force`,
+which re-embeds: vectors are stored at six decimal places, so a pair sitting on
+the threshold can cross it and the clustering can move. The read, the node
+upsert and the edge decision are one transaction.
 
 **Stage D: edge classification** (`stage_d_edges.py <concept>`).
 Pulls references and citation contexts from Semantic Scholar (public endpoint,
@@ -385,10 +389,13 @@ First sweeps out any edge naming a concept-state `genealogies.nodes` no longer
 contains (decision 20), before the quote re-sync and before anything is judged,
 so nothing is repaired, stamped or assembled for an edge that is about to go and
 the reported verified count describes the map that will actually be published.
-The count is printed, and a sweep that would remove *every* edge refuses and
-exits non-zero instead, on the same reasoning as the `--reground` guard: no edge
-surviving is what an empty or swapped `nodes` blob looks like, not what a
-re-clustered map looks like.
+The count is printed, and a sweep that would remove *every* edge of a map that
+has more than one refuses and exits non-zero instead, on the same reasoning as
+the `--reground` guard and with the same lower bound (`total > 1` there is
+`checked > 1`): no edge surviving is what an empty or swapped `nodes` blob looks
+like, not what a re-clustered map looks like, while a one-edge map gives "all of
+them" nothing to mean and refusing there would abort a trace at step 9 of 13,
+after every paid step, over one removable edge.
 Then re-derives each edge's quote pair from `definitions.verbatim_quote` before
 judging anything. An edge's quotes ARE the two papers' definition quotes
 (decision 6); Stage D copies them onto the edge when it classifies, and that copy
@@ -1036,20 +1043,51 @@ The why behind the load-bearing choices, in one place:
     renders the second one in full, with both quotes and a verified stamp if the
     quotes ground, and shows the raw id where the label should be. Under product
     rule 1 that is worse than a missing edge.
-    So the condition is the clustering itself: Stage C compares what each node id
-    denoted (its set of `definition_ids`) before and after, keeps the edges when
-    that is unchanged, and clears them when it is not. Labels are not compared,
-    because relabelling a node does not change what it groups. Clearing in the
-    changed case is not incident 12 again: what is destroyed there is already
-    invalid, and incident 12's rule is about not destroying something valid
-    before its replacement exists.
+    So the condition is the clustering itself, **per endpoint rather than per
+    map**. An edge survives iff both the ids it names still denote the
+    definitions they denoted; anything else clears. Whole-map equality was the
+    first attempt and it over-cleared: a re-cluster that merely APPENDS a
+    concept-state leaves every existing edge valid and every existing id
+    untouched, and comparing the maps wholesale threw all of them away. Labels,
+    year ranges and `representative_arxiv_id` are not compared, because none of
+    them changes what a node groups; renaming is in fact the only curatorial act
+    that leaves denotation intact, and the only one that does not invalidate an
+    edge. Clearing in the changed case is not incident 12 again: what is
+    destroyed there is already invalid, and incident 12's rule is about not
+    destroying something valid before its replacement exists.
+    **The gate is one transaction**, covering the read of the old blob, the
+    upsert and the DELETE. The connection is autocommit, so without that the new
+    clustering commits the moment the upsert runs, and anything raising between
+    there and the edge decision produces precisely the state this decision
+    exists to prevent. That window is the gate's own creation — the old code had
+    the upsert and an unconditional DELETE back to back — so the gate owns it. It
+    was reachable without hand-edited SQL: `restore_genealogy.py` validates no
+    shape, so pointing it at a truncated JSON gives a malformed `nodes` blob with
+    a full edge set, and a plain re-cluster then walks into it.
+    A malformed blob is also no longer a raise. `node_denotation` in `common.py`
+    is the single reader of `genealogies.nodes` for both stages, with one posture:
+    anything malformed is dropped, never guessed at and never raised on, because
+    both callers treat "not a concept-state I can vouch for" as a reason to
+    remove an edge, and removing one is recoverable while displaying a wrong one
+    is not. A node that does not say which definitions it holds denotes
+    **unknown, and unknown is never equal to unknown** — each gets a fresh
+    sentinel. Reading absence as the empty set would have made two silent blobs
+    compare equal and KEEP their edges, which is the one direction this must not
+    fail in.
     The dangling case is settled in Stage E, which sweeps edges naming absent
     concept-states before it grounds anything, reports the count, and refuses if
-    every edge would go. **What this buys, measured:** a re-run at the same
-    threshold followed by a Stage D that fails before its first classification
-    used to leave zero edges and now leaves all of them, sound. The sweep alone,
-    as originally scoped, would have left the changed-clustering case showing
-    misattributed edges; that is why Stage C still has a DELETE.
+    more than one edge exists and every one of them would go.
+    **What this buys.** Driven directly against the code: the gate block executed
+    over synthetic node blobs and edge sets, showing an appended cluster now
+    keeps all its edges where whole-map equality cleared them, a single changed
+    cluster clears only the edges touching it, and a forced raise inside the gate
+    rolls back rather than committing new nodes over old edges. Reasoned, not
+    measured: that a re-run at the same threshold reproduces the same clustering,
+    since Stage C cannot run here (`cluster()` needs sklearn and real vectors) —
+    what was executed is `node_denotation` on stored blobs, not the clustering
+    that produces them. The sweep alone, as originally scoped, would have left
+    the changed-clustering case showing misattributed edges; that is why Stage C
+    still has a DELETE.
 
 ---
 
