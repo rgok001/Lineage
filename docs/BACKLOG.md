@@ -59,6 +59,52 @@ Cost: $0 to build, protects about $4 per map. About a day.
 
 ## P2 — soon
 
+### 19. Symbol loss is now the dominant reason a reader is warned, and its bar has never been measured
+**Confirmed, measured 2026-08-01 on the Render corpus, after the demotion in
+item 1 shipped.** Filed with the next free number rather than slotted in at 4:
+these numbers are identifiers, not positions.
+
+`symbols` is sole cause on **43 of 304 papers (14.1%)**, which is **38% of the
+113 papers still carrying the dossier note**. Before the demotion it read 16.
+Nothing about symbol loss changed; those papers were being co-caused by the two
+noisier signals, and removing those is what exposed it.
+
+**It was predicted by name.** The design that authorised the demotion set the bar
+for "there is a third miscalibration here" at about 15% sole cause, and named
+symbol loss as its prior, on the reasoning that corpus-wide symbol loss measured
+12% while `SYMBOL_LOSS_SUSPECT` sits at 0.20 per paper. It came in at 14.1%:
+under the line, so it did not trigger a sixth round, and close enough to it that
+the margin is not evidence of anything.
+
+**The honest weakness in how it was cleared.** That criterion was read off the
+pre-demotion sole-cause table, and a signal's true sole-cause share only becomes
+visible once the signals it co-occurs with are out of the way. So it was
+evaluated on the one table that could not answer it. That is not a reason to
+undo the demotion, which met the other two criteria on measured data and took
+the note from 218 papers to 113. It is a reason to price this one rather than
+assume it is fine.
+
+**This is not yet a defect, and that distinction matters.** Unlike `gaps` and
+`package_macros`, symbol loss plausibly *is* content loss: a symbol that left no
+trace in the extracted text is a character the reader cannot see. The open
+question is whether 20% per paper is the right bar, and that bar was guessed and
+has never been measured against a distribution.
+
+Fix: no code change until it is priced. Name `symbols` in
+`PROPOSED_NOTE_SIGNALS` and run, on the Render shell:
+
+```
+python pipeline/check_extraction.py --compare-verdicts
+```
+
+That prices demoting it outright, which is what the instrument exists for. If
+the crosstab says most of those 43 would go clean, the question becomes the
+threshold rather than the signal, and the per-paper distribution of symbol loss
+is what sets it, at a stated quantile with the resulting rate named in the
+commit. Not a number that looks better, which is what all four failed
+calibrations did.
+Cost: $0. Minutes to measure, then a decision.
+
 ### 4. Some of the corpus on the worker's disk is stale, and some of it is absent
 **Confirmed 2026-08-01, measured on the Render disk by the audit's first clean
 run.**
