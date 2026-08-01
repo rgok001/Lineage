@@ -1394,3 +1394,59 @@ Open engineering work, in priority order:
     (c) The map badge counts the links *drawn on the map*, not all of the map's
     relationships; it now says "links shown" for that reason, which is one word
     doing a lot of work. The full figure lives on `/g/<id>/evidence`.
+
+11. **Every extraction verdict in the database predates the re-extraction it
+    describes, and nothing will ever refresh one** (measured 2026-08-01). This
+    is the concrete form of the "derived value allowed to age" fault, and it is
+    live now rather than latent.
+    Measured against the live database: every non-null `extraction_checked_at`
+    in `papers` carries the identical timestamp `2026-07-31 10:08:43.957021+00`,
+    so the audit was one batch. Section 4's own account of that run is the other
+    half: its fourth pass concluded that the marks it kept finding cannot survive
+    the current extractor, so "the corpus on the Render disk is text an older
+    pipeline produced and nothing has re-extracted". The audit therefore
+    describes the *pre*-re-extraction corpus. `embedding`'s papers were
+    re-extracted later the same day (decision 19), and its restore entry is
+    stamped `13:13:24Z`, three hours after the audit.
+    The spread, whole table: 250 `damaged`, 39 `suspect`, 3 `clean`, 12 never
+    checked. Restricted to `embedding`'s 187 papers: 160 `damaged`, 25
+    `suspect`, 2 `clean`. So the dossier's "our reading of this paper lost some
+    of its text" is currently rendered on 86% of that map's papers from a
+    measurement of text that no longer exists. It is wrong in whichever
+    direction the re-extraction moved it, and a paper the re-extraction *fixed*
+    is indistinguishable from one it did not.
+    Nothing corrects this by itself. `check_extraction.py --only-unchecked`
+    filters on `extraction_checked_at IS NULL`, and `extract_text.py` updates
+    `extracted_text_path` and `text_title_match` without clearing the verdict or
+    the timestamp, so the automatic run at worker startup and at trace step 4
+    skips every one of these rows forever. The fix is one line beside the
+    existing `UPDATE papers SET extracted_text_path...`: null the verdict and the
+    checked-at when the text is rewritten, and the existing `--only-unchecked
+    --write` re-audits them free on the next boot.
+
+12. **The `embedding` refresh spend is parked deliberately, not forgotten**
+    (Product Owner, 2026-08-01). Finishing `/g/10` costs $8.45 of Anthropic
+    credit, which is exhausted and is separate from the Max plan. The decision is
+    to hold it until there is a critical mass of changes worth validating against
+    live data in one pass, rather than spending it to verify one of them. Until
+    then the map carries its honest partial figure, which is what the badge
+    fraction was built for.
+    What that pass must cover, accumulated as each was deferred:
+    (a) Design checks 1 and 2 from `docs/design/actor-on-edits.md`: a CLI edit
+    must land `by_asserted` and no `by`, a web edit the reverse. Run on `/g/13`,
+    which is uncurated. Checks 3, 4 and 5 have been run and passed.
+    (b) `stage_b_extract.py --reground --dry-run` on `attention` first as the
+    control, since it is the only map built entirely on correct text and a large
+    fall there means the check is wrong rather than the map. Then `embedding`.
+    Read both before running either without `--dry-run`.
+    (c) The reader test in section 4 of the same design, which needs a person and
+    is the check that document calls the one that matters.
+    (d) Stage C's gate (decision 20) reached through a real re-cluster. It has
+    only ever been driven directly, because `cluster()` needs sklearn and real
+    vectors, so no test here reaches it the way a trace does.
+    (e) Item 11 above, once the verdict is nulled on re-extraction: confirm the
+    re-audit runs and that the new verdicts differ from the frozen ones.
+    Closed already and not needing the spend: `CLEAR_STALE_EDGES`,
+    `SELECT_ORPHANS` and `DELETE_ORPHANS` have been parsed and planned by the
+    live server, and `with conn.transaction()` on an autocommit connection has
+    been shown to open a real transaction and roll back cleanly on a raise.
