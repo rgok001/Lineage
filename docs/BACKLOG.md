@@ -15,27 +15,7 @@ reproduced. **Parked** is a decision to wait, not an oversight.
 
 ## P1 — do next
 
-### 1. Extraction verdicts describe text that no longer exists
-**Confirmed, measured 2026-08-01. Live on the public site now.**
-
-Every `extraction_checked_at` in `papers` carries the same timestamp,
-`2026-07-31 10:08:43.957021+00`, and the audit that wrote them was reading the
-pre-re-extraction corpus. `embedding`'s papers were re-extracted later that day.
-160 of its 187 papers are stamped `damaged` on that basis, so the paper dossier
-shows "our reading of this paper lost some of its text" on 86% of the map from a
-measurement of text that is gone. A paper the re-extraction *fixed* looks
-identical to one it did not.
-
-Nothing corrects it: `check_extraction.py --only-unchecked` filters on the
-timestamp being null and `extract_text.py` never clears it, so the automatic
-re-audit skips these rows permanently.
-
-Fix: one line beside the existing `UPDATE papers SET extracted_text_path...` to
-null the verdict and the checked-at when the text is rewritten. The existing
-`--only-unchecked --write` then re-audits them free on the next boot.
-Cost: $0, about an hour. See section 11 item 11 of the as-built.
-
-### 2. Stage D's rebuild is not atomic, and Stage E publishes whatever survives
+### 1. Stage D's rebuild is not atomic, and Stage E publishes whatever survives
 **Reported (architecture review, W3).**
 
 `stage_d_edges.py` runs `autocommit=True`, so the DELETE and each INSERT are
@@ -54,7 +34,7 @@ proportional one; and stop Stage E marking `complete` or overwriting the export
 when the edge count has collapsed against what the export holds.
 Cost: $0, about a day.
 
-### 3. Stage G discards Stage H's claims, and has no global check
+### 2. Stage G discards Stage H's claims, and has no global check
 **Reported (architecture review, W4).**
 
 `stage_g_threads.py` catches any exception composing a thread and substitutes an
@@ -72,7 +52,7 @@ Cost: $0 to build, protects about $4 per map. About a day.
 
 ## P2 — soon
 
-### 4. The home page lists every map regardless of status
+### 3. The home page lists every map regardless of status
 **Confirmed 2026-08-01.**
 
 `listGenealogies()` has no status filter and `app/app/page.tsx` renders the list
@@ -88,7 +68,7 @@ below. Whichever, the front page should not present an unfinished map as a
 finished one.
 Cost: $0, under an hour.
 
-### 5. The paper dossier's verified stamp fails open
+### 4. The paper dossier's verified stamp fails open
 **Confirmed 2026-08-01 (architecture review, W10).**
 
 `app/app/g/[id]/p/[arxiv]/page.tsx:154,159` render
@@ -99,7 +79,7 @@ is latent, but the TypeScript type says `boolean | null` and the polarity is the
 wrong way round in the one product where that matters most.
 Cost: $0, minutes.
 
-### 6. Stage F's global check only catches failure from the very first batch
+### 5. Stage F's global check only catches failure from the very first batch
 **Reported (architecture review, W7).**
 
 `if failed_batches == bi and bi >= 3` — two successful batches early and the
@@ -109,7 +89,7 @@ real ranking. The influence map then picks its papers and rings its top band
 from mostly-uniform numbers, and nothing looks broken.
 Cost: $0, half a day.
 
-### 7. Magnitude scores survive the definitions they describe
+### 6. Magnitude scores survive the definitions they describe
 **Reported (architecture review, W9).**
 
 `displacement` is a cosine distance from a centroid of definition vectors, and
@@ -123,7 +103,7 @@ one.
 Fix: `--displacement-only`, and add it to the documented repair path.
 Cost: $0, half a day.
 
-### 8. The as-built states a clustering threshold the code does not use
+### 7. The as-built states a clustering threshold the code does not use
 **Confirmed 2026-08-01 (architecture review, W8).**
 
 `stage_c_cluster.py:57` is `DEFAULT_THRESHOLD = 0.28`, with a full recalibration
@@ -138,27 +118,27 @@ Cost: $0, an hour.
 
 ## P3 — small, and none of them is a live defect
 
-9. **`--reground` does not catch partial disk corruption.** The all-failed
+8. **`--reground` does not catch partial disk corruption.** The all-failed
    refusal fires when nothing grounds; 6 of 12 files truncated flips 6 stamps
    and exits 0. Safe direction, recoverable, no paid stage downstream reads the
    column. The as-built implies broader coverage than the guard gives.
-10. **`--reground`'s refusal message should name the single-row escape.**
+9. **`--reground`'s refusal message should name the single-row escape.**
     `--reground --only <arxiv>` bypasses the guard by construction, which is the
     way out of a map that is honestly all-stale. The message does not say so.
-11. **`--reground --dry-run` exits 1 on an all-failed run.** Correct in
+10. **`--reground --dry-run` exits 1 on an all-failed run.** Correct in
     substance, surprising for a read-only mode that anyone scripts.
-12. **Nothing fails if `CURATORIAL_OPS` drifts.** The list is exactly right in
+11. **Nothing fails if `CURATORIAL_OPS` drifts.** The list is exactly right in
     both languages today. A test asserting it equals the workbench subparser
     names plus the `actions.ts` literals would keep it that way.
-13. **`--reground --limit` is rejected** on a rationale that applies equally to
+12. **`--reground --limit` is rejected** on a rationale that applies equally to
     `--only` and `--corpus`, which are allowed.
-14. **`workbench.py` prints success before it commits.** The actor is resolved
+13. **`workbench.py` prints success before it commits.** The actor is resolved
     before mutating, so the reported failure is fixed, but a database error in
     `record()` or at `commit()` still prints "Deleted n5 and 3 attached edge(s)."
     to an operator whose transaction rolls back.
-15. **Zero-branch wording.** "No curatorial changes have been made to it since"
+14. **Zero-branch wording.** "No curatorial changes have been made to it since"
     asserts a negative where "None recorded" says the same thing without it.
-16. **Brand documentation completeness.** Decision 18 names
+15. **Brand documentation completeness.** Decision 18 names
     `as unknown as Viewer` as the cast escape; a single `as Viewer` and
     `Object.assign({}, real, {login})` also compile.
 
@@ -177,6 +157,12 @@ behind the parked spend. Full list and rationale: as-built section 11 item 12.
   check is wrong rather than the map. Then `embedding`. Dry run, read, then wet.
 - **Stage C's gate reached through a real re-cluster.** It has only ever been
   driven directly; `cluster()` needs sklearn and real vectors.
+- **The verdict refresh itself.** Free, needs no spend, needs the worker:
+  `--clear-verdicts --concept "embedding" --dry-run`, read it, run it wet,
+  restart the worker, confirm the boot log says `Wrote N verdicts` inside its
+  900-second budget, then repeat for the rest of the table. Until that runs, 199
+  papers carry verdicts measured on a laptop and the rest carry the 2026-07-31
+  batch. Runbook in section 8 of the as-built.
 
 ## Parked by decision
 
@@ -189,10 +175,25 @@ behind the parked spend. Full list and rationale: as-built section 11 item 12.
 
 ## Closed recently, so it is not rediscovered
 
+- **Extraction verdicts described text that no longer existed (2026-08-01).**
+  `extract_text.py` now clears the verdict, the signals and the checked-at in
+  the same statement that records the new text path, so the free audit collects
+  the row on the next boot; `check_extraction.py --clear-verdicts` does the same
+  for the rows frozen before that line existed, from a machine that has the
+  database and not the papers (decision 21). Two things came out of it that were
+  not in the original finding. The frozen verdicts were written at 10:08:43 and
+  the three commits that repaired this audit's calibration land between 10:19
+  and 10:31, so they were computed by code the project had already replaced, and
+  the live count of 160 `damaged` is the pre-repair run's own number. And every
+  one of those repairs was lenient, so the re-audit should remove warnings
+  rather than add them. **The code shipped, the run has not**: see the blocked
+  list, and incident 14 for the state a test harness left on the database while
+  this was being built.
+
 - **The reader test passed (2026-08-01).** A reader with no context could tell
   the authenticated entry from the asserted one. Run against a standalone
   fixture rendering the real component, because a scratch map would have gone
-  on the public home page (item 4). What was not captured is *how* they told
+  on the public home page (item 3). What was not captured is *how* they told
   them apart, so this is evidence the current wording works rather than a
   specification of why. That closes the last open check in the actor design.
 - Definition stamps had no free recompute path — `--reground` shipped, wired in

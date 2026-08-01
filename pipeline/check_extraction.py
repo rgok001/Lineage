@@ -69,6 +69,7 @@ Usage:
   python pipeline/check_extraction.py --concept "embedding"
   python pipeline/check_extraction.py --concept "embedding" --sample 8
   python pipeline/check_extraction.py --json data/extraction_audit.json
+  python pipeline/check_extraction.py --clear-verdicts --concept "embedding" --dry-run
 """
 
 import argparse
@@ -423,6 +424,116 @@ def scan_quotes(conn, concept: str | None, pv: str) -> dict:
     return {"total": len(rows), "touched": touched, "counts": counts, "examples": examples}
 
 
+# --clear-verdicts marks papers unaudited again, so the free pass that runs at
+# every worker start picks them up. It is the retrospective half of the line
+# extract_text.py now runs when it rewrites a file: that line protects every
+# future re-extraction, and this is for the rows frozen before it existed. All
+# 292 of them were written in one batch on 2026-07-31 by the calibration this
+# file replaced twenty minutes later, against text that has since been
+# re-extracted, and --only-unchecked filters on the timestamp being null, so
+# nothing revisits them ever (as-built 11.11).
+#
+# It touches three columns and reads no disk at all, which is the point: it is
+# the only mode of this file that does anything useful on a machine holding the
+# database but not the corpus, and that is the machine the owner has. Where the
+# corpus IS present, `--write` on its own is the better instrument — it recomputes
+# in place and never leaves a paper with no verdict at all.
+#
+# extraction_signals is NOT NULL DEFAULT '[]' (migration 013), so it empties
+# rather than nulls; NULL there would abort the statement.
+CLEAR_VERDICTS = """
+UPDATE papers p
+   SET extraction_verdict = NULL,
+       extraction_signals = '[]'::jsonb,
+       extraction_checked_at = NULL
+ WHERE p.extraction_checked_at IS NOT NULL
+{scope}"""
+
+# The same WHERE, asked as a question. --dry-run renders THIS and never the
+# UPDATE, rather than sharing a statement and branching on a flag: a preview that
+# runs the write is one edit away from being the write. The checked-at range is
+# reported because it is the evidence — one batch is one timestamp, and a stamp
+# older than the text under it is the entire defect.
+PREVIEW_VERDICTS = """
+SELECT COALESCE(p.extraction_verdict, 'no verdict') AS verdict, count(*) AS n,
+       min(p.extraction_checked_at) AS oldest,
+       max(p.extraction_checked_at) AS newest
+FROM papers p
+WHERE p.extraction_checked_at IS NOT NULL
+{scope}GROUP BY 1
+ORDER BY 1
+"""
+
+# The papers table is shared across every concept ever traced, so an unscoped
+# statement here reaches another map's rows. Scoped exactly as extract_text.py
+# --concept scopes itself, prompt version and all (it has none): a rewrite of the
+# text is what invalidates a verdict, so the two must be able to name the same
+# set of papers, and a paper belongs to a map whichever prompt version its
+# definition was extracted at.
+CONCEPT_SCOPE = ("   AND EXISTS (SELECT 1 FROM definitions d\n"
+                 "               WHERE d.paper_id = p.id AND d.concept = %(concept)s)\n")
+ONLY_SCOPE = "   AND p.arxiv_id = ANY(%(only_ids)s)\n"
+
+
+def clear_verdicts(conn, concept: str | None, only: list[str] | None,
+                   dry_run: bool) -> None:
+    """Hand these papers back to the free audit.
+
+    Costs nothing and calls nothing: three columns of `papers`, no model, no
+    network, no disk. Deliberately shaped like stage_b_extract.py --reground and
+    stage_h_claims.py --recheck minus the recompute, because the recompute needs
+    the corpus and this exists for the machine that has not got one.
+
+    A cleared verdict is not "clean". It is "unchecked", which is what these rows
+    honestly are, and while it stands the dossier says nothing about the text
+    rather than something false about it.
+    """
+    scope, params = "", {}
+    if concept:
+        scope += CONCEPT_SCOPE
+        params["concept"] = concept
+    if only:
+        scope += ONLY_SCOPE
+        params["only_ids"] = list(only)
+
+    rows = conn.execute(PREVIEW_VERDICTS.format(scope=scope), params).fetchall()
+    named = f'"{concept}"' if concept else "every concept"
+    if not rows:
+        print(f"No stored verdicts in scope ({named}); nothing to clear.")
+        return
+
+    total = sum(r[1] for r in rows)
+    oldest = min(r[2] for r in rows)
+    newest = max(r[3] for r in rows)
+    print(f"\nStored extraction verdicts in scope ({named}): {total} "
+          f"paper{'' if total == 1 else 's'}\n")
+    for verdict, n, _, _ in rows:
+        print(f"    {verdict:<12} {n:>4}")
+    when = (f"all audited {oldest:%Y-%m-%d %H:%M:%S%z}" if oldest == newest
+            else f"audited between {oldest:%Y-%m-%d %H:%M:%S%z} and {newest:%Y-%m-%d %H:%M:%S%z}")
+    print(f"\n  {when}")
+
+    if not concept and not only:
+        print("  This is EVERY audited paper in the table, across all concepts. "
+              "--concept scopes it to one map.")
+
+    if dry_run:
+        print("\n[dry-run] Nothing was written. Re-run without --dry-run to clear "
+              "these verdicts.")
+        return
+
+    cleared = conn.execute(CLEAR_VERDICTS.format(scope=scope), params).rowcount
+    conn.commit()
+    print(f"\n  Cleared {cleared} verdicts. Nothing else was touched: the extracted "
+          f"text,\n  the quotes and the stamps on them are exactly as they were.")
+    print("  These papers are now unaudited, so the free pass at the worker's next "
+          "start\n  (--only-unchecked --write) will re-measure them against the text "
+          "as it is now.\n  Until it does, their dossiers say nothing about the "
+          "extraction rather than\n  something computed from text that is gone. "
+          "Nothing else re-audits them, so if\n  the worker is never restarted the "
+          "verdicts never come back.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Audit extracted-text fidelity (no model, no network)")
     ap.add_argument("--concept", help="scope to one corpus; omit to scan every extracted paper")
@@ -437,13 +548,46 @@ def main() -> None:
                     help="store each verdict on papers.extraction_verdict (migration 013), "
                          "so the app can tell a reader what it knows about the text "
                          "a quote was matched against")
+    ap.add_argument("--clear-verdicts", action="store_true",
+                    help="remove the stored verdict, signals and checked-at from the "
+                         "papers in scope, so the free audit measures them again. For "
+                         "when the text was rewritten under a verdict, or the check "
+                         "that made it was. Reads no text and needs no corpus on this "
+                         "machine; scope it with --concept or --only")
+    ap.add_argument("--only", metavar="ARXIV_ID", nargs="+",
+                    help="restrict --clear-verdicts to these arxiv ids")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="with --clear-verdicts, report what would be cleared and "
+                         "write nothing")
     args = ap.parse_args()
+
+    if args.clear_verdicts and (args.write or args.only_unchecked):
+        sys.exit("--clear-verdicts is the opposite job to --write: it removes the stored\n"
+                 "verdicts so the free audit will measure again, and it reads no text at\n"
+                 "all. Run it on its own, then let the worker's --only-unchecked --write\n"
+                 "pass do the measuring.")
+    # Without this, `--dry-run --write` would be read as a safe rehearsal and
+    # would write every verdict. The audit is already read-only without --write,
+    # so there is nothing else here for the flag to mean.
+    if args.dry_run and not args.clear_verdicts:
+        sys.exit("--dry-run applies to --clear-verdicts. This audit writes nothing "
+                 "unless\nyou pass --write, so leaving --write off IS the read-only run.")
+    if args.only and not args.clear_verdicts:
+        sys.exit("--only scopes --clear-verdicts. To audit selected papers, use "
+                 "--concept.")
 
     # Cheap re-runs are what let this live in the worker's startup rather than in
     # somebody's terminal history.
     unchecked = "AND p.extraction_checked_at IS NULL" if args.only_unchecked else ""
 
     with psycopg.connect(env("DATABASE_URL")) as conn:
+        if args.clear_verdicts:
+            # Ahead of the scan, and it returns rather than falling through: this
+            # mode asks the database only, and the machine most likely to run it
+            # has no corpus for the scan below to read.
+            clear_verdicts(conn, args.concept, args.only, args.dry_run)
+            return
+
         if args.concept:
             rows = conn.execute("""
                 SELECT p.arxiv_id, p.title, p.source_format, p.raw_path,

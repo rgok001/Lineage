@@ -501,8 +501,19 @@ def main() -> None:
         out.write_text(text, encoding="utf-8")
         rel = str(out.relative_to(data_dir())).replace("\\", "/")
         score = title_match(title, text)
+        # The extraction verdict goes out with the file it describes. It is a
+        # measurement of one specific text, and the line above has just replaced
+        # that text; leaving the stamp behind is how every verdict in the table
+        # came to describe a corpus that no longer exists (as-built 11.11). NULL
+        # is not "no damage", it is "unchecked", which is exactly true here and
+        # is what check_extraction.py --only-unchecked --write looks for, so the
+        # worker re-audits this paper free at its next start.
+        # extraction_signals is NOT NULL DEFAULT '[]' (migration 013), so it
+        # empties rather than nulls; NULL there would abort the extraction.
         conn.execute(
-            "UPDATE papers SET extracted_text_path=%s, text_title_match=%s WHERE arxiv_id=%s",
+            "UPDATE papers SET extracted_text_path=%s, text_title_match=%s, "
+            "extraction_verdict=NULL, extraction_signals='[]'::jsonb, "
+            "extraction_checked_at=NULL WHERE arxiv_id=%s",
             (rel, score, aid),
         )
         conn.commit()

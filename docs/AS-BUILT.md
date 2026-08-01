@@ -188,7 +188,10 @@ both from the row and passes them through as CLI args.
 unchecked, and `clean` means nothing was found rather than nothing is wrong: the
 scan is a lower bound, so the column is never read as a certificate. The paper
 dossier shows the note only when something *was* found, which is the honest
-asymmetry.
+asymmetry. All three are cleared by `extract_text.py` whenever it rewrites the
+paper's text, since the measurement describes the file that was just replaced
+(decision 21), and `extraction_signals` empties to `'[]'` rather than nulling
+because it is `NOT NULL`.
 
 **trace_requests** (005, 006): the request inbox and the job queue in one table.
 Status flow: `requested -> approved -> running -> complete`, plus `rejected`
@@ -283,6 +286,14 @@ No model, no network. Macro loss is reported twice, before and after expansion,
 so the fix's worth is measured rather than argued. It is a lower bound and says
 so: it finds damage that leaves a mark, and the worst damage leaves none.
 `--write` stores the verdict on the paper (migration 013).
+`--clear-verdicts [--concept C] [--only IDS] [--dry-run]` does the opposite and
+is the only mode that needs no corpus: it removes the stored verdict, signals
+and checked-at from the papers in scope so the free `--only-unchecked --write`
+pass measures them again at the worker's next start. For rows whose verdict was
+frozen before `extract_text.py` learned to clear its own (decision 21), and for
+a machine that holds the database but not the papers. `--dry-run` prints the
+tally and the range of dates it would clear, and renders a `SELECT` rather than
+the `UPDATE`.
 
 **First real measurement (2026-07-31, "embedding", 187 papers, 182 LaTeX).**
 The macro fix was worth more than the incident that prompted it suggested.
@@ -795,6 +806,30 @@ backups; re-export after curating. Restore with
 not covered by exports; they live in Postgres and `DATA_DIR` and are cheap to
 regenerate except for LLM spend, which the caches mostly protect.
 
+**Refreshing the extraction verdicts.** When a verdict describes text that has
+been replaced, or a calibration that has, the free audit has to be told to look
+again. `--clear-verdicts` runs from anywhere with a `DATABASE_URL` and needs no
+corpus; the measuring happens on the worker.
+
+```
+python pipeline/check_extraction.py --clear-verdicts --concept "embedding" --dry-run
+python pipeline/check_extraction.py --clear-verdicts --concept "embedding"
+```
+
+Then restart the worker from the Render dashboard (Manual Deploy -> Restart
+service) and watch its log for `[startup] audit extracted text` and a
+`Wrote N verdicts` line. **Between the two the paper dossiers show no extraction
+note at all, and nothing brings it back but that restart** (decision 21). One
+map at a time keeps the boot scan inside `startup_task`'s 900-second budget;
+repeat without `--concept` for the rest of the table once the first has been
+seen to work. `--only <arxiv id>` clears a single paper, which is the smallest
+end-to-end rehearsal of the whole loop.
+
+On a machine that has the corpus, `python pipeline/check_extraction.py --write`
+without `--only-unchecked` does the same job in one step and leaves no gap. Do
+not run it anywhere else: a partial `DATA_DIR` produces verdicts about text the
+maps were not built from (incident 14).
+
 **Observing a trace.** The queue and progress panel on `/trace` is the primary
 view.
 Direct SQL: `SELECT id, concept, status, progress, updated_at FROM
@@ -1110,6 +1145,47 @@ The why behind the load-bearing choices, in one place:
     the changed-clustering case showing misattributed edges; that is why Stage C
     still has a DELETE.
 
+21. **A verdict about a file is cleared by whatever rewrites the file**
+    (2026-08-01). `papers.extraction_verdict` was the last derived value in the
+    system with no path back to the thing it describes, and unlike a definition
+    stamp (decision 19) it had no recompute either: `extract_text.py` rewrote a
+    paper's text and updated `extracted_text_path` and `text_title_match` while
+    leaving the verdict, the signals and the checked-at exactly where they were,
+    and `check_extraction.py --only-unchecked` — the free pass the worker runs at
+    every boot and every trace — selects on the checked-at being null. A stamped
+    row was therefore unreachable forever, by construction. The whole table was
+    in that state; see item 11 of section 11 for what it cost a reader.
+    `extract_text.py` now nulls all three in the same statement that records the
+    new path, so the row goes back to "unchecked" and the free pass collects it.
+    `extraction_signals` is `NOT NULL DEFAULT '[]'` (migration 013), so it
+    empties rather than nulls; nulling it would abort the extraction.
+    **Clearing a verdict and computing one are separate tools on purpose.**
+    `check_extraction.py --clear-verdicts [--concept C] [--only IDS] [--dry-run]`
+    removes the three columns and reads nothing else at all: no text, no quote,
+    no definition. That looks like a weaker version of `--write` without
+    `--only-unchecked`, which recomputes in place and leaves no gap, and where
+    the corpus is present that IS the better instrument. The clear exists because
+    the two are run from different machines. The corpus lives on the Render disk;
+    the owner has the database and not the papers, and a `--write` run from a
+    machine with a partial `DATA_DIR` writes verdicts describing text that is not
+    the text the map was built from. The clear is the only honest thing such a
+    machine can do: hand the papers back to the machine that can measure them.
+    **The gap is real and is named in the output.** Between the clear and the
+    next audit the dossier says nothing about the extraction rather than
+    something false, which is the safe direction but is still a warning silently
+    absent. Nothing re-audits on a timer: the Render worker runs the free pass at
+    boot, and a background worker boots on deploy, on a manual restart, or on a
+    crash. So the clear tells the operator, in as many words, that the verdicts
+    do not come back until the worker is restarted.
+    Scoped, because `papers` is shared across every concept ever traced;
+    `--concept` uses the same `EXISTS` on `definitions` that `extract_text.py
+    --concept` uses, prompt version and all (it has none), so the tool that
+    invalidates a verdict and the tool that clears it can name the same papers.
+    Unscoped it says it is about to touch every audited paper in the table, in
+    the same words `extract_text.py --force` uses. `--dry-run` renders a
+    different statement rather than branching inside one, so the preview cannot
+    become the write by one edit.
+
 ---
 
 ## 10. Incidents and lessons
@@ -1284,6 +1360,42 @@ ewcommand` as a thing pylatexenc does not know, and the fix that followed
     `Viewer` (decision 18), whose whole purpose is to make the sentence already
     written here true.
 
+14. **A test harness written to be offline wrote to production, because
+    `common.py` loads `.env` at import (2026-08-01).** While building decision
+    21, a scratch script exercised `check_extraction.main()`'s argument guards
+    with a set of `sys.argv` values. It was written to be safe by doing
+    `os.environ.pop("DATABASE_URL")` first, on the belief that a script with no
+    connection string cannot reach a database. **`load_dotenv` runs at
+    `common.py` import time and fills in exactly the variable that was just
+    removed**, because `load_dotenv` does not override what is already set, and
+    popping it made it not already set. Removing the variable is what re-armed
+    it. Two of the eight cases were write paths, and both ran against live Neon:
+    `--clear-verdicts --concept embedding` cleared the verdict, signals and
+    checked-at on 187 papers, and `--only-unchecked --write` then re-audited 199
+    papers against the laptop's partial `DATA_DIR` and stored 156 verdicts
+    computed from text that is not the text on the Render disk. The remaining 43
+    were skipped as "no text on this machine" and are unstamped. Nothing else
+    was touched: the mode writes three columns and no others, so no text file,
+    quote, definition, edge or map was altered, and the loss is the per-paper
+    record of what the 2026-07-31 batch said about `embedding` — a batch this
+    document already describes as measuring text that is gone with thresholds
+    that were replaced twenty minutes later. Its totals survive in item 11.
+    **Three lessons.** Popping an environment variable does not isolate a
+    pipeline script from the database; nothing in this repo is offline by
+    construction, and the only reliable isolation is not calling `main()` at all.
+    Every earlier harness in this project drove a *function* through a fake
+    connection, which is why none of them could do this, and the moment the test
+    reached for `main()` to exercise argparse it acquired every side effect
+    `main()` has. And a dry run is not a safe default: the two destructive cases
+    were in the list precisely to show they were refused, and refusal was the
+    only thing that could be observed without a database, so the harness proved
+    the guards by running the things the guards do not stop.
+    The state this left is not a new class of wrong: those 199 rows now carry the
+    same defect the branch exists to fix, one machine over. The repair is the
+    branch's own procedure, run once merged — clear the whole table, restart the
+    Render worker, let the free pass measure every paper against the corpus the
+    maps were actually built from.
+
 ---
 
 ## 11. Known limitations and open work
@@ -1395,10 +1507,58 @@ Open engineering work, in priority order:
     relationships; it now says "links shown" for that reason, which is one word
     doing a lot of work. The full figure lives on `/g/<id>/evidence`.
 
-11. **Every extraction verdict in the database predates the re-extraction it
-    describes, and nothing will ever refresh one** (measured 2026-08-01). This
-    is the concrete form of the "derived value allowed to age" fault, and it is
-    live now rather than latent.
+11. ~~Every extraction verdict in the database predates the re-extraction it
+    describes, and nothing will ever refresh one~~ **FIXED IN CODE, and the
+    stored rows still need one run to correct (2026-08-01, decision 21).**
+    `extract_text.py` now clears the verdict, the signals and the checked-at in
+    the same statement that records the new text path, so no future
+    re-extraction can leave a stamp behind, and `check_extraction.py
+    --clear-verdicts` hands the already-frozen rows back to the free audit. What
+    the fix has NOT done is run: the corrected verdicts do not exist until the
+    Render worker's boot pass measures the corpus again. The procedure is in
+    section 8.
+    **A second finding, from the commit times, that makes the case stronger.**
+    The frozen verdicts are stamped `10:08:43.957021+00`. The three commits that
+    repaired this audit's calibration land at `10:19:20`, `10:22:36` and
+    `10:26:12`, and the one that took "stale" out of the verdict at `10:31:02`.
+    So those verdicts were not merely computed against text that has since been
+    replaced; they were computed by the code this file's own section 4 describes
+    as having failed three times, before any of the four repairs. The live spread
+    agrees: 160 of `embedding`'s papers stamped `damaged`, against section 4's
+    account of the pre-repair run finding "160 of 182 papers came back damaged,
+    driven almost entirely by dropped package macros". The same number.
+    **Every one of the four repairs moved in the lenient direction** — package
+    macros can no longer reach `damaged` at all, the residue bars went from 4/30
+    to 25/150, the gap detector stopped guessing at vocabulary and stopped
+    treating an indented line as a hole, and stale marks left the verdict. So a
+    re-audit should remove warnings rather than add them, which is a prediction
+    the run can be checked against rather than a hope.
+    **`clean` and `damaged` are the same decision here, and the asymmetry is in
+    the gap, not in the clearing.** Clearing a `clean` verdict costs a free
+    re-measurement. Clearing a `damaged` one also removes a warning a reader is
+    being shown, until the audit runs. The audit is not on a timer: the worker
+    runs the free pass at boot (`worker/run.py` `startup_task`) and at step 4 of
+    a trace, and a Render background worker boots on a deploy, a manual restart
+    or a crash. So the gap is "until somebody restarts the worker", which is
+    minutes if the clear is followed by a restart and unbounded if it is not.
+    That is why the clear says so in its own output, and why the procedure ends
+    with the restart rather than leaving it implied. It is still the safe
+    direction: an absent note claims nothing, where the present one claims
+    something measured from text that is gone.
+    **One risk in the boot pass, reasoned and not measured.**
+    `check_extraction.py` decides every verdict before writing any of them and
+    commits once, and `startup_task` kills the subprocess at 900 seconds and
+    carries on. If a whole-table scan of ~300 papers, each of which decompresses
+    a source archive and expands its macros, exceeds that, nothing is written
+    and every subsequent boot repeats the same timeout. Clearing one map at a
+    time bounds the job, which is the other reason the procedure does
+    `embedding` first. Worth watching the boot log for "Wrote N verdicts".
+    **The state on the database is not what this entry originally described**,
+    because of incident 14: 187 of `embedding`'s papers were cleared and 156 of
+    them re-stamped from a laptop's partial corpus on 2026-08-01. That is the
+    same defect one machine over and the same procedure repairs it.
+    The original finding, kept because the record of what it cost is the reason
+    the fix exists:
     Measured against the live database: every non-null `extraction_checked_at`
     in `papers` carries the identical timestamp `2026-07-31 10:08:43.957021+00`,
     so the audit was one batch. Section 4's own account of that run is the other
@@ -1419,10 +1579,9 @@ Open engineering work, in priority order:
     filters on `extraction_checked_at IS NULL`, and `extract_text.py` updates
     `extracted_text_path` and `text_title_match` without clearing the verdict or
     the timestamp, so the automatic run at worker startup and at trace step 4
-    skips every one of these rows forever. The fix is one line beside the
-    existing `UPDATE papers SET extracted_text_path...`: null the verdict and the
-    checked-at when the text is rewritten, and the existing `--only-unchecked
-    --write` re-audits them free on the next boot.
+    skips every one of these rows forever. The fix was one line beside the
+    existing `UPDATE papers SET extracted_text_path...`, and it is now there,
+    plus `--clear-verdicts` for the rows that line came too late for.
 
 12. **The `embedding` refresh spend is parked deliberately, not forgotten**
     (Product Owner, 2026-08-01). Finishing `/g/10` costs $8.45 of Anthropic
@@ -1451,8 +1610,12 @@ Open engineering work, in priority order:
     (d) Stage C's gate (decision 20) reached through a real re-cluster. It has
     only ever been driven directly, because `cluster()` needs sklearn and real
     vectors, so no test here reaches it the way a trace does.
-    (e) Item 11 above, once the verdict is nulled on re-extraction: confirm the
-    re-audit runs and that the new verdicts differ from the frozen ones.
+    (e) Item 11 above. The code shipped; the run has not happened. Needs no
+    spend, only a worker restart: confirm the boot pass prints "Wrote N
+    verdicts" inside its 900-second budget, that the new spread is much less
+    severe than 250 `damaged` (the prediction in item 11), and that the 156 rows
+    incident 14 stamped from a laptop have been replaced by measurements of the
+    Render corpus.
     Closed already and not needing the spend: `CLEAR_STALE_EDGES`,
     `SELECT_ORPHANS` and `DELETE_ORPHANS` have been parsed and planned by the
     live server, and `with conn.transaction()` on an autocommit connection has
