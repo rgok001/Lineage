@@ -271,9 +271,55 @@ and sees no change has nothing to tell them it was never sent.
 
 Filed here rather than as performance for the same reason as item 9: the
 documents that outrank the code are wrong about the code, and agents read them.
-The fix is either to send the header or to stop naming the key — both are
-minutes, and the second is `CLAUDE.md`, which is the owner's to change.
-Cost: $0.
+
+**Measured 2026-08-01, and it points at removing the claim rather than wiring
+the key.** The key is absent as well as unread: `.env` carries the line with an
+empty value, so nobody has ever obtained one. The anonymous pool has cost
+nothing observable. The local `data/s2_cache` holds 102 papers with a median of
+48 references each and a maximum of 265, which is the cache doing exactly the job
+`stage_d_edges.py:81` says it was built for. So the key is an optimisation for a
+problem already solved, not a dependency.
+
+**Recommendation: delete the claim.** Remove the `CLAUDE.md:47` requirement and
+the `.env.example:19` slot. Wiring the header is the more expensive answer to a
+smaller problem, and it carries a hazard the documentation change does not: see
+item 27. If the header is ever added it must be attached per host inside
+`get_json`, never on the shared `session()`, which is used for OpenAlex and arXiv
+as well and would otherwise hand this project's Semantic Scholar credential to
+two unrelated services on every request.
+Cost: $0, minutes.
+
+### 27. A failed Semantic Scholar fetch is cached permanently as "this paper has no references"
+**Confirmed, and observed firing, 2026-08-01.**
+
+`pipeline/stage_d_edges.py:93-101`. The `try` catches `Exception`, sets
+`refs = []`, and the cache write at line 101 sits **outside** the handler, so it
+runs whether the fetch succeeded or not. A 404 and a transport failure, a 429
+exhaustion, an S2 outage or a rejected key are treated identically, and only the
+404 deserves it. Line 87 then returns the cached file forever: nothing retries.
+
+The comment above it justifies caching a 404, and that reasoning is right. It
+just does not reach the other cases the `except` swallows.
+
+**It has already fired.** `data/s2_cache/1502.02791.json` is `[]`. Queried
+Semantic Scholar directly with no key: it holds references for that paper, at
+least five, including *Domain-Adversarial Neural Networks* and *Deep Domain
+Confusion*. So one paper contributes no citation contexts to Stage D, and every
+edge touching it is displayed without the basis that decision 16 and the fix
+log's highest-severity item existed to put there. 1 of 102 on this machine.
+
+Fault five, failure that writes plausible data, applied to a cache: the run
+reports success and the map is quietly thinner.
+
+Fix: cache `[]` only on a definitive 404. Every other failure returns empty for
+this run and writes nothing, so the next run retries. Remediating what is already
+cached is deleting the affected files; the next Stage D run refetches them.
+
+**Unmeasured:** the count on the Render disk, which is the cache serving the live
+maps. The local figure is from a laptop whose cache may be older or newer. That
+count is a one-line read on the Render shell and should be taken before sizing
+this.
+Cost: $0, under an hour, plus one read to size it.
 
 ---
 
