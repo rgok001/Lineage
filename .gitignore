@@ -19,6 +19,11 @@ next-env.d.ts
 # data (raw tex/pdf + extracted text live on disk, not in git)
 data/
 
+# agent memory — candid by design (incidents, what went wrong, what it cost),
+# so it stays local. .claude/settings.json is tracked: it carries the LINEAGE_NO_DB
+# guard, which is worth sharing and holds no secret.
+.claude/memory/
+
 # misc
 .DS_Store
 *.log
