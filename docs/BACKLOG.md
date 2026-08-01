@@ -1,12 +1,18 @@
 # Backlog
 
 Everything known and not yet done, in the order it is worth doing. Last
-reviewed 2026-08-01, when item 1 was rewritten as two tickets because as it
-stood it named one of two causes and prescribed a fix that lands at 63%.
+reviewed 2026-08-01, when item 1 closed: it was split into two tickets because as
+it stood it named one of two causes and prescribed a fix that lands at 63%, then
+both shipped. The measured before and after is in the closed list.
 
 The order is by what each item costs **if it fires**, not by effort. An item
 that puts a wrong claim in front of a reader outranks one that merely wastes
 money, because this product's whole proposition is that a tick means something.
+
+**Numbers are not reused and the list is not renumbered.** A closed item leaves
+its number behind, because the as-built and the commit log cite these numbers and
+a renumber would silently repoint every one of them. So the open list starting at
+2 means item 1 is done, not that it was lost.
 
 Status words mean exactly one thing each. **Confirmed** was reproduced with an
 input. **Reported** came from a review and has not been independently
@@ -15,71 +21,6 @@ reproduced. **Parked** is a decision to wait, not an oversight.
 ---
 
 ## P1 — do next
-
-### 1. The extraction verdict warns about three papers in four, on a corpus whose quotes are 97% clean
-**Confirmed, measured 2026-08-01 (tester, 227 papers).**
-
-**174 of 227 (76%) carry some warning**, and 122 (54%) are over the gap
-threshold alone. The dossier renders "our reading of this paper lost some of its
-text" from that, about papers whose text is fine. Of 393 stored quotes, 11 carry
-any damage tell: the thing a reader is actually shown is 97% clean and the note
-above it says otherwise on three pages in four.
-
-**There are two causes of near-equal size, and this item used to name only one.**
-As written before 2026-08-01 it described `GAP_STRONG`'s paren branch and
-prescribed the fix for it alone, which lands at 63-64% and reads as failure. The
-other half is dropped **package** macros reaching `suspect` at
-`OTHER_SUSPECT = 200`, which this same file already argues cost a reader nothing.
-Fixing either alone is worse than useless: it spends the change and keeps the
-complaint. How much the two overlap has never been measured, which is the gap
-1a closes.
-
-**This detector has already been calibrated four times: 88%, 73%, 100%, 76%**
-(as-built section 4). Every round read the rate, disliked it and moved a
-pattern. So the work is split, and ticket 1a exists to stop that happening a
-fifth time.
-
-**Why it is first.** It is the only confirmed item here that puts a false
-statement in front of a reader on every visit, which is the ordering rule this
-file opens with. Inherited from `master` and not introduced by the verdict
-refresh, but the refresh is what applied it to every paper in the table at once.
-
-#### 1a. Build the instrument. No calibration change. **(Done 2026-08-01.)**
-`check_extraction.py --compare-verdicts`: a machine key on every signal, one
-`verdict_from`, `PROPOSED_NOTE_SIGNALS` as a module constant, a cross-tab of
-today's verdict against the proposal's, and **a sole-cause table saying, for
-each signal, on how many papers it is the only reason that paper is not clean.**
-That table is what all four previous attempts lacked. Read-only, refuses
-`--write`, `--clear-verdicts` and `--dry-run`.
-
-#### 1b. Make the change, after one measurement.
-**Blocked on one command on the Render shell**, which is the only machine
-holding the corpus the 76% was measured on:
-
-```
-python pipeline/check_extraction.py --compare-verdicts --json /data/verdict_compare.json
-```
-
-The proposal on the table is that `gaps` and `package_macros` report as a note
-and stop deciding the verdict. What was verified while building 1a, on synthetic
-fixtures through the real extractor:
-
-- The paren branch fires on faithful renderings of `\left(`, `\big(`, `\Big(`,
-  `$( x )$` and the thin space `$(\,x\,)$`. None of those lost anything.
-- **Its true positives are narrower than this item used to assume.** A bare
-  dropped macro eats the space after its own name, so `(\dmodel dimensions)`
-  extracts to `(dimensions)` and `about (\dmodel 200 dimensions)` to
-  `about (200 dimensions)`: no gap in either, and that is the commonest shape of
-  the loss. It fires only when the drop leaves the space standing, which needs
-  math delimiters or empty braces.
-- The second branch has ordinary true positives: `x, $\dmodel$, y` extracts to
-  `x,, y`. It should stay.
-- A literal `...` reaches that second branch. Fold it to `…`, which is what
-  `\ldots` already renders as and scores no hit. **Do not delete the dots**:
-  `a,..., z` becomes `a,, z` and the same branch matches it.
-
-Cost: $0, half a day, no spend and no worker time. 1a is done; 1b needs the one
-measurement above and then the edit.
 
 ### 2. Stage D's rebuild is not atomic, and Stage E publishes whatever survives
 **Reported (architecture review, W3).**
@@ -283,6 +224,27 @@ behind the parked spend. Full list and rationale: as-built section 11 item 12.
 ---
 
 ## Closed recently, so it is not rediscovered
+
+- **The extraction verdict warned about three papers in four, on a corpus whose
+  quotes are 97% clean (2026-08-01).** **Before: 218 of 304 papers (72%) carried
+  the dossier note. After: 113 (37%).** Measured on the Render disk, the only
+  machine holding the corpus, and measured *before* the change rather than after,
+  which is what made this the fifth calibration and not the fifth guess.
+  Two causes of near-equal size sat behind it, and the item as first written
+  named only one and prescribed a fix that lands at 63%. `gaps` was the sole
+  reason 33 papers were not clean and `package_macros` the sole reason for 44;
+  the two together freed 105. That 28-paper difference is co-occurrence, and it
+  is why 1a's caption on the sole-cause table had to be corrected before the
+  table could be trusted: the columns do not add up.
+  **1a shipped the instrument** (`--compare-verdicts`: a machine key on every
+  signal, one `verdict_from`, the proposal as a module constant, a crosstab and
+  the sole-cause table all four earlier rounds lacked). **1b shipped the change**:
+  `gaps` and `package_macros` report as a note and stop deciding the verdict,
+  a literal `...` folds to `…` before the shape tests (gap tells in stored quotes
+  5 to 2), and migration 014 stores a digest of the calibration on every verdict
+  so a future threshold change re-measures itself. **No threshold moved**, the
+  largest remaining sole cause is `symbols` at 5.3%, nothing became stricter, and
+  the reader-facing page was not touched. See as-built section 4 and decision 25.
 
 - **Extraction verdicts described text that no longer existed (2026-08-01).**
   `extract_text.py` now clears the verdict, the signals and the checked-at in

@@ -89,7 +89,7 @@ pipeline/            stages A-H + auxiliaries (Python, CLI-first; the worker
   common.py          env loading, polite HTTP session, data_dir()
   check_extraction.py  audit of extracted-text fidelity (no model, no network)
   db/migrate.py      ordered SQL migrations, schema_migrations table
-  db/migrations/     001..013
+  db/migrations/     001..014
 .claude/agents/      architect, developer, tester (Claude Code subagents)
 worker/run.py        the trace worker (queue consumer)
 app/                 Next.js app (Vercel root directory is app/)
@@ -111,7 +111,7 @@ hold different `DATABASE_URL` values; see section 8.
 
 ## 3. Data model
 
-Six tables, migrations `001` through `013`, applied by
+Six tables, migrations `001` through `014`, applied by
 `python pipeline/db/migrate.py` (tracked in `schema_migrations`). Migrations
 `008`-`009` are data fixes (paths relative to `DATA_DIR`; correcting future
 publication years OpenAlex mis-dated). `010`-`012` carry the paper-centric turn
@@ -182,16 +182,25 @@ extraction question. The field is not a disambiguator (polysemy collides
 within a field: OS vs ML "kernel" are both CS); the gloss is. The worker reads
 both from the row and passes them through as CLI args.
 
-**papers**, continued (013): `extraction_verdict` (clean/suspect/damaged),
-`extraction_signals` and `extraction_checked_at` record what
-`check_extraction.py --write` found in that paper's extracted text. NULL means
+**papers**, continued (013, 014): `extraction_verdict` (clean/suspect/damaged),
+`extraction_signals`, `extraction_check_version` and `extraction_checked_at`
+record what `check_extraction.py --write` found in that paper's extracted text
+and which calibration found it. NULL means
 unchecked, and `clean` means nothing was found rather than nothing is wrong: the
 scan is a lower bound, so the column is never read as a certificate. The paper
 dossier shows the note only when something *was* found, which is the honest
-asymmetry. All three are cleared by `extract_text.py` whenever it rewrites the
+asymmetry. All four are cleared by `extract_text.py` whenever it rewrites the
 paper's text, since the measurement describes the file that was just replaced
 (decision 21), and `extraction_signals` empties to `'[]'` rather than nulling
 because it is `NOT NULL`.
+`extraction_check_version` (014) is a 12-character digest of the audit's own
+thresholds, patterns and signal levels, computed at import. It closes the other
+half of decision 21: a verdict is invalidated by the code that computes it as
+well as by the text it describes, and only the second had a path back.
+`--only-unchecked` now selects `extraction_checked_at IS NULL OR
+extraction_check_version IS DISTINCT FROM <this version>`, so moving a threshold
+re-measures the corpus at the worker's next start with nobody remembering to ask
+(decision 25).
 
 **trace_requests** (005, 006): the request inbox and the job queue in one table.
 Status flow: `requested -> approved -> running -> complete`, plus `rejected`
@@ -285,7 +294,14 @@ dropped `\input`, undecodable bytes, and the punctuation an eaten token strands.
 No model, no network. Macro loss is reported twice, before and after expansion,
 so the fix's worth is measured rather than argued. It is a lower bound and says
 so: it finds damage that leaves a mark, and the worst damage leaves none.
-`--write` stores the verdict on the paper (migration 013).
+**Three of its signals are reported and do not decide the verdict**: `stale`,
+`gaps`, and the package half of the macro count. Each is true and useful to an
+operator, and none of them means what the dossier note says, which is that the
+passage a reader is looking at may be missing wording (decision 25).
+`--write` stores the verdict on the paper (migration 013) together with a digest
+of the calibration that produced it (migration 014), and `--only-unchecked`
+treats a verdict written by a different calibration as unchecked, so a threshold
+change re-measures itself.
 `--clear-verdicts [--concept C] [--only IDS] [--dry-run]` does the opposite and
 is the only mode that needs no corpus: it removes the stored verdict, signals
 and checked-at from the papers in scope so the free `--only-unchecked --write`
@@ -296,7 +312,10 @@ tally and the range of dates it would clear, and renders a `SELECT` rather than
 the `UPDATE`.
 `--compare-verdicts` is the instrument for the fifth calibration, added
 2026-08-01 and described under "The fifth attempt" below. It stores nothing and
-refuses `--write`, `--clear-verdicts` and `--dry-run`.
+refuses `--write`, `--clear-verdicts` and `--dry-run`. The fifth calibration has
+since shipped, so its proposal set is empty and the mode says so rather than
+printing a crosstab of no movement; the sole-cause table stands on its own and is
+what the sixth round will read.
 
 **First real measurement (2026-07-31, "embedding", 187 papers, 182 LaTeX).**
 The macro fix was worth more than the incident that prompted it suggested.
@@ -391,6 +410,43 @@ fixing either alone lands around 63% and reads as failure. The measurement that
 decides it has to be taken on the Render disk, which is the only machine holding
 the corpus the 76% was measured on.
 
+**And then it was taken, and the change is what it said** (2026-08-01, Render
+shell, all 304 papers). The proposal was demoting `gaps` and `package_macros`
+together, and all three criteria set before the run were met:
+
+```
+  all       304 papers          proposed →
+      current ↓             clean    suspect    damaged    no text
+      clean                    74          ·          ·          ·
+      suspect                 105         98          ·          ·
+      damaged                   ·          ·         15          ·
+      no text                   ·          ·          ·         12
+      would show the dossier note:  now 218 (72%)   proposed 113 (37%)
+```
+
+**72% to 37%, against 38% predicted offline. Nothing moved stricter: every
+occupied cell is on or above the diagonal.** The largest remaining sole cause is
+`symbols` at 16 of 304 (5.3%), well under the 15% bar that would have argued for
+touching it, so the change is exactly the two demotions. **No threshold moved.**
+
+The sole-cause table is also the live demonstration of why 1a's caption had to be
+corrected. `gaps` was the only reason 33 papers carried a warning and
+`package_macros` the only reason for 44, which sums to 77; the joint effect is
+105. The 28-paper difference is co-occurrence, and an operator who added the two
+columns would have concluded that demoting both buys 77 and that demoting one
+buys half of that. It buys neither.
+
+Shipped with it, and measured in the same run: a literal `...` is folded to `…`
+before the shape tests, in the paper scan and in the quote tells alike. Gap tells
+in stored quotes fall from 5 to 2 and quotes carrying any tell from 11 to 10.
+
+**The verdict now records which calibration produced it** (migration 014,
+decision 25). Nothing else in the change is visible to a reader: the two demoted
+signals are still emitted, still stored in `extraction_signals` (as `note: ...`
+rather than `suspect: ...`) and still printed by the audit, and
+`app/app/g/[id]/p/[arxiv]/page.tsx` was not touched, because `quality !== "clean"`
+was already the right condition once the tiers meant the right thing.
+
 **What was verified about the gap detector while building this** (2026-08-01,
 synthetic fixtures through the real extractor, plus 40 papers fetched fresh from
 arXiv to a scratch directory and deleted afterwards; that scratch corpus is
@@ -412,10 +468,13 @@ comparable to the corpus rate):
 - A literal `...` reaches that second branch, because `tidy_marks` closes the
   space in front of the dots first: `$x_1, ..., x_n$` extracts to `x_1,..., x_n`
   and `,.` matches. `\ldots` and `\dots` already render as `…` and score no hit,
-  so folding the literal form to the same character is the shape of the fix.
+  so folding the literal form to the same character is the shape of the fix, and
+  it shipped in 1b.
   **Deleting the dots instead is not**: it turns `a,..., z` into `a,, z`, which
   the same branch then matches, so it manufactures the false positive it was
-  removing.
+  removing. Confirmed through the real extractor: `x, $\dmodel$, y` extracts to
+  `x,, y` and scores a hit, which is exactly the string the deletion would
+  manufacture.
 
 **And a finding about a different signal, not yet fixed.** `tidy_marks` is not
 idempotent: rule 4 deletes an emptied bracket pair after rule 3 has already
@@ -627,7 +686,12 @@ knowledge condensed:
 
 - **Startup housekeeping.** Before polling, the worker applies database
   migrations and runs the extraction audit over papers nobody has audited
-  yet (`--only-unchecked --write`). Both were manual commands, which meant
+  yet (`--only-unchecked --write`). Since migration 014 "nobody has audited yet"
+  also covers a paper audited by a different calibration, so the boot after a
+  calibration change re-measures the corpus with no command from anybody. That is
+  intended and it is still a live rewrite of reader-facing state, which is why
+  the runbook puts a dump and a lenient-only check in front of that deploy
+  (decision 25). Both were manual commands, which meant
   they were commands for a machine the owner does not have: everything runs
   on Render and Neon, and there is no laptop in the loop. The worker is the
   only process holding the disk, the database and the repo at once, so it is
@@ -886,10 +950,39 @@ backups; re-export after curating. Restore with
 not covered by exports; they live in Postgres and `DATA_DIR` and are cheap to
 regenerate except for LLM spend, which the caches mostly protect.
 
+**Changing the audit's calibration.** Since migration 014 this needs no clear
+and no ritual: every verdict stores a digest of the calibration that produced it,
+and `--only-unchecked` treats a mismatch as unaudited, so the worker's free pass
+at its next start re-measures every paper the change affects. Deploy and restart
+is the whole operation.
+
+Two things are required around it, both because that pass rewrites reader-facing
+state on up to 304 rows across both live maps with nobody watching.
+
+1. **Take the dump first, before deploying**, on the Render shell:
+
+```
+python pipeline/check_extraction.py --clear-verdicts --dry-run
+```
+
+   Unscoped and read-only. It writes every stored verdict, its signals and its
+   check version to `DATA_DIR/snapshots/extraction_verdicts_all_<stamp>.json` and
+   touches the database not at all. This is the only per-paper record of what the
+   verdicts were, and incident 14 is what having no copy costs.
+
+2. **Satisfy yourself the re-audit is lenient-only, before the deploy rather
+   than after.** `--compare-verdicts` on the Render shell is where that is
+   checked: name the change in `PROPOSED_NOTE_SIGNALS`, read the crosstab, and
+   look for an occupied cell below the diagonal. A calibration that can make a
+   paper stricter is one to stage rather than to deploy, because the pass runs
+   unattended and there is no approval step in it.
+
 **Refreshing the extraction verdicts.** When a verdict describes text that has
-been replaced, or a calibration that has, the free audit has to be told to look
-again. `--clear-verdicts` runs from anywhere with a `DATABASE_URL` and needs no
-corpus; the measuring happens on the worker.
+been replaced, the free audit has to be told to look again. `--clear-verdicts`
+runs from anywhere with a `DATABASE_URL` and needs no corpus; the measuring
+happens on the worker. Since 014 this is no longer the tool for a calibration
+change, and the reason is the gap it leaves: a clear NULLs the verdict, a version
+mismatch does not.
 
 ```
 python pipeline/check_extraction.py --clear-verdicts --concept "embedding" --dry-run
@@ -937,10 +1030,18 @@ how many papers would still show the dossier note if every signal it names were
 demoted together. The sole-cause columns are per signal and say which one to
 suspect. **They do not add up.** A paper carrying two of the named signals is
 sole-caused by neither and appears in neither row, so the rows understate the
-proposal by however much the signals co-occur. Measured on the corpus that
-produced the 76%: `gaps` alone frees 31 papers, `package_macros` alone 28, both
-together 87. Reading 31 and 28 as 59 is the arithmetic that makes "fix one
-cause" look reasonable, and it is the reason this work was split into 1a and 1b.
+proposal by however much the signals co-occur. Measured on the Render disk over
+all 304 papers, which is the run that decided the fifth calibration: `gaps` alone
+freed 33 papers, `package_macros` alone 44, both together 105. Reading 33 and 44
+as 77 is the arithmetic that makes "fix one cause" look reasonable, and it is the
+reason this work was split into 1a and 1b.
+
+A signal that already reports as a note reads zero in both sole-cause columns,
+because it is out of the verdict and demoting it again frees nobody. That is the
+answer and not a gap in the table, and the row is marked `(note)` to say so.
+With no proposal named the mode prints no crosstab at all and says why, rather
+than showing a table of no movement that reads like a proposal measured and found
+to cost nothing.
 
 **Observing a trace.** The queue and progress panel on `/trace` is the primary
 view.
@@ -1442,7 +1543,9 @@ The why behind the load-bearing choices, in one place:
     cross-tab and a sole-cause table. It moves no threshold.
     **The proposal is a module constant and not a flag.** One hypothesis,
     `PROPOSED_NOTE_SIGNALS = frozenset({"gaps", "package_macros"})`, hardcoded
-    and in version control where it can be reviewed and argued with. A config
+    and in version control where it can be reviewed and argued with. It shipped
+    as `NOTE_SIGNALS` on the same day (decision 25), and the proposal constant is
+    now empty and waiting for the sixth round. A config
     file rots and a `--what-if` taking arbitrary thresholds is unreviewable:
     neither leaves any record of what was actually proposed on the day the
     number was taken, which is precisely what is missing from the four rounds
@@ -1465,6 +1568,77 @@ The why behind the load-bearing choices, in one place:
     `"{level}: {sentence}"` and the dossier is untouched; only the in-process
     tuple grew a key, and the per-paper `--json` audit accordingly now holds
     three-element signal arrays instead of two.
+
+25. **A signal can be true, worth reporting and deliberately outside the
+    verdict; and a verdict is invalidated by the code that computes it as well
+    as by the text it describes** (2026-08-01, migration 014). Two separate
+    rules, shipped together because the second is what makes the first safe to
+    apply to a live corpus.
+    **The first.** `stale` invented the position and `gaps` and
+    `package_macros` joined it, after the measurement decision 24 exists to take
+    and not before. The test is not how often a signal fires or how sure it is:
+    it is whether the action the signal implies is a warning to a reader. Those
+    three imply re-extract the corpus, open this paper on arXiv, and teach the
+    extractor a package. The dossier note can say exactly one thing — that the
+    passage in front of you may be missing wording the paper had — so a signal
+    whose finding is not that sentence has no business deciding whether the
+    sentence appears. `NOTE_SIGNALS` is the set and `NOTE_LEVELS` is the pair of
+    levels a verdict ignores; the thresholds still compute the level they always
+    did, and one list comprehension at the end of `scan_paper` demotes what the
+    set names, so promoting a signal back is a change to a frozenset and to
+    nothing else.
+    **Reported means reported.** The signals are still emitted, still stored (as
+    `note: ...` rather than `suspect: ...`, which is the one visible difference)
+    and still printed by the audit and by the sole-cause table. 134 of 304
+    papers drop package macros and that number is worth an operator's attention;
+    what changed is who it is addressed to.
+    **What this cost, measured on the Render disk over all 304 papers before it
+    shipped**: the dossier note falls from 218 papers (72%) to 113 (37%), 105
+    papers move `suspect` to `clean`, and **nothing moves stricter** — every
+    occupied cell of the crosstab is on or above the diagonal. Both demotions can
+    only remove signals, so that direction is a property rather than a hope, and
+    it was checked before the deploy rather than after.
+    **The second.** `papers.extraction_check_version` holds a 12-character digest
+    of the audit's thresholds, patterns, signal keys, note set and note levels,
+    computed at import; `--write` stores it and `--only-unchecked` selects
+    `extraction_checked_at IS NULL OR extraction_check_version IS DISTINCT FROM
+    <this version>`. `IS DISTINCT FROM` and not `<>`, because the column is NULL
+    on every row written before it existed and `NULL <> 'abc'` is NULL, which
+    would exclude exactly the rows this was built for.
+    **A digest rather than a hand-bumped integer, specifically because it cannot
+    be forgotten.** The 292 verdicts written at 10:08:43 on 2026-07-31 were
+    computed by a calibration three commits replaced between 10:19 and 10:31, and
+    they sat frozen for weeks because `--only-unchecked` filtered on the
+    timestamp alone. A version somebody has to remember to raise is a version
+    somebody forgets, and that is not a hypothetical here, it is the incident.
+    **It is strictly better than the `--clear-verdicts` plus restart ritual it
+    retires** for this job. A clear NULLs the verdict, and the note is the only
+    qualifier on the dossier's "verified verbatim against the source text", so a
+    cleared row leaves the tick standing alone and the page claiming *more* than
+    it did (decision 21). A version mismatch leaves the old verdict in place
+    until the new one replaces it: replace before destroying, applied to the
+    verdict itself. `--clear-verdicts` stays for the job it was actually built
+    for, which is a machine that holds the database and not the papers.
+    **What the digest does not cover, stated so nobody assumes otherwise.** It
+    hashes the calibration inputs, not the file, so a change to the arithmetic
+    that touches none of them will not move it. The mitigation is that the
+    arithmetic's own data is in the hash: `NOTE_SIGNALS` and `NOTE_LEVELS` are
+    inputs precisely because this decision's first half is a change of data, and
+    a demotion the stored verdicts could not see would be the same defect again.
+    Verified: the digest is byte-identical across five processes with different
+    `PYTHONHASHSEED`s, moves for each of eighteen calibration inputs including a
+    regex flag and the note set, and does not move when `0.20` is rewritten as
+    `0.2`.
+    **The risk this creates, which is real and was accepted.** On the worker's
+    first boot after the deploy every audited paper mismatches, and the startup
+    `--only-unchecked --write` rewrites the verdict, the signals and the
+    checked-at on up to 304 rows across both live maps in one pass with nobody
+    watching. That is the intended behaviour and it is still a live rewrite of
+    reader-facing state, so the runbook requires a full `--clear-verdicts
+    --dry-run` dump on the Render shell *before* deploying — it writes the
+    per-paper JSON to `DATA_DIR/snapshots/` and touches the database not at all —
+    and requires the re-audit to be lenient-only, which the crosstab above is
+    where that was checked.
 
 ---
 
@@ -1821,7 +1995,9 @@ Open engineering work, in priority order:
     papers the current code still puts a warning on 174 of them (76%), because
     `GAP_STRONG` fires on the space pylatexenc leaves after `\left(`. So expect
     `damaged` to collapse and the total warned to stay high, and read that as
-    backlog item 1 rather than as this fix having failed.
+    backlog item 1 rather than as this fix having failed. That is what happened:
+    `damaged` fell from 250 to 15 table-wide and 218 of 304 (72%) still carried a
+    warning, and item 1 then closed it at 37% (decision 25).
     **`clean` and `damaged` are the same decision here, and the asymmetry is in
     the gap, not in the clearing.** Clearing a `clean` verdict costs a free
     re-measurement. Clearing a `damaged` one also removes a warning a reader is

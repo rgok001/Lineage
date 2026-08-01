@@ -1,0 +1,32 @@
+-- 014: which calibration produced a verdict.
+--
+-- A verdict about a paper's text is invalidated by two different things, and
+-- only one of them was ever handled. The text can be replaced, and
+-- extract_text.py clears the verdict in the same statement that records the new
+-- file (decision 21). The code that computes the verdict can be replaced, and
+-- nothing noticed: check_extraction.py --only-unchecked selects on
+-- extraction_checked_at IS NULL, so a stamped row stayed stamped however far the
+-- calibration moved underneath it. 292 rows were audited at 10:08:43 on
+-- 2026-07-31 by code that three commits replaced between 10:19 and 10:31, and
+-- they were still being shown to readers weeks later.
+--
+-- check_extraction.py computes a short digest of its own thresholds, patterns
+-- and signal levels at import and stores it here. A digest rather than a
+-- hand-bumped integer, because a number somebody has to remember to raise is a
+-- number somebody forgets, and the defect above is exactly that failure.
+--
+-- NULL means the verdict predates this column. NULL IS DISTINCT FROM any real
+-- version, so those rows re-audit on the first pass after this ships, which is
+-- what they need: they were written by the fourth calibration.
+--
+-- This also retires the --clear-verdicts-then-restart ritual for a calibration
+-- change. A clear NULLs the verdict, and the note is the only qualifier on the
+-- dossier's "verified verbatim against the source text", so a cleared row leaves
+-- the tick standing alone and the page claiming more than it did. A version
+-- mismatch leaves the old verdict in place until the new one replaces it.
+--
+-- No index. The audit reads every paper that has extracted text in one pass, and
+-- the table is in the hundreds; papers_extraction_verdict_idx exists for the
+-- dossier's question, and this column answers nobody's.
+
+ALTER TABLE papers ADD COLUMN extraction_check_version TEXT;

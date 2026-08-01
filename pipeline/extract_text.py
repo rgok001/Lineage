@@ -510,9 +510,13 @@ def main() -> None:
         # worker re-audits this paper free at its next start.
         # extraction_signals is NOT NULL DEFAULT '[]' (migration 013), so it
         # empties rather than nulls; NULL there would abort the extraction.
+        # The check version (migration 014) goes with the verdict it qualifies:
+        # a version left standing over no verdict names a calibration for a
+        # measurement that no longer exists.
         conn.execute(
             "UPDATE papers SET extracted_text_path=%s, text_title_match=%s, "
             "extraction_verdict=NULL, extraction_signals='[]'::jsonb, "
+            "extraction_check_version=NULL, "
             "extraction_checked_at=NULL WHERE arxiv_id=%s",
             (rel, score, aid),
         )

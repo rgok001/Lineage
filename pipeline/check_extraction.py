@@ -44,8 +44,12 @@ assumed:
   gaps            punctuation standing where a token used to be, detected by
                   shape and never by vocabulary. Guessing at words that "never"
                   take a following comma flagged "the batch size." and "And,";
-                  writing the shapes with `\s` made every indented line a gap.
+                  writing the shapes with `\\s` made every indented line a gap.
                   What is left is anchored to word characters and literal spaces.
+                  Reported and kept out of the verdict since 2026-08-01: it fires
+                  on faithful renderings of `\\left(`, `\\big(` and `$(\\,x\\,)$`,
+                  which lost nothing, and on 304 papers it was the sole reason 33
+                  of them carried a warning.
   stale text      the useful half of what those attempts kept finding. "dimension
                   .", "extracting  features" and "model ()." were fed back
                   through the current extractor and it removes all three, so a
@@ -55,6 +59,20 @@ assumed:
                   deliberately kept out of the verdict.
   bad decode      U+FFFD, from the "replace" decode in read_archive.
   no structure    neither a references nor an introduction heading survived.
+
+Three of these are REPORTED AND DO NOT DECIDE THE VERDICT: `stale`, `gaps`, and
+the package half of `unknown macros`. Each is true, each is worth an operator's
+attention, and none of them means "the passage you are reading may be missing
+wording the paper had", which is the only thing the dossier note can say. The
+answers they imply are re-extract the corpus, open the paper on arXiv, and teach
+the extractor a package, and a reader can act on none of the three. That split is
+the fifth calibration of this file and the first one taken from a measurement
+rather than from a rate (as-built section 4).
+
+Every stored verdict records which calibration produced it
+(`extraction_check_version`, migration 014). Change a threshold or a pattern in
+this file and every verdict written by the old one counts as unchecked, so the
+worker's free pass re-measures them at its next start. Nobody has to remember.
 
 PDF-sourced papers are reported separately throughout. They are categorically
 less faithful (column order, ligatures, running heads, maths) and averaging them
@@ -74,6 +92,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -200,33 +219,148 @@ UNSTORABLE = (NO_TEXT, NO_SOURCE, SOURCE_UNUSABLE)
 SIGNAL_KEYS = ("residue", "undecodable", "stale", "gaps", "no_headings",
                "short_text", "own_macros", "package_macros", "symbols")
 
-# One hypothesis about which signals are miscalibrated, hardcoded and in version
-# control so it can be reviewed and argued with. Deliberately not a config file
-# and not a --what-if taking arbitrary thresholds: both rot, and neither leaves a
-# record of what was actually proposed on the day the measurement was taken.
+# Signals that are reported and deliberately do not decide the verdict. `stale`
+# invented this position: it says which extractor wrote a file, not how good the
+# file is, and the answer to it is re-extraction, which is a decision about the
+# corpus rather than a warning about a paper.
 #
-# Nothing reads this except --compare-verdicts. It changes no verdict today.
-PROPOSED_NOTE_SIGNALS = frozenset({"gaps", "package_macros"})
-
-# A key here that no signal emits would demote nothing, and the comparison would
-# print two identical columns and look like a finding.
-_UNKNOWN_PROPOSED = PROPOSED_NOTE_SIGNALS - set(SIGNAL_KEYS)
-if _UNKNOWN_PROPOSED:
-    raise ValueError("PROPOSED_NOTE_SIGNALS names signals nothing emits: "
-                     f"{sorted(_UNKNOWN_PROPOSED)}")
-
-# Preview only. --compare-verdicts counts the quote tells with and without this
-# applied; nothing else in this file touches it, because this instrument changes
-# no calibration.
+# `gaps` and `package_macros` joined it on 2026-08-01, after the measurement
+# decision 24 exists to take and not before. Over all 304 papers on the Render
+# disk, demoting the two together takes the dossier note from 218 papers (72%) to
+# 113 (37%) and moves nothing stricter in either direction: 105 papers go suspect
+# to clean and no cell below the diagonal is occupied. They were sole cause on 33
+# and 44 papers respectively, which sums to 77 against a joint effect of 105 —
+# the 28-paper gap is co-occurrence, and it is why demoting one alone lands
+# around 63% and reads as failure.
 #
-# `\ldots` and `\dots` already render as `…` and score no hit (measured), so
-# folding a literal `...` to the same character is the shape any fix would take.
-# The obvious alternative, deleting the dots, was tried on paper and rejected: it
-# turns "a,..., z" into "a,, z", which GAP_STRONG's second branch then matches,
-# so it manufactures the false positive it was removing. Two dots are folded as
-# well as three, since ",.." matches that branch exactly as ",..." does.
+# They are still emitted, still stored in extraction_signals and still printed.
+# 134 of 304 papers drop package macros and that is worth an operator's
+# attention; what changed is who it is addressed to. The action `gaps` implies is
+# "open this paper on arXiv", the action `package_macros` implies is "the
+# extractor could learn this package", and the dossier note says neither of those
+# — it tells a reader their quote may be missing wording the paper had, which on
+# these papers is mostly not true.
+NOTE_SIGNALS = frozenset({"gaps", "package_macros"})
+
+# The levels a verdict ignores. Data rather than a literal inside verdict_from,
+# because CHECK_VERSION below hashes it: demoting a signal is then a change the
+# stored verdicts notice by themselves, instead of one somebody has to remember
+# to announce.
+NOTE_LEVELS = frozenset({"stale", "note"})
+
+# The next hypothesis, and empty because the fifth one shipped above.
+# --compare-verdicts demotes whatever is named here and prints today's verdict
+# against the result; with nothing named the crosstab is the identity matrix, so
+# the mode says there is no proposal rather than printing a diagonal that reads
+# like a finding. Still a module constant and not a flag, for decision 24's
+# reason: a --what-if taking arbitrary thresholds leaves no record of what was
+# actually proposed on the day the number was taken.
+PROPOSED_NOTE_SIGNALS: frozenset[str] = frozenset()
+
+# A key in either set that no signal emits would demote nothing, and the
+# comparison would print two identical columns and look like a finding.
+_UNKNOWN_KEYS = (PROPOSED_NOTE_SIGNALS | NOTE_SIGNALS) - set(SIGNAL_KEYS)
+if _UNKNOWN_KEYS:
+    raise ValueError("NOTE_SIGNALS/PROPOSED_NOTE_SIGNALS name signals nothing "
+                     f"emits: {sorted(_UNKNOWN_KEYS)}")
+
+# A literal `...` is folded to `…` before the shape tests, in the paper scan and
+# in the quote tells alike. `\ldots` and `\dots` already render as `…` and score
+# no hit (measured through the real extractor), so the literal form was being
+# read as damage purely for being spelled differently: tidy_marks closes the
+# space in front of the dots, "$x_1, ..., x_n$" extracts to "x_1,..., x_n", and
+# GAP_STRONG's second branch matches the ",." in it.
+#
+# Deleting the dots is the obvious alternative and it is wrong: it turns
+# "a,..., z" into "a,, z", which the same branch matches, so it manufactures the
+# false positive it was removing. Two dots fold as well as three, since ",.."
+# matches that branch exactly as ",..." does.
+#
+# Measured over the 393 stored quotes: gap tells 5 -> 2, quotes carrying any tell
+# 11 -> 10.
 LITERAL_ELLIPSIS = re.compile(r"\.{2,}")
 ELLIPSIS = "…"
+
+
+def fold_ellipsis(s: str) -> str:
+    """One definition of what an ellipsis is, so the paper scan and the quote
+    pass cannot come to different answers about the same passage."""
+    return LITERAL_ELLIPSIS.sub(ELLIPSIS, s)
+
+
+# ── the version of the check that wrote a verdict ───────────────────────────
+#
+# A verdict about a paper's text is invalidated by two different things and only
+# one of them was ever handled. The text can be replaced, and extract_text.py
+# clears the verdict in the same statement that records the new file (decision
+# 21). The CODE that computes the verdict can be replaced, and nothing noticed:
+# --only-unchecked selects on extraction_checked_at being null, so a stamped row
+# stayed stamped however far the calibration moved underneath it. The 292
+# verdicts written at 10:08:43 on 2026-07-31 were computed by a calibration that
+# three commits replaced between 10:19 and 10:31, and they were still on the page
+# weeks later. That is what forgetting looks like, and this is the column that
+# makes forgetting impossible.
+#
+# A digest and not a hand-bumped integer, for that reason exactly: a number
+# somebody has to remember to raise is a number somebody forgets, and nobody
+# noticed the defect above for weeks.
+#
+# What it covers is the calibration INPUTS: every threshold, every pattern and
+# its flags, which signals exist, which of them are notes, and which levels the
+# verdict ignores. It does not cover the rest of the file, so a change to the
+# arithmetic touching none of these will not move it. Anything that decides a
+# verdict therefore belongs in this dict, and NOTE_SIGNALS and NOTE_LEVELS are in
+# it precisely because this ticket's own change is a change of data: a demotion
+# the stored verdicts could not see would be the same defect again.
+#
+# This also retires the --clear-verdicts-then-restart ritual for a calibration
+# change. Clearing NULLs the verdict, and on the dossier the note is the only
+# qualifier on "verified verbatim against the source text", so a cleared row
+# leaves the tick standing alone and the page claiming MORE than it did
+# (decision 21). A version mismatch leaves the old verdict in place until the new
+# one replaces it: replace before destroying, applied to the verdict itself.
+# --clear-verdicts stays for the job it was built for, a machine that holds the
+# database and not the papers.
+
+
+def _rx(p: re.Pattern) -> list:
+    """A pattern's identity for the digest: source AND flags, because re.M is the
+    whole difference between "any indented line" and "a hole inside a line", and
+    that mistake has already shipped once (the third calibration)."""
+    return [p.pattern, p.flags]
+
+
+def check_version() -> str:
+    """A short digest of this file's calibration.
+
+    Reads the module globals when called rather than closing over them, so a test
+    can move a constant and ask for the version again.
+    """
+    inputs = {
+        "residue": [_rx(LATEX_RESIDUE), RESIDUE_DAMAGED, RESIDUE_SUSPECT],
+        "replacement": [REPLACEMENT, REPLACEMENT_DAMAGED, REPLACEMENT_SUSPECT],
+        "macros": [_rx(MACRO_USE), _rx(MACRO_DEF), OWN_DAMAGED, OWN_SUSPECT,
+                   OTHER_SUSPECT, sorted(HARMLESS_MACROS)],
+        "symbols": [_rx(SRC_MATH), SYMBOL_MIN, SYMBOL_MAX, SYMBOL_LOSS_DAMAGED,
+                    SYMBOL_LOSS_SUSPECT, SYMBOL_MIN_CHECKED],
+        "ratio": [RATIO_DAMAGED, RATIO_SUSPECT],
+        "gaps": [_rx(GAP_STRONG), _rx(GAP_WEAK), GAP_SUSPECT],
+        "stale": [_rx(STALE_MARKS)],
+        "headings": [_rx(p) for p in SECTION_HINTS],
+        "our_marks": [_rx(OUR_MARKS)],
+        "ellipsis": [_rx(LITERAL_ELLIPSIS), ELLIPSIS],
+        "signals": [list(SIGNAL_KEYS), sorted(NOTE_SIGNALS), sorted(NOTE_LEVELS)],
+    }
+    # sort_keys, so a dict reordering is not a calibration change; and json's own
+    # number formatting, so 0.2 and 0.20 agree and 0.20 and 0.25 do not. Nothing
+    # here is hash()ed: str.__hash__ is salted per process and this value has to
+    # survive a restart.
+    blob = json.dumps(inputs, sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+CHECK_VERSION = check_version()
+
 
 _known_cache: dict[str, bool] = {}
 
@@ -368,18 +502,20 @@ def verdict_from(signals: list, demoted: frozenset = frozenset(),
     would drift, and a comparison table computed from a drifted copy is worse
     than no table: it would look like a finding.
 
-    "stale" says which extractor made this file, not how good the file is, so it
-    is reported and then kept out of the verdict. Re-extracting is the answer to
-    it, and that is a decision about the corpus rather than a warning about a
-    paper. `demoted` puts named signals in the same position without changing
-    what they measure.
+    NOTE_LEVELS is the set of levels that report without deciding. "stale" says
+    which extractor made this file, not how good the file is, and "note" is the
+    same position given a name once a second and a third signal needed it: the
+    action each of them implies is not a warning to a reader. `demoted` puts a
+    named signal there for the length of one call, which is how --compare-verdicts
+    prices a proposal before it ships.
 
     `source_scan` is here because dropping it is decision 23's mistake wearing
     different clothes: a paper whose archive is not on this machine had six
     signals skipped, so once its remaining signals are demoted away the answer is
     "we did not look", never "clean".
     """
-    levels = {lvl for lvl, key, _ in signals if lvl != "stale" and key not in demoted}
+    levels = {lvl for lvl, key, _ in signals
+              if lvl not in NOTE_LEVELS and key not in demoted}
     if "damaged" in levels:
         return "damaged"
     if levels:
@@ -426,6 +562,12 @@ def scan_paper(row: dict) -> dict:
     out["chars"] = len(text)
     out["our_marks"] = len(OUR_MARKS.findall(text))
 
+    # The shape tests read this and nothing else does: it is one character
+    # shorter per ellipsis, and the length ratio and the residue count are about
+    # the file as it stands. See LITERAL_ELLIPSIS for why the dots are folded
+    # rather than removed.
+    shaped = fold_ellipsis(text)
+
     residue = len(LATEX_RESIDUE.findall(OUR_MARKS.sub("", text)))
     out["latex_residue"] = residue
     if residue >= RESIDUE_DAMAGED:
@@ -440,15 +582,15 @@ def scan_paper(row: dict) -> dict:
     elif bad >= REPLACEMENT_SUSPECT:
         out["signals"].append(("suspect", "undecodable", f"undecodable bytes x{bad}"))
 
-    stale = len(STALE_MARKS.findall(text))
+    stale = len(STALE_MARKS.findall(shaped))
     out["stale_marks"] = stale
     if stale:
         out["signals"].append(("stale", "stale", f"text predates the current extractor "
                                                  f"({stale} marks it can no longer make)"))
 
-    strong = len(GAP_STRONG.findall(text))
+    strong = len(GAP_STRONG.findall(shaped))
     out["gap_hits"] = strong
-    out["gap_examples"] = [m.group(0) for m in list(GAP_STRONG.finditer(text))[:4]]
+    out["gap_examples"] = [m.group(0) for m in list(GAP_STRONG.finditer(shaped))[:4]]
     if strong >= GAP_SUSPECT:
         out["signals"].append(("suspect", "gaps", f"gaps where a token was x{strong}"))
 
@@ -494,6 +636,14 @@ def scan_paper(row: dict) -> dict:
                 elif rate >= SYMBOL_LOSS_SUSPECT:
                     out["signals"].append(("suspect", "symbols", f"{missing}/{checked} symbols left no trace"))
 
+    # One pass rather than a branch at each of the nine appends above. The
+    # thresholds keep computing the level they always computed, and NOTE_SIGNALS
+    # alone decides which of them reaches a reader, so promoting one back is a
+    # change to that frozenset and to nothing else. Prose and order are untouched:
+    # the stored string only changes its prefix, from "suspect: " to "note: ".
+    out["signals"] = [("note" if key in NOTE_SIGNALS else lvl, key, why)
+                      for lvl, key, why in out["signals"]]
+
     out["verdict"] = verdict_from(out["signals"], frozenset(), out.get("source_scan"))
     return out
 
@@ -501,11 +651,17 @@ def scan_paper(row: dict) -> dict:
 # The quote pass. Our own marks are excluded: they are expected, folded by the
 # check and rendered as an elision, so counting them here would report the design
 # as damage.
+#
+# The two shape tells fold the ellipsis themselves rather than trusting a caller
+# to do it first, so a quote cannot be read one way here and another way in
+# scan_paper. Measured over the 393 stored quotes when this shipped: gap tells
+# fell from 5 to 2 and quotes carrying any tell from 11 to 10.
 QUOTE_TELLS = (
     ("undecodable bytes", lambda q: REPLACEMENT in q),
     ("latex residue", lambda q: bool(LATEX_RESIDUE.search(OUR_MARKS.sub("", q)))),
-    ("gap where a token was", lambda q: bool(GAP_STRONG.search(q))),
-    ("copied from text the extractor has since fixed", lambda q: bool(STALE_MARKS.search(q))),
+    ("gap where a token was", lambda q: bool(GAP_STRONG.search(fold_ellipsis(q)))),
+    ("copied from text the extractor has since fixed",
+     lambda q: bool(STALE_MARKS.search(fold_ellipsis(q)))),
 )
 
 
@@ -520,22 +676,15 @@ def scan_quotes(conn, concept: str | None, pv: str) -> dict:
         {where}
     """, params).fetchall()
 
+    # This loop used to count every tell twice, once with a literal "..." folded
+    # to "…" and once without, so that the fold could be previewed before it
+    # shipped. It has shipped: the tells fold it themselves now, and a second
+    # column would be identical to the first and read like a finding.
     counts = {name: 0 for name, _ in QUOTE_TELLS}
-    # The same tells against the same quotes with a literal "..." folded to "…".
-    # Counted here rather than in the comparison so the two numbers come off one
-    # query and one loop, and so nobody can claim the effect of that fold without
-    # the unfolded column standing next to it. Nothing reads these unless
-    # --compare-verdicts asks.
-    counts_folded = {name: 0 for name, _ in QUOTE_TELLS}
-    touched = touched_folded = 0
+    touched = 0
     examples: list[dict] = []
     for arxiv_id, quote, verified in rows:
         hits = [name for name, test in QUOTE_TELLS if test(quote or "")]
-        folded = LITERAL_ELLIPSIS.sub(ELLIPSIS, quote or "")
-        hits_folded = [name for name, test in QUOTE_TELLS if test(folded)]
-        for name in hits_folded:
-            counts_folded[name] += 1
-        touched_folded += bool(hits_folded)
         if not hits:
             continue
         touched += 1
@@ -545,7 +694,6 @@ def scan_quotes(conn, concept: str | None, pv: str) -> dict:
             examples.append({"arxiv_id": arxiv_id, "verified": verified,
                              "tells": hits, "quote": (quote or "")[:240]})
     return {"total": len(rows), "touched": touched, "counts": counts,
-            "touched_folded": touched_folded, "counts_folded": counts_folded,
             "examples": examples}
 
 
@@ -558,10 +706,17 @@ def scan_quotes(conn, concept: str | None, pv: str) -> dict:
 # tell you WHICH signal is wrong, and it cannot tell you what removing one would
 # cost, so each round guessed and each round found out afterwards.
 #
-# Two known causes sit behind today's 76%, of near-equal size, and fixing either
+# Two known causes sat behind that 76%, of near-equal size, and fixing either
 # alone lands around 63% and reads as failure. That is the specific thing a rate
 # hides and the sole-cause table below shows: for each signal, how many papers
 # would be clean if it alone stopped deciding the verdict.
+#
+# The fifth round then ran this on the Render disk and shipped what it read:
+# gaps and package_macros are NOTE_SIGNALS now, 72% became 37%, and nothing moved
+# stricter. The instrument stays, because the sixth round will want it and
+# because a proposal that leaves no record is what decision 24 is about. With
+# PROPOSED_NOTE_SIGNALS empty the crosstab would be the identity matrix, so the
+# mode prints the sole-cause table and says plainly that there is no proposal.
 #
 # --compare-verdicts is read-only by construction. It stores nothing, so the
 # measurement can be taken before anything is changed and disagreed with
@@ -603,6 +758,12 @@ def compare_verdicts(papers: list[dict], quotes: dict) -> dict:
     if len(groups) > 1:
         groups.append(("all", papers))
 
+    # No proposal means no crosstab. Every cell would land on the diagonal, and a
+    # table of zero movement is indistinguishable on the page from a proposal
+    # measured and found to cost nothing.
+    if not PROPOSED_NOTE_SIGNALS:
+        groups = []
+
     for fmt, group in groups:
         pairs = [(verdicts_for(p, frozenset()),
                   verdicts_for(p, PROPOSED_NOTE_SIGNALS)) for p in group]
@@ -636,18 +797,27 @@ def compare_verdicts(papers: list[dict], quotes: dict) -> dict:
         signals.append({"key": key, "papers": len(fires),
                         "sole_cause_clean": sole_clean,
                         "sole_cause_note": sole_note,
+                        # A shipped note reads zero in both sole-cause columns by
+                        # construction: it is already out of the verdict, so
+                        # demoting it again frees nobody. That is the answer, not
+                        # a gap in the table, and the flag is what says so.
+                        "reports_as_note": key in NOTE_SIGNALS,
                         "demoted_by_proposal": key in PROPOSED_NOTE_SIGNALS})
 
     return {
+        # Taken off the papers rather than written out here: `stale` is out of the
+        # verdict by its LEVEL and the other two by their KEY, so a hand-written
+        # list of the three would be a fourth place to forget.
+        "note_signals": sorted(NOTE_SIGNALS | {k for p in papers
+                                               for lvl, k, _ in p["signals"]
+                                               if lvl in NOTE_LEVELS}),
         "proposed_note_signals": sorted(PROPOSED_NOTE_SIGNALS),
         "papers": len(papers),
         "formats": formats,
         "signals": signals,
         "quotes": {"total": quotes["total"],
                    "touched": quotes["touched"],
-                   "touched_folded": quotes["touched_folded"],
-                   "counts": quotes["counts"],
-                   "counts_folded": quotes["counts_folded"]},
+                   "counts": quotes["counts"]},
     }
 
 
@@ -655,8 +825,19 @@ def print_comparison(report: dict) -> None:
     proposed = ", ".join(report["proposed_note_signals"])
     print(f"\nVerdict comparison over {report['papers']} papers. "
           "Nothing was written and no verdict changed.")
-    print(f"  Proposal under test: {proposed} report as a note and stop deciding "
-          "the verdict.\n")
+    print("  Reported and already out of the verdict: "
+          f"{', '.join(report['note_signals'])}.")
+    if proposed:
+        print(f"  Proposal under test: {proposed} report as a note and stop "
+              "deciding the verdict.\n")
+    else:
+        # Said rather than shown. An empty crosstab and no sentence would read as
+        # "the proposal moves nothing", which is the opposite of "nobody has
+        # proposed anything".
+        print("  No proposal is under test: PROPOSED_NOTE_SIGNALS is empty, so "
+              "there is no\n  crosstab below. Name a signal in it to price "
+              "demoting that signal. The sole\n  cause table stands on its own "
+              "and is the half worth reading first.\n")
 
     for f in report["formats"]:
         n = f["papers"]
@@ -676,20 +857,25 @@ def print_comparison(report: dict) -> None:
     # These two columns are MARGINAL, and saying so is load-bearing. A paper
     # carrying two of these signals is sole-caused by neither and appears in
     # neither row, so the column does not sum to the effect of demoting several
-    # at once. Measured on the corpus: gaps alone frees 31, package_macros alone
-    # 28, both together 87. An operator who adds 31 and 28 concludes that fixing
-    # both buys 59, which is the "fix one and land at 63%" reasoning this ticket
-    # was split in two to prevent.
+    # at once. Measured on all 304 papers on the Render disk, which is the run
+    # that decided the fifth calibration: gaps alone freed 33, package_macros
+    # alone 44, both together 105. An operator who adds 33 and 44 concludes that
+    # demoting both buys 77, and is 28 papers short — the co-occurrence — which is
+    # the "fix one and land at 63%" reasoning this ticket was split in two to
+    # prevent.
     print("  Sole cause: papers this signal fires on, and how many of them it is "
           "the only\n  reason for. Use it to find which signal to suspect, not to "
           "add up.\n  These columns are per signal: a paper carrying two of them "
           "is counted in\n  neither, so demoting several frees more papers than "
-          "the rows suggest. The\n  joint effect of the proposal on trial is the "
-          "crosstab above.\n")
+          "the rows suggest. The\n  joint effect of a proposal is its crosstab, "
+          "never the sum of these rows.\n  A signal already reporting as a note "
+          "reads zero in both: it is out of the\n  verdict, so demoting it again "
+          "frees nobody.\n")
     print(f"      {'signal':<24}{'fires on':>10}{'only reason':>13}{'only reason':>13}")
     print(f"      {'':<24}{'':>10}{'not clean':>13}{'for the note':>13}")
     for s in report["signals"]:
-        mark = " (note)" if s["demoted_by_proposal"] else ""
+        mark = " (note)" if s["reports_as_note"] else (
+            " (proposed)" if s["demoted_by_proposal"] else "")
         print(f"      {s['key'] + mark:<24}{s['papers']:>10}"
               f"{s['sole_cause_clean']:>13}{s['sole_cause_note']:>13}")
     print("\n      'not clean' and 'for the note' differ only on papers whose source "
@@ -698,14 +884,13 @@ def print_comparison(report: dict) -> None:
 
     q = report["quotes"]
     if q["total"]:
-        print(f"\n  Quote tells over {q['total']} stored quotes, counted twice: as "
-              "today, and with a\n  literal \"...\" folded to \"…\". `\\ldots` "
-              "already renders as \"…\" and scores no hit.\n")
-        print(f"      {'tell':<50}{'today':>8}{'folded':>8}")
+        print(f"\n  Quote tells over {q['total']} stored quotes. A literal "
+              "\"...\" is folded to \"…\"\n  before the shape tells, which is what "
+              "`\\ldots` already renders as.\n")
+        print(f"      {'tell':<50}{'quotes':>8}")
         for name, _ in QUOTE_TELLS:
-            print(f"      {name:<50}{q['counts'][name]:>8}{q['counts_folded'][name]:>8}")
-        print(f"      {'quotes carrying any tell':<50}{q['touched']:>8}"
-              f"{q['touched_folded']:>8}")
+            print(f"      {name:<50}{q['counts'][name]:>8}")
+        print(f"      {'quotes carrying any tell':<50}{q['touched']:>8}")
     print()
 
 
@@ -715,21 +900,30 @@ def print_comparison(report: dict) -> None:
 # future re-extraction, and this is for the rows frozen before it existed. All
 # 292 of them were written in one batch on 2026-07-31 by the calibration this
 # file replaced twenty minutes later, against text that has since been
-# re-extracted, and --only-unchecked filters on the timestamp being null, so
-# nothing revisits them ever (as-built 11.11).
+# re-extracted, and --only-unchecked filtered on the timestamp alone, so nothing
+# revisited them (as-built 11.11). The timestamp half of that defect is closed:
+# CHECK_VERSION would have caught those rows without anybody noticing them.
 #
-# It touches three columns and reads no disk at all, which is the point: it is
-# the only mode of this file that does anything useful on a machine holding the
-# database but not the corpus, and that is the machine the owner has. Where the
-# corpus IS present, `--write` on its own is the better instrument — it recomputes
-# in place and never leaves a paper with no verdict at all.
+# It reads no disk at all, which is the point: it is the only mode of this file
+# that does anything useful on a machine holding the database but not the corpus,
+# and that is the machine the owner has. Where the corpus IS present, `--write` on
+# its own is the better instrument — it recomputes in place and never leaves a
+# paper with no verdict at all.
+#
+# It is no longer the tool for a calibration change. CHECK_VERSION is: the stored
+# verdict stays on the page until a new one replaces it, where a clear leaves the
+# verified stamp unqualified in the gap (decision 21). This is for a rewritten
+# text on a machine that cannot re-measure it.
 #
 # extraction_signals is NOT NULL DEFAULT '[]' (migration 013), so it empties
-# rather than nulls; NULL there would abort the statement.
+# rather than nulls; NULL there would abort the statement. The check version goes
+# with the verdict it describes: a version standing over no verdict claims a
+# measurement nobody made.
 CLEAR_VERDICTS = """
 UPDATE papers p
    SET extraction_verdict = NULL,
        extraction_signals = '[]'::jsonb,
+       extraction_check_version = NULL,
        extraction_checked_at = NULL
  WHERE p.extraction_checked_at IS NOT NULL
 {scope}"""
@@ -758,13 +952,39 @@ ORDER BY 1
 # in snapshot_map.py and one more: these values are stale by construction, so
 # putting one back is a decision somebody has to make deliberately, and the file
 # is plain JSON so the decision stays available.
+#
+# The check version is in the copy because it is half of what the row meant: a
+# verdict without the calibration that produced it cannot be told from a verdict
+# somebody would compute today, and telling those apart is the whole reason the
+# column exists.
 DUMP_VERDICTS = """
 SELECT p.arxiv_id, p.extraction_verdict, p.extraction_signals,
-       p.extraction_checked_at
+       p.extraction_check_version, p.extraction_checked_at
 FROM papers p
 WHERE p.extraction_checked_at IS NOT NULL
 {scope}ORDER BY p.arxiv_id
 """
+
+# --only-unchecked's scope, and the reason migration 014 exists. The timestamp
+# alone answers "has anybody audited this row", which is not the question: 292
+# rows were audited by a calibration three commits replaced within half an hour
+# and stayed frozen for weeks because the timestamp said yes. A row whose stored
+# version is not the version this process computes is a row whose verdict was
+# decided by code that no longer exists.
+#
+# IS DISTINCT FROM and not <>: the column is NULL on every row written before it
+# existed, and `NULL <> 'abc'` is NULL, which is not TRUE, so those rows — the
+# exact rows this was built for — would never be selected.
+#
+# {p} is the table alias, because the concept query joins and the unscoped one
+# does not. It used to be a str.replace("p.", "") on the rendered clause, which
+# worked and was one column name away from not working.
+UNCHECKED_SCOPE = (
+    "AND ({p}extraction_checked_at IS NULL\n"
+    # The continuation sits under the opening paren in both callers, which happen
+    # to share their indentation. Cosmetic, and the rendered statement is read by
+    # people before it is run on a corpus.
+    "                       OR {p}extraction_check_version IS DISTINCT FROM %(v)s)")
 
 # The papers table is shared across every concept ever traced, so an unscoped
 # statement here reaches another map's rows. Scoped exactly as extract_text.py
@@ -877,8 +1097,9 @@ def clear_verdicts(conn, concept: str | None, only: list[str] | None,
     dump.write_text(json.dumps(
         {"taken_at": stamp, "concept": concept, "only": only,
          "papers": [{"arxiv_id": a, "extraction_verdict": v,
-                     "extraction_signals": s, "extraction_checked_at": t}
-                    for a, v, s, t in dumped]},
+                     "extraction_signals": s, "extraction_check_version": cv,
+                     "extraction_checked_at": t}
+                    for a, v, s, cv, t in dumped]},
         indent=2, default=str), encoding="utf-8")
     print(f"\n  {len(dumped)} verdicts copied to {dump}")
     print("  Restoring one is a decision and is deliberately not automated; the "
@@ -921,9 +1142,12 @@ def main() -> None:
                          "the next calibration is decided on a measurement rather "
                          "than on a rate")
     ap.add_argument("--only-unchecked", action="store_true",
-                    help="skip papers already audited. Makes this cheap enough to "
-                         "run on every worker start, so the backfill needs nobody "
-                         "to remember it")
+                    help="skip papers already audited by this calibration. A paper "
+                         "whose stored check version is not the one this process "
+                         "computes counts as unaudited, so a change to a threshold "
+                         "or a pattern re-measures itself at the next worker start "
+                         "and nobody has to remember that it should. Makes this "
+                         "cheap enough to run on every start")
     ap.add_argument("--write", action="store_true",
                     help="store each verdict on papers.extraction_verdict (migration 013), "
                          "so the app can tell a reader what it knows about the text "
@@ -984,8 +1208,11 @@ def main() -> None:
                  "The audit's own\nreport goes to --json.")
 
     # Cheap re-runs are what let this live in the worker's startup rather than in
-    # somebody's terminal history.
-    unchecked = "AND p.extraction_checked_at IS NULL" if args.only_unchecked else ""
+    # somebody's terminal history. "Unchecked" now means unchecked OR checked by
+    # a calibration this process is not running; the parameter only exists when
+    # the clause does, so the unflagged query still carries no parameters at all.
+    scoped = args.only_unchecked
+    version_param = {"v": CHECK_VERSION} if scoped else {}
 
     with psycopg.connect(env("DATABASE_URL")) as conn:
         if args.clear_verdicts:
@@ -1004,7 +1231,8 @@ def main() -> None:
                   AND p.extracted_text_path IS NOT NULL
                   {unchecked}
                 ORDER BY p.arxiv_id
-            """.format(unchecked=unchecked), {"c": args.concept, "pv": args.prompt_version}).fetchall()
+            """.format(unchecked=UNCHECKED_SCOPE.format(p="p.") if scoped else ""),
+                {"c": args.concept, "pv": args.prompt_version, **version_param}).fetchall()
         else:
             rows = conn.execute("""
                 SELECT arxiv_id, title, source_format, raw_path,
@@ -1012,7 +1240,8 @@ def main() -> None:
                 FROM papers WHERE extracted_text_path IS NOT NULL
                   {unchecked}
                 ORDER BY arxiv_id
-            """.format(unchecked=unchecked.replace("p.", ""))).fetchall()
+            """.format(unchecked=UNCHECKED_SCOPE.format(p="") if scoped else ""),
+                version_param or None).fetchall()
 
         cols = ("arxiv_id", "title", "source_format", "raw_path",
                 "extracted_text_path", "text_title_match")
@@ -1047,15 +1276,19 @@ def main() -> None:
                 conn.execute("""
                     UPDATE papers SET extraction_verdict = %(v)s,
                                       extraction_signals = %(s)s,
+                                      extraction_check_version = %(cv)s,
                                       extraction_checked_at = now()
                     WHERE arxiv_id = %(a)s
-                """, {"v": p["verdict"], "a": p["arxiv_id"],
+                """, {"v": p["verdict"], "a": p["arxiv_id"], "cv": CHECK_VERSION,
                       # The stored string is unchanged by the key: this column is
-                      # read by people and by the dossier, never parsed back.
+                      # read by people and by the dossier, never parsed back. A
+                      # demoted signal shows as "note: ..." here, which is the one
+                      # visible difference the demotion makes to an operator.
                       "s": json.dumps([f"{lvl}: {why}" for lvl, _key, why in p["signals"]])})
                 stored += 1
             conn.commit()
-            print(f"  Wrote {stored} verdicts to papers.extraction_verdict.\n")
+            print(f"  Wrote {stored} verdicts to papers.extraction_verdict "
+                  f"at calibration {CHECK_VERSION}.\n")
             if unfinished:
                 # Named, not just counted. This is the line that says the corpus
                 # on this machine is not the whole corpus, and it is the one an

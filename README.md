@@ -121,7 +121,18 @@ python pipeline/check_extraction.py --compare-verdicts            # read-only
 It is a lower bound: it finds damage that leaves a mark, and the worst damage
 leaves none. Papers it flags are papers worth opening on arXiv. `--write` stores
 each verdict on the paper (migration 013) so the app can tell a reader what it
-knows about the text a quote was matched against.
+knows about the text a quote was matched against, along with a digest of the
+calibration that produced it (migration 014). `--only-unchecked` counts a verdict
+written by a different calibration as unchecked, so moving a threshold here
+re-measures the corpus at the worker's next start and nobody has to remember to
+clear anything.
+
+Three signals are reported and deliberately do not decide the verdict: text that
+predates the current extractor, gaps where a token was, and dropped package
+macros. Each is true and useful to an operator, and none of them means what the
+reader-facing note says, which is that the passage in front of you may be missing
+wording the paper had. That split took the note from 218 papers of 304 (72%) to
+113 (37%) with nothing becoming stricter.
 
 `--compare-verdicts` prints today's verdicts against the ones a named proposal
 would give, and a table of how often each signal is the sole reason a paper is
@@ -133,7 +144,8 @@ a rate says the check is wrong without pointing at a signal.
 Read the two tables for different things. The sole cause columns are per signal
 and tell you which one to suspect; they do not add up, because a paper carrying
 two of them is counted in neither. The joint effect of demoting several at once
-is the crosstab.
+is the crosstab. With no proposal named it prints the sole-cause table and says
+there is nothing on trial, rather than a crosstab of no movement.
 
 ### Repairing a map after the extracted text changes
 
