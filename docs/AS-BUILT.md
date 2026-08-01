@@ -1439,8 +1439,15 @@ Open engineering work, in priority order:
     control, since it is the only map built entirely on correct text and a large
     fall there means the check is wrong rather than the map. Then `embedding`.
     Read both before running either without `--dry-run`.
-    (c) The reader test in section 4 of the same design, which needs a person and
-    is the check that document calls the one that matters.
+    (c) **Done, passed (2026-08-01).** The reader test in section 4 of the same
+    design, the check that document calls the one that matters. Run against a
+    standalone fixture rather than a scratch map, because a scratch map would
+    have appeared at the top of the public home page (see item 13); the fixture
+    rendered the real `AuditTrail` and its three lines were verified
+    character-identical to the component's own output. A reader with no context
+    could tell the authenticated entry from the asserted one. What was not
+    captured is *how* they told them apart, so if the copy is ever reworked this
+    is evidence that the current wording works, not a specification of why.
     (d) Stage C's gate (decision 20) reached through a real re-cluster. It has
     only ever been driven directly, because `cluster()` needs sklearn and real
     vectors, so no test here reaches it the way a trace does.
@@ -1450,3 +1457,15 @@ Open engineering work, in priority order:
     `SELECT_ORPHANS` and `DELETE_ORPHANS` have been parsed and planned by the
     live server, and `with conn.transaction()` on an autocommit connection has
     been shown to open a real transaction and roll back cleanly on a raise.
+
+13. **The home page lists every map, whatever its status** (confirmed
+    2026-08-01). `listGenealogies()` has no filter on `status` and
+    `app/app/page.tsx` renders the list unfiltered, ordered by `updated_at DESC`.
+    So a genealogy that is `pending`, `running`, `failed` or `aborted_spend_cap`
+    appears publicly beside the finished maps, and a newly touched one sorts
+    above them. Nothing is in that state today, which is why this is latent
+    rather than live, but the next failed trace puts a half-built map on the
+    front page. It is also the reason the reader test above was run against a
+    standalone fixture: creating a scratch map to hold the three entry shapes
+    would have published it, at the top, on a site that had just been sent to a
+    reader outside the project.

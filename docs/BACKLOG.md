@@ -169,10 +169,6 @@ Cost: $0, an hour.
 These need the Render worker or a person, and several are deliberately batched
 behind the parked spend. Full list and rationale: as-built section 11 item 12.
 
-- **The reader test.** Three audit-trail shapes shown to someone with no
-  context, to confirm they can tell an authenticated edit from an asserted one.
-  The design calls it the check that matters most. A standalone fixture exists
-  so it does not need a scratch map.
 - **Design checks 1 and 2.** A CLI edit must land `by_asserted` and no `by`; a
   web edit the reverse. Run on `/g/13`, which is uncurated. Checks 3, 4 and 5
   have been run and passed.
@@ -193,6 +189,12 @@ behind the parked spend. Full list and rationale: as-built section 11 item 12.
 
 ## Closed recently, so it is not rediscovered
 
+- **The reader test passed (2026-08-01).** A reader with no context could tell
+  the authenticated entry from the asserted one. Run against a standalone
+  fixture rendering the real component, because a scratch map would have gone
+  on the public home page (item 4). What was not captured is *how* they told
+  them apart, so this is evidence the current wording works rather than a
+  specification of why. That closes the last open check in the actor design.
 - Definition stamps had no free recompute path — `--reground` shipped, wired in
   as stage 8 before Stage E (decision 19).
 - Stage C deleted every edge before Stage D classified anything — gated on
