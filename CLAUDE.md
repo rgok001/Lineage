@@ -45,6 +45,8 @@ Reference-manager integration, collaboration/sharing, PDF annotation, non-arXiv 
 - Cache aggressively: per-paper extractions and full trace outputs are immutable once built (invalidate only on prompt-version bump).
 - All pipeline stages runnable as standalone CLI scripts before any UI exists.
 - Secrets in .env, never committed. Keys needed: ANTHROPIC_API_KEY, SEMANTIC_SCHOLAR_API_KEY.
+- Database access is refused by default. `.claude/settings.json` sets `LINEAGE_NO_DB=1`, so `env("DATABASE_URL")` raises rather than connecting. Real runs against Neon happen from a terminal outside Claude Code. Reaching production takes an act, not an omission.
+- `LINEAGE_READ_URL` is the read-only connection: the `lineage_ro` Postgres role, SELECT and nothing else. It is the only database access any agent may use, and the Operator is the only role that uses it. It is deliberately not named DATABASE_URL so that no existing code path can route through it by accident.
 - Prefer boring tech. No microservices, no Kubernetes, no message brokers. One repo, one Postgres, one Next.js app, one worker process.
 
 ## UI design tokens (from approved mockup — keep consistent)
