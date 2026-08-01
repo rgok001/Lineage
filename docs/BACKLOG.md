@@ -5,6 +5,13 @@ reviewed 2026-08-01, when item 1 closed: it was split into two tickets because a
 it stood it named one of two causes and prescribed a fix that lands at 63%, then
 both shipped. The measured before and after is in the closed list.
 
+**This is the only list of open work.** `docs/FIX-LOG.md` was a second one,
+written 2026-07-23 and referenced by nothing since; its nine open items were
+checked against the code on 2026-08-01 and are now items 20 to 26 here, or in the
+closed list, or recorded there as overtaken. The file is deleted, not archived —
+`git show 2e70a4c:docs/FIX-LOG.md` is the copy, and the reason is in the closed
+list.
+
 The order is by what each item costs **if it fires**, not by effort. An item
 that puts a wrong claim in front of a reader outranks one that merely wastes
 money, because this product's whole proposition is that a tick means something.
@@ -103,6 +110,17 @@ threshold rather than the signal, and the per-paper distribution of symbol loss
 is what sets it, at a stated quantile with the resulting rate named in the
 commit. Not a number that looks better, which is what all four failed
 calibrations did.
+
+**That distribution does not exist yet, and the threshold half of this item
+cannot be finished until it does (Operator, 2026-08-01).**
+`check_extraction.py` stores a signal record only when the rate crosses
+`SYMBOL_LOSS_SUSPECT`, and the numeric rate is never a column — it survives only
+as free text on the papers that already breached. The stored data is therefore
+right-censored at exactly the value under review, so any quantile taken from it
+is a quantile of the tail while looking like a quantile of the distribution.
+Recording the per-paper rate unconditionally is a prerequisite of this item, not
+a part of it. The `--compare-verdicts` half above is unaffected: it prices
+demoting the signal outright, which needs no distribution.
 Cost: $0. Minutes to measure, then a decision.
 
 ### 4. Some of the corpus on the worker's disk is stale, and some of it is absent
@@ -157,6 +175,44 @@ below. Whichever, the front page should not present an unfinished map as a
 finished one.
 Cost: $0, under an hour.
 
+### 21. A node's label can be narrower than the node, and the diagnosis on file was wrong
+**Confirmed 2026-08-01, reconciled from the fix log (filed 2026-07-23).**
+
+The 46-paper node covering word vectors, t-SNE projections and latent codes is
+labelled "Learned image feature vector representation": the majority reading, not
+the common thread. A wrong label is on the reader's primary view, which is why
+this sits above the latent items below it.
+
+The fix log blamed the labeller seeing a sample. It does not see a sample.
+`stage_c_cluster.py:209` passes every member definition in the cluster and
+`label_cluster_llm` joins all of them with no cap, and `git log -S member_defs`
+returns one commit — the one that added Stage C — so it has never sampled. The
+cause is the prompt: it asserts "They form one coherent sense" and asks for a
+name, which invites the dominant reading. The centroid the old fix prescribed is
+already computed at line 204 and used only to pick a representative member.
+
+Fix: ask for the common thread rather than a name, and show the label as
+provisional until curated.
+Cost: $0 in extraction spend and a Stage C relabel; no Stage B re-run.
+
+### 20. Stage B cannot tell a paper that defined the concept from one that merely used it
+**Confirmed 2026-08-01, reconciled from the fix log (filed 2026-07-23).**
+
+`stage_b_extract.py` asks one boolean, `defines_concept`, over "defines **or**
+uses", and its system prompt says so in those words. That is deliberate recall
+generosity at intake — Stage A defers the filter to here — but nothing downstream
+can undo it: the `Extraction` schema carries no field separating a paper that
+reshaped the sense from one that consumed it, so a node holds both. The
+word-vector node carries Collobert and word2vec beside FAISS and the Transformer,
+which merely consume embeddings.
+
+Fix: a second field in the Stage B schema, reshapes versus applies, and either
+split them in Stage C or mark the appliers on the node.
+Cost: the prompt and schema change is minutes. The re-extraction is not. Any
+schema change needs a `PROMPT_VERSION` bump, which invalidates the per-paper
+cache across the whole corpus, so this lands *with* the parked `embedding`
+refresh and is one more reason that pass is worth batching, not before it.
+
 ### 6. The paper dossier's verified stamp fails open
 **Confirmed 2026-08-01 (architecture review, W10).**
 
@@ -203,9 +259,29 @@ mistake, is wrong about a load-bearing calibrated constant, and agents read it
 and repeat it.
 Cost: $0, an hour.
 
+### 25. `SEMANTIC_SCHOLAR_API_KEY` is required by the documentation and read by nothing
+**Confirmed 2026-08-01, reconciled from the fix log (filed 2026-07-23).**
+
+`CLAUDE.md:47` names it as one of the two keys the project needs and
+`.env.example:19` carries the slot, but no code reads the variable. `common.py`
+`session()` sets a User-Agent and nothing else and `get_json` sends no headers, so
+Stage D's fetch phase still meets Semantic Scholar's shared anonymous pool and its
+429 backoffs, which run past ten minutes. An operator who obtains a key, sets it
+and sees no change has nothing to tell them it was never sent.
+
+Filed here rather than as performance for the same reason as item 9: the
+documents that outrank the code are wrong about the code, and agents read them.
+The fix is either to send the header or to stop naming the key — both are
+minutes, and the second is `CLAUDE.md`, which is the owner's to change.
+Cost: $0.
+
 ---
 
-## P3 — small, and none of them is a live defect
+## P3 — none of these is a live defect
+
+Items 10 to 18 are also small. Items 22 to 26 are not all small: they are here
+because none of them can put a wrong claim in front of a reader, which is the
+only thing this list's order is about.
 
 10. **`--reground` does not catch partial disk corruption.** The all-failed
    refusal fires when nothing grounds; 6 of 12 files truncated flips 6 stamps
@@ -243,6 +319,41 @@ Cost: $0, an hour.
     signal, so it is an upper bound. Fix is a second pass or a rule reorder, then
     re-measure item 4.
 
+22. **The timeline's start is a property of arXiv, not of the idea, and nothing
+    says so where it shows.** A map begins in 2011 because arXiv's CS coverage
+    does; the lineage runs back through Bengio (2003), Latent Semantic Analysis
+    (1990) and distributed representations (1986), none of them on arXiv, and a
+    reader will read the top of a timeline as the beginning. This is placement,
+    not a missing disclosure: `/about` says "a term's pre-arXiv history is
+    invisible" and as-built section 11 says it too. What does not exist anywhere
+    is a marker at the horizon itself — grep for "horizon" across the tree
+    returns nothing. Fix: say at the top of the timeline that the story starts
+    here because the sources do.
+23. **A definition quote can be a sentence fragment.** Quotes sometimes end
+    mid-clause ("...such that the cosine similarity"), which reads as noise even
+    when it is genuinely verbatim. The Stage B prompt requires
+    character-for-character copying and forbids ellipses but never requires a
+    whole sentence, and the only check on arrival is `quote_is_grounded`, a
+    fold-and-substring test with no punctuation condition. It is not a false
+    claim — a fragment wearing the verified tick really is verbatim — which is
+    why it sits here. Fix: a prompt clause plus a terminal-punctuation check. It
+    needs a `PROMPT_VERSION` bump to reach the cached extractions, so it batches
+    with item 20.
+24. **Stages B and D call the model one paper at a time.** About 143 extractions
+    and about 305 classifications run sequentially, and most of a trace's
+    wall-clock is network wait; a pool of 8 would cut Stage B from roughly ten
+    minutes to one or two. Two things want care: `TRACE_SPEND_CAP_USD`, which
+    aborts cleanly mid-loop today and would overshoot slightly, and the API rate
+    limit. Not distribution — the bottleneck is waiting, not capacity, and rate
+    limits are per account. This is as-built section 11 item 1, which covered
+    Stage B only; that entry now points here.
+26. **No claim carries its corroboration count.** The residual of an overtaken
+    fix-log entry, see the closed list. 305 edge rows are roughly 85 distinct
+    meaning-pairs at about 3.6 citations each, and the strongest claim in the
+    `embedding` map — 37 citations carrying word vectors into image features —
+    is stated nowhere as one claim with 37 supports. An enhancement rather than
+    a defect, recorded so it is not rediscovered as one.
+
 ---
 
 ## Blocked on live data, not on effort
@@ -259,6 +370,25 @@ behind the parked spend. Full list and rationale: as-built section 11 item 12.
 - **Stage C's gate reached through a real re-cluster.** It has only ever been
   driven directly; `cluster()` needs sklearn and real vectors.
   (Done 2026-08-01, see the closed list.)
+- **The Operator's connection is declared but has never been verified, so the
+  role cannot start.** `LINEAGE_READ_URL` is set and names the `lineage_ro` role
+  on the right database. What nobody has confirmed is that the grants landed:
+  the setup SQL named a database that does not exist, so the `GRANT CONNECT`
+  errored and every statement after it applied to whichever database the editor
+  was connected to. The role may therefore hold nothing, or hold more than
+  SELECT. Unblocking is one short session and no code: connect as `lineage_ro`,
+  confirm the current database, user and privileges in one query, run a bounded
+  SELECT, then attempt one harmless write and require it to be refused. If that
+  write succeeds, the finding outranks whatever was being measured. Cost: $0.
+- **Whether this record stays public is undecided.** Swept 2026-08-01: no
+  credential has ever reached the remote — `.env` and `data/` have never been
+  tracked on any ref, and the connection strings in `.env.example` are
+  placeholders. What is public is the record itself: this backlog with every
+  confirmed defect, the as-built including section 10, and `CLAUDE.md`. That has
+  been true for the life of the repository. `.claude/memory/` was made private on
+  the reasoning that incident detail should not be readable by anyone, which is
+  either the right rule applied in one place or an inconsistency in two. Worth
+  deciding deliberately rather than by default; it is the owner's call.
 
 ## Parked by decision
 
@@ -270,6 +400,63 @@ behind the parked spend. Full list and rationale: as-built section 11 item 12.
 ---
 
 ## Closed recently, so it is not rediscovered
+
+- **The fix log is folded in and deleted (2026-08-01).** `docs/FIX-LOG.md` was
+  written on 2026-07-23, tracked, public, and linked from nothing. It carried
+  nine open items headed by "Edge evidence does not evidence the edge — severity:
+  highest, this undermines the product's core claim", and that item had been
+  fixed nine days earlier. All nine were checked against the code before it was
+  removed: two had shipped (below), six are items 20 to 26 here, one was
+  overtaken (below). Nothing in its "Fixed" table was unique — as-built incident
+  7 records the same first cloud run in more detail, and the two lists of "seven
+  deployment-only defects" do not name the same seven: the fix log omits the
+  invalid `ANTHROPIC_API_KEY` and as-built omits the transaction held across the
+  fetch. Eight distinct defects across two lists that each claim to hold seven is
+  the argument for one list. Deleted rather than kept behind a status header,
+  because a header is a weak control on a file nothing links to — anyone who
+  reaches it arrives by search or by browsing, which is the reader least likely
+  to read a header — and because a second standing record of open work is exactly
+  what the numbering rule at the top of this file exists to prevent. Deletion is
+  the recoverable direction: `git show 2e70a4c:docs/FIX-LOG.md`.
+
+- **Edge evidence did not evidence the edge (fix log item 1; verified shipped
+  2026-08-01).** The panel showed each paper's own definition quote, so neither
+  quote mentioned the other paper and the pairing read as meaningless while both
+  halves were accurate. Stage D was fetching the Semantic Scholar citation
+  context, passing it to the classifier and discarding it, on the grounds that it
+  cannot pass the verbatim string match. Shipped: migration
+  `010_edge_basis.sql:25` adds `citation_context` (and `rationale` beside it),
+  `stage_d_edges.py:242` stores what the classifier already saw, and
+  `evidence/page.tsx:292` renders it in `BasisCard` under "Verbatim · where the
+  later paper cites the earlier · per Semantic Scholar, not string-verified".
+  `snapshot_map.py` and `restore_snapshot.py` carry the column, so it survives a
+  restore. Two deviations from what was prescribed, both deliberate: the basis
+  renders above both definition quotes rather than between them, headed "What the
+  later paper did with the concept"; and the model's rationale is shown beside it
+  marked "the tool's reading", which the item did not ask for. The honesty
+  discipline it did ask for is there — neither may ever wear the verified stamp,
+  and migration 010's own comment says so.
+
+- **The export was built but not reachable (fix log item 7; verified shipped
+  2026-08-01).** `app/app/g/[id]/page.tsx:100` links Markdown and `:101` BibTeX,
+  served by `app/app/g/[id]/export/route.ts` with `?thread=` scoping. Note what
+  did *not* happen: `pipeline/export_related_work.py` is still not wired into the
+  app. What shipped is `app/lib/export.ts`, a parallel implementation mirroring
+  what the reader sees, and the CLI export stays because the pipeline is
+  CLI-first. That is a recorded decision, not drift — as-built line 816 and the
+  header comment of `export.ts` both say it — so it is not filed as an item.
+
+- **"The relationships section shows rows, not findings" was overtaken, not fixed
+  (fix log item 6; established 2026-08-01).** The complaint was that a reader
+  meets 305 rows. Since it was written the product grew a different front door:
+  Stages F, G and H, the influence map with a through-line and turning-point
+  rings, and threads read as accounts, while `/g/<id>/evidence` was retitled
+  "Evidence & workbench" and now tells the reader in its own copy that "the
+  readable account is the map". The row list is no longer anyone's first view, so
+  the finding's premise is gone rather than its fix delivered — a distinction
+  worth keeping, because the prescribed fix (group by meaning-pair, rank by
+  corroboration) was never built and the part of it that still has value is item
+  26.
 
 - **The extraction verdict warned about three papers in four, on a corpus whose
   quotes are 97% clean (2026-08-01).** **Before: 218 of 304 papers (72%) carried

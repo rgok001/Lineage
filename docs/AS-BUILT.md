@@ -1911,7 +1911,9 @@ Open engineering work, in priority order:
    and every paper is independent with a per-paper cache, so it parallelises
    cleanly. The two things wanting care are `TRACE_SPEND_CAP_USD`, which
    currently aborts cleanly mid-loop and would overshoot slightly, and the API
-   rate limit.
+   rate limit. **Tracked as backlog item 24 since 2026-08-01**, which adds Stage
+   D's ~305 classifications to the same finding; this entry is the description,
+   that item is the ticket.
 2. Extraction cost varies more than it should: `embedding` cost about a cent
    per paper on 2026-07-22 and `attention` about four cents on 2026-07-28, on
    the same model and prompt version, with attention getting *more* cache help.
