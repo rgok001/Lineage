@@ -1626,6 +1626,38 @@ The why behind the load-bearing choices, in one place:
     usage; the data that informs it is per-map cost and request volume, neither
     of which is recorded today.
 
+27. **A map belongs to whoever paid for it; the extractions underneath belong to
+    the platform** (Product Owner, 2026-08-02). Two layers with different owners,
+    and the split is the product's economics.
+    **The map is the buyer's.** Private by default, theirs to curate, with an
+    option to publish if they choose. That answers what "users can curate" means
+    in product rule 3 under the platform reading: the payer curates their own
+    map, and rule 3 stops being satisfied only when "users" means the owner.
+    **The extraction layer is the platform's, and is shared.** `definitions` is
+    keyed `UNIQUE (paper_id, concept, prompt_version)` with no genealogy
+    reference, so a paper read once for a concept is never read again for that
+    concept at that prompt version, whoever asks next. This is not a change; it
+    is how the schema has always worked, and it is now a deliberate commercial
+    property rather than an implementation detail: the platform pays to read a
+    paper once and can sell the reading many times.
+    **The saving is real and its size is unmeasured.** Only Stage B is cached.
+    Clustering, edge classification, magnitude, threads and claims all run per
+    map and are paid again every time. Per-stage cost is not recorded anywhere
+    (item 11 of section 11), so what fraction of a map's $1.47 to $1.92 the cache
+    actually avoids is unknown. Record per-stage spend before pricing anything on
+    this.
+    **The carve-out, which is not optional.** Sharing an extraction is safe
+    exactly when the paper is public anyway, which is true of arXiv and need not
+    be true of an uploaded corpus. An unpublished manuscript read once and cached
+    without an owner would surface in a stranger's map, attributed, by the same
+    mechanism that delivers the saving. So: **extractions from arXiv are shared;
+    extractions from user-supplied papers are owned by the uploader and never
+    enter another user's map.** The cache key gains a nullable owner, and a null
+    owner means public-source and shareable. Losing the saving on uploaded papers
+    is the correct trade, and the copyright position on storing extracted text
+    from papers a user supplies is a separate question this entry does not
+    settle.
+
 ## 10. Incidents and lessons
 
 Recorded because the system's shape is partly their consequence.

@@ -181,6 +181,44 @@ Needs its own design before any code: which sources, what each supplies as text,
 what the fallback is when only an abstract is available, and whether a map may
 mix sources or must declare one. Roughly a month once designed.
 
+### F8. A map has an owner, and can be private
+**Decision 27, 2026-08-02.** Whoever paid for a map owns it: private by default,
+theirs to curate, with an option to publish. Today there is no read
+authorisation of any kind — no visibility concept across fourteen migrations,
+and `isOwner` only decides what to render, never denies a read.
+
+The visibility column goes on `genealogies` and nowhere else, which is the clean
+line: the map is owned, the extractions underneath are shared. Enforcement has to
+reach every read path, and the one most likely to be missed is
+`app/app/g/[id]/export/route.ts`, which today takes an id from the URL and
+returns the map's quotes and bibliography with no check at all. Any read model
+bolted on above it is bypassed there.
+
+Also in scope, because they are the same boundary: `/api/traces` is
+unauthenticated and returns requester login, request note, sense gloss and raw
+pipeline stderr to anyone; and the request note and gloss are a statement of what
+someone is about to write about, which is not theirs to publish.
+
+Prerequisite: F4, since a map cannot have an owner before it has an identity
+separate from its concept name.
+
+### F9. Bring your own corpus
+**Decision 27, 2026-08-02.** Already on the public roadmap's considering list.
+The user supplies the papers rather than having them selected, which removes the
+corpus-selection step and, for anyone whose field does not preprint, is a faster
+route to usefulness than F7.
+
+**The carve-out from decision 27 is load-bearing here.** Extractions from arXiv
+are shared across users because those papers are public anyway. Extractions from
+uploaded papers are owned by the uploader and never enter another user's map,
+because the caching that makes the platform cheap would otherwise surface an
+unpublished manuscript in a stranger's map, attributed. The cache key gains a
+nullable owner; null means public-source and shareable.
+
+Two things to settle in its design: what happens when an uploaded paper is one
+the platform already holds from arXiv, and the copyright position on storing
+extracted text from papers a user supplies. Neither is settled here.
+
 ---
 
 ## Quality-of-life enhancements
@@ -269,13 +307,17 @@ two.
    no. Sources expand. Removed from `CLAUDE.md`'s OUT list, filed as F7, and
    sequenced after F2 so its effect on extraction quality is measurable rather
    than assumed.*
-3. **Is a stranger's map public by default?** Decides whether migration 015
-   carries a visibility column, and whether request notes and sense glosses are
-   ever readable by anyone but their author. Default if unanswered: public, with
-   the requester's identity and note never rendered.
+3. **Is a stranger's map public by default?** *Answered 2026-08-02: no. Whoever
+   paid owns it, private by default, with an option to publish — decision 27 and
+   F8. Request notes and sense glosses are the author's and are not published.*
 4. **Does product rule 3's "users can curate" apply to the requester, or only to
-   the owner?** On the platform the person who generated a map cannot touch it.
-   Rule 3 is currently satisfied only under a reading where "users" means "the
-   owner", and it is marked non-negotiable.
+   the owner?** *Answered 2026-08-02: the requester. The payer curates their own
+   map, so rule 3 is satisfied under the platform reading rather than only when
+   "users" means the owner — decision 27.*
+6. **How much does the shared extraction cache actually save?** Only Stage B is
+   cached; clustering, edges, magnitude, threads and claims are paid again per
+   map. Per-stage spend is recorded nowhere, so the fraction of a map's $1.47 to
+   $1.92 that the cache avoids is unknown. The platform's cost story rests on it,
+   and measuring it is free.
 5. **Is "about fifteen minutes" a promise or a description?** Measured runs are
    23.3 and 18.3. If a promise, Q1 moves into Phase 1.
