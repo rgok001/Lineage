@@ -314,10 +314,10 @@ two.
    the owner?** *Answered 2026-08-02: the requester. The payer curates their own
    map, so rule 3 is satisfied under the platform reading rather than only when
    "users" means the owner — decision 27.*
+5. **Is "about fifteen minutes" a promise or a description?** Measured runs are
+   23.3 and 18.3. If a promise, Q1 moves into Phase 1.
 6. **How much does the shared extraction cache actually save?** Only Stage B is
    cached; clustering, edges, magnitude, threads and claims are paid again per
    map. Per-stage spend is recorded nowhere, so the fraction of a map's $1.47 to
    $1.92 that the cache avoids is unknown. The platform's cost story rests on it,
    and measuring it is free.
-5. **Is "about fifteen minutes" a promise or a description?** Measured runs are
-   23.3 and 18.3. If a promise, Q1 moves into Phase 1.
