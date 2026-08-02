@@ -1,0 +1,37 @@
+#!/bin/sh
+# Resolve the record's claims against the code before the commit that would
+# otherwise carry the drift. Issue 54; the design is
+# docs/design/record-drift-check.md.
+#
+# The commit is the unit of record-keeping this project already declares:
+# CLAUDE.md requires the issue in the commit message, the Developer's prompt
+# requires the record updated in the same commit, and every drift instance so
+# far entered through one. The hook adds no rule; it enforces the written one at
+# the moment it applies.
+#
+# Bypassable with --no-verify, deliberately, and matching CLAUDE.md's own
+# principle that reaching production takes an act rather than an omission. A
+# bypass is visible in the reflog and nameable in review; forgetting is not.
+#
+# Runs from Git Bash on Windows and from any POSIX shell. `python` is not on
+# PATH on every machine here (see docs/RUNBOOK.md), so both spellings are tried
+# and a missing interpreter is reported rather than silently passing: a hook
+# that exits 0 because it could not run is the failure this check exists to
+# catch.
+set -e
+
+root=$(git rev-parse --show-toplevel) || exit 1
+
+if command -v python >/dev/null 2>&1; then
+    PY=python
+elif command -v python3 >/dev/null 2>&1; then
+    PY=python3
+elif command -v py >/dev/null 2>&1; then
+    PY=py
+else
+    echo "pre-commit: no python on PATH, so the record check did not run." >&2
+    echo "Install python, or commit with --no-verify and say so." >&2
+    exit 1
+fi
+
+exec "$PY" "$root/pipeline/check_record.py"

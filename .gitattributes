@@ -1,0 +1,4 @@
+# core.autocrlf is true on the development machine, so a checked-out hook would
+# carry CRLF and Git Bash would try to run `python\r`. Git runs hooks through sh
+# on Windows too, so the line endings have to be LF wherever this is cloned.
+.githooks/* text eol=lf

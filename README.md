@@ -16,6 +16,7 @@ papers. See [CLAUDE.md](CLAUDE.md) for the full spec, scope, and build order.
 - `pipeline/db/` — migrations + tiny migration runner.
 - `worker/` — the trace worker: claims approved requests and runs the stages.
 - `app/` — Next.js front end + API. Vercel deploys from here.
+- `.githooks/` — the pre-commit record check. Enabled per clone, see Setup.
 - `docker-compose.yml` — optional local Postgres 16 + pgvector fallback.
 
 ## Setup
@@ -35,6 +36,9 @@ python pipeline/db/migrate.py
 
 # 3. App
 cd app && npm install && npm run dev
+
+# 4. Record check on commit (once per clone; git does not clone hooks)
+git config core.hooksPath .githooks
 ```
 
 ## Pipeline CLI
@@ -137,6 +141,41 @@ takes it from the environment itself. A worker missing `VOYAGE_API_KEY` boots
 and looks healthy, then fails every trace at corpus selection. Pushes to master
 auto-deploy the worker; the rest of the procedure is
 [docs/RUNBOOK.md](docs/RUNBOOK.md).
+
+## Record check
+
+The documents in `docs/` describe code that moves underneath them, and until
+2026-08-02 nothing checked that they still matched it. This resolves the record's
+claims against the code and fails when they disagree. No model, no network, no
+database, no cost.
+
+```sh
+python pipeline/check_record.py            # what the pre-commit hook runs
+python pipeline/check_record.py --all      # also fail on .claude/memory/, for
+                                           # the Manager and the Tester
+python pipeline/check_record.py --counts   # resolution counts, exit 0
+```
+
+It runs in both directions. Documents to code: a backticked
+`` `IDENT = literal` `` in a `law` or `derived` file must match what the code
+assigns, a `path:NNN` citation must carry a commit-ish, and every record file
+must declare its class. Code to documents: every `pipeline/*.py`, every
+migration number and every stage the worker runs must be named by a tracked
+`derived` document. That second direction is what catches the code growing
+something no document noticed.
+
+`git config core.hooksPath .githooks` installs it as a pre-commit hook. It is
+bypassable with `--no-verify`, deliberately: a bypass is an act, visible in the
+reflog and nameable in review, and forgetting is neither. Findings in
+`.claude/memory/` are warnings, because that directory is gitignored and cannot
+be in a commit; blocking a commit on it would only teach people to bypass.
+
+**A run that resolves zero claims fails**, naming the check that resolved
+nothing. A restructure that breaks the claim parser would otherwise leave every
+check green over an empty set. There is no threshold anywhere in it, and adding
+one is the change to argue about rather than make: every check is exact equality
+or existence, and the reasoning is in issue 54's design and in the file's own
+comments.
 
 ## Extraction audit
 

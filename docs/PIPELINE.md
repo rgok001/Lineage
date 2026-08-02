@@ -226,10 +226,16 @@ Three changes, none of which alters a verdict:
   not a convenience: without it, demoting a paper's last signal would return
   `clean` for a paper whose archive was never read, which is decision 23's
   failure reappearing in a preview.
-- **`PROPOSED_NOTE_SIGNALS = frozenset({"gaps", "package_macros"})`**, a module
-  constant. One hypothesis, hardcoded and reviewable, rather than a config file
-  or a `--what-if` taking arbitrary thresholds, neither of which leaves a record
-  of what was proposed on the day the measurement was taken.
+- **`PROPOSED_NOTE_SIGNALS: frozenset[str] = frozenset()`**, a module constant
+  and not a flag. One hypothesis at a time, hardcoded and reviewable, rather
+  than a config file or a `--what-if` taking arbitrary thresholds, neither of
+  which leaves a record of what was proposed on the day the measurement was
+  taken. It is empty because the hypothesis it carried shipped the same day as
+  `NOTE_SIGNALS = frozenset({"gaps", "package_macros"})` (decision 25), and
+  nothing is on trial behind it now. With nothing named,
+  `--compare-verdicts` prints the identity matrix and says there is no
+  proposal, rather than a diagonal that reads like a finding; to preview a
+  demotion, name the signals here first.
 
 `--compare-verdicts` prints two tables and writes nothing. The cross-tab is
 today's verdict against the proposal's, per source format, with the count of
@@ -338,15 +344,24 @@ single-concept research use and wrong for the worker (section 10, incident 3).
 **Stage C: clustering** (`stage_c_cluster.py <concept>`).
 Embeds definitions via the Voyage hosted API (1024-dim, cached in
 `definitions.embedding`), then agglomerative clustering with cosine distance
-and no fixed k. `DEFAULT_THRESHOLD = 0.16` was calibrated on bge-large
-distances back when embeddings were local, so it may want re-tuning for Voyage
-vectors; clustering granularity is a curatable draft either way. `--embed-only` fills missing vectors and stops before clustering: Stage C writes `nodes` wholesale on conflict, so a re-run costs a curated map its labels and merges. It is the second step of the repair path after `stage_b_extract.py --refresh`, and the reason that path does not simply re-run the pipeline.
-The original calibration:
-the soft-alignment and self-attention cores sit ~0.16 apart, and a bridge pair
-(Show-Attend-Tell / Transformer) is 0.161, so 0.19 would merge the two senses
-the product exists to distinguish. 0.16 over-splits weak singletons on
-purpose: merge is a one-click curatorial act, un-merge is not. Stage C output
-is a draft for curation, not a result. Claude labels each cluster (pennies).
+and no fixed k. `DEFAULT_THRESHOLD = 0.28`, recalibrated for Voyage vectors on
+the 134-definition `embedding` corpus; clustering granularity is a curatable
+draft either way. `--embed-only` fills missing vectors and stops before clustering: Stage C writes `nodes` wholesale on conflict, so a re-run costs a curated map its labels and merges. It is the second step of the repair path after `stage_b_extract.py --refresh`, and the reason that path does not simply re-run the pipeline.
+The calibration it runs at, measured on that corpus: Voyage pairwise distances
+sit at p5 0.205, p25 0.273, median 0.318, and the cluster count falls 41 at
+0.25, 27 at 0.28, 20 at 0.30, 8 at 0.35. 0.28 is the loosest value that still
+keeps the word, graph, recommender, knowledge-graph, latent-code and
+kernel-mean senses on separate nodes: 0.30 merges graph-embedding with
+recommender-embedding, and 0.35 collapses 124 of the 134 into one cluster. It
+over-splits weak singletons on purpose: merge is a one-click curatorial act,
+un-merge is not. Stage C output is a draft for curation, not a result. Claude
+labels each cluster (pennies).
+Absolute distances are model-specific, which is why the number moved and the
+method did not. The previous 0.16 was tuned for bge-large when embeddings ran
+locally; against Voyage it sits at the 1st percentile of the pairwise
+distribution and almost nothing merges (105 clusters, 87 of them singletons).
+Decision 29 corrects decision 5, which still records the old number as a claim
+about its own moment.
 **Stage C no longer clears the map's edges unconditionally** (decision 20). Per
 edge endpoint, it compares what each node id denoted before against what it
 denotes now, and removes only the edges whose concept-states have changed

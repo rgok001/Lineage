@@ -493,7 +493,24 @@ semantically they should be 403, accepted as open polish.
 Money controls, layered: owner approval before any run; per-user request
 quotas; `TRACE_SPEND_CAP_USD` aborts a stage mid-run; Stage B `--corpus`
 scoping prevents cross-corpus billing; and an account-level cap at
-console.anthropic.com (owner action, recommended, not yet confirmed set).
+console.anthropic.com (owner action, recommended, **attestation pending**).
+
+That last one is an **attested claim**, and this file is its one home. It is a
+setting in a vendor console, so nothing in this repository can settle it and
+`RECOMPUTED BY:` above can never fire for it: there is no commit that changes
+it. The form is a marker written on the line itself,
+`console.anthropic.com (attested: owner, YYYY-MM-DD)`, <!-- record-check: the form, not an attestation --> which
+`pipeline/check_record.py` parses and prints the age of. It never fails on age,
+because there is no corpus of attested facts here to measure decay against and
+a number would be guessed.
+
+It is pending rather than written because the record disagrees with itself and
+neither an agent nor this repository can break the tie: the shipped list in
+`docs/DECISIONS.md` records the cap as confirmed set on the day it was written,
+and this section has said the opposite since. Both are honest, one is stale, and
+only somebody who opens the console can say which. When the owner looks, the
+attestation is written here and the other copy stays what it always was, a dated
+claim about its own moment.
 
 Secrets: never committed. Root `.env` and `app/.env.local` are gitignored;
 Vercel and Render hold their own copies (`sync: false` in render.yaml means

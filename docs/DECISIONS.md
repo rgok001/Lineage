@@ -336,7 +336,7 @@ The why behind the load-bearing choices, in one place:
     and none reads the variable directly, so one branch closes all twenty call
     sites; that was verified by enumerating them.
     **It does not cover the Node side, and the first draft of this entry said it
-    covered everything.** `app/lib/db.ts:13` passes `process.env.DATABASE_URL`
+    covered everything.** `app/lib/db.ts:13 @ 5177253` passes `process.env.DATABASE_URL`
     straight to `neon()`, so `npm run dev` connects regardless of this flag.
     `app/scripts/check-db.mjs`, `check-auth-env.mjs` and `security-test.mjs` do
     not read the environment at all: each regexes `DATABASE_URL` out of
@@ -609,6 +609,23 @@ The why behind the load-bearing choices, in one place:
     attributed `cond-mat/0308217` to a psychologist rather than M.E.J. Newman.
     A wrong key silently yields the *wrong* authors, which is worse than none,
     so papers whose authors stay unknown are omitted from BibTeX, never guessed.
+
+29. **The clustering threshold is 0.28, and this corrects decision 5**
+    (2026-08-02, item `[B9]`, issue 12). Decision 5 recorded 0.16 and stays as
+    written: it is a true claim about the day embeddings ran locally on
+    bge-large. The move to the Voyage hosted API (decision 13) invalidated the
+    number without touching the reasoning, because a cosine distance is only
+    meaningful against the model that produced it. Recalibrated on the
+    134-definition `embedding` corpus, 0.16 sits at the 1st percentile of
+    Voyage's pairwise distances and merges almost nothing (105 clusters, 87 of
+    them singletons); 0.28 is the loosest value that still holds the distinct
+    senses apart. The measurements are in `docs/PIPELINE.md` section 4 under
+    Stage C, which is where a number a code change can invalidate belongs.
+    **The entry exists because the recalibration shipped without one.**
+    `stage_c_cluster.py` has said 0.28 since commit `23c4512` on 2026-07-23;
+    the record went on saying 0.16 for the ten days until this commit, and two
+    documents agreeing with each other is exactly what let it. That gap is what
+    `pipeline/check_record.py` now closes on commit (issue 54).
 
 ## Shipped since the first draft
 
