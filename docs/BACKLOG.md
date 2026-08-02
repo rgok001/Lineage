@@ -1,5 +1,35 @@
 # Backlog
 
+## What this product is for
+
+**The need.** Someone writing a literature review needs to know how a concept
+actually developed: which papers moved it, and what each one changed. A search
+returns a pile of papers ranked by relevance, not the shape of the idea. Asking a
+language model returns a fluent paragraph nobody can check, occasionally citing
+work that does not exist. The only reliable method is to reconstruct it by hand
+from the papers, which takes weeks, and every researcher who needs it does it
+again from scratch.
+
+**What Lineage does about it.** It reads the literature around a term and lays
+out the lines of work the idea split into, in order, with a verbatim quote from
+the source behind each claim. The reconstruction is the product; the checking is
+what makes it worth having. A reader who doubts a claim can verify it in seconds
+rather than taking it on trust.
+
+**What is guaranteed and what is not.** A quote carrying the verified stamp is
+string-matched against that paper's own extracted text. That is mechanical and it
+holds. The shape — which papers cluster together, which relationships exist and
+in which direction, which papers matter most — is the tool's reading, and is
+labelled as such wherever it appears. See `docs/ROADMAP.md` for why that
+distinction governs what gets built next.
+
+**Who it is for, and what it is not.** The product is the generator, not a
+curated collection: it provides the capability to make a map, and does not claim
+expertise in any field a map covers. It reads arXiv only, so it is useful for
+machine learning and adjacent preprint fields and not yet for anything else.
+
+---
+
 Everything known and not yet done, in the order it is worth doing. Last
 reviewed 2026-08-01, when item 1 closed: it was split into two tickets because as
 it stood it named one of two causes and prescribed a fix that lands at 63%, then
