@@ -1598,6 +1598,34 @@ The why behind the load-bearing choices, in one place:
 
 ---
 
+26. **The owner pays for a trace, until the product earns organic usage**
+    (Product Owner, 2026-08-02). Requester billing is deferred, not rejected:
+    "I would pay for the trace, until we have a generator and product which is
+    feature rich enough to generate usage organically, then users will need to
+    pay." So there is one payer and one Anthropic balance, and every map a
+    stranger asks for is spent from it.
+    That makes three existing items load-bearing rather than merely correct.
+    **The spend cap must bound a run, not a stage** (backlog item 2 and the
+     flag): today it covers Stage B and Stage D only, is read fresh
+    per stage so it resets rather than accumulating, and F, G and H compute
+    spend and check nothing. ** must actually be written**
+    (it is  on both maps; the real figure sits in
+    ), because it is the instrument that says when the
+    trigger condition has been met. **And the non-owner quota must be
+    enforceable**, since count-then-insert with no constraint behind it is the
+    only thing between a stranger and the balance.
+    Measured inputs: a map costs $1.47 and $1.92, but per-paper extraction cost
+    varied four-fold between those two runs for reasons nobody has measured, so
+    budget $4 until it is explained. A hundred stranger-generated maps is $170
+    to $400.
+    **Nothing here precludes requester-pays and no part of it should.** Per-run
+    spend attribution is the foundation either way, so answering "the owner"
+    now costs nothing and answering "the requester" later costs no rework.
+    Building payments before the trigger fires would be scaffolding for later,
+    which this project does not do. The trigger is a judgement about organic
+    usage; the data that informs it is per-map cost and request volume, neither
+    of which is recorded today.
+
 ## 10. Incidents and lessons
 
 Recorded because the system's shape is partly their consequence.
