@@ -91,6 +91,14 @@ python pipeline/recheck_stamp.py --concept "attention" --edges
 Expect **every** stamp reported stale, reason "no digest recorded". A single
 stamp reporting verified means something wrote a digest it could not know.
 
+**The order of the two steps below is load-bearing, and running them backwards is
+now detected rather than assumed against.** A re-ground before the papers
+backfill writes stamps that agree with the files on disk while
+`papers.extracted_text_digest` is still NULL, so every page renders them stale
+and `recheck_stamp.py` would once have reported them verified and exited 0. It
+now names that disagreement and exits non-zero (issue #66). If you see it, run
+step 1 and re-run step 2; nothing is damaged, but nothing is published either.
+
 1. **Live-data step 1, the papers backfill.** `papers.extracted_text_digest` must
    be populated for the ~300 papers already extracted. This is `extract_text.py`
    with **no** `--force`: every paper is skipped as already extracted, and the

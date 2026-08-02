@@ -361,7 +361,7 @@ verbatim, plus section and novelty claims (structured output via
 when not. A spend cap (`TRACE_SPEND_CAP_USD`) aborts cleanly mid-run.
 `--refresh` re-extracts papers that already have a row, UPDATEing in place: `genealogies.nodes` holds definition_ids, so a delete-and-reinsert would mint new ids and orphan the curated node membership on every map built from that concept. It nulls the embedding, because the text it encodes has changed and stale is worse than absent: absent is visible to the re-embed step, stale is visible to nothing. Scope it with `--only <arxiv ids>`, which is what an audit hands you.
 `--reground` is the free half of that repair: it re-checks the quotes already stored against the extracted text as it is now and rewrites the stamp alone, leaving the quote, the embedding and everything else untouched. It calls the same matcher Stage E calls, makes no model call and needs no API key, prints the verified count before and after, and reports separately the definitions it could not check because the paper's text is not on this disk. The worker runs it immediately before Stage E on every trace, so a definition's stamp is never older than the text it describes (decision 18).
-Since migration 015 the stamp is `quote_verified` plus four columns — the matched span, the digest of the bytes the match read, and the extractor version of that text — so **a row is rewritten whenever anything about the stamp moved, not only when the verdict flipped**. A row whose match was never attempted, because the paper does not define the concept or the quote is empty, is written with all four NULL rather than with a real digest: a digest is the assertion "a check ran against these bytes", and writing one from the branch that skipped the check made the row resolve to `inferred`, whose published meaning is "could not be string-matched" (issue #62). NULL renders stale, which is what an unattempted check is, and it matches what the creation path in the same file already writes. The old behaviour skipped a row whose boolean did not move, which after 015 would leave a re-checked stamp with a NULL digest, still rendering stale after the very run that re-checked it. The printed narrative still names only the definitions whose verdict moved, because on the first run after 015 every checkable row is rewritten and one line each would drown the ones that matter; the count of rewritten stamps is printed separately. Every existing guard is untouched: the missing, empty and unreadable branches still leave the stamp exactly as it was and count loudly (those rows keep a NULL or old digest, so they render stale rather than lying), the `checked > 1 and grounded == 0` refusal stands, and the writes are still one transaction.
+Since migration 015 the stamp is `quote_verified` plus four columns — the matched span, the digest of the bytes the match read, and the extractor version of that text — so **a row is rewritten whenever anything about the stamp moved, not only when the verdict flipped**. A row whose match was never attempted, because the paper does not define the concept or the quote is empty, is written with all four NULL rather than with a real digest: a digest is the assertion "a check ran against these bytes", and writing one from the branch that skipped the check made the row resolve to `inferred`, whose published meaning is "could not be string-matched" (issue #62). NULL renders stale, which is what an unattempted check is, and it matches what the creation path in the same file already writes. The "has anything moved?" test is derived from the values about to be written rather than spelled out beside them (issue #64): written twice, the two drifted the moment the write learned about unattempted rows, and the result was a row in the correct state rewritten on every run forever while a row carrying a wrong digest was judged unchanged and so could never be repaired by the only thing that repairs it. The old behaviour skipped a row whose boolean did not move, which after 015 would leave a re-checked stamp with a NULL digest, still rendering stale after the very run that re-checked it. The printed narrative still names only the definitions whose verdict moved, because on the first run after 015 every checkable row is rewritten and one line each would drown the ones that matter; the count of rewritten stamps is printed separately. Every existing guard is untouched: the missing, empty and unreadable branches still leave the stamp exactly as it was and count loudly (those rows keep a NULL or old digest, so they render stale rather than lying), the `checked > 1 and grounded == 0` refusal stands, and the writes are still one transaction.
 `--corpus` scopes extraction to one trace's papers; without it the query takes
 every extracted paper in the shared papers table, which is correct for
 single-concept research use and wrong for the worker (section 10, incident 3).
@@ -464,7 +464,8 @@ digest and span inviting a third party to trust them, with every one of the
 re-checker's comparisons satisfied by the empty match. A verbatim quote carrying
 no characters of the paper is not evidence (CLAUDE.md rule 1), so the matcher
 answers None. This is the one input on which the matcher deliberately does not
-reproduce the old boolean, and it claims less rather than more.
+reproduce the old boolean, and it claims less rather than more. It reaches Stage
+B, Stage E and Stage H together, because all three call the one matcher.
 Since migration 015 Stage E writes eight more columns per edge — span, text
 digest and extractor version for each side — and three things change with them.
 **"Could not check" stops being written as "inferred":** a NULL or unreadable
@@ -493,9 +494,19 @@ printed "Nothing was written and every stamp stands as it was". That was not onl
 a false sentence: the re-sync rewrites the edge quotes and deliberately touches
 none of the stamp columns, so a refused run left a new quote beside the old span,
 the old digest and the old `verified`, which the page then resolved to
-**verified**. The refusal now rolls all of it back and the sentence is true. The
-JSON export is written inside the transaction, before the commit, so a run that
-fails to commit cannot leave a map without its documented backup.
+**verified**. The refusal now rolls all of it back and the sentence is true.
+**The export and the success report follow the commit** (issue #65). The
+assembled JSON is written inside the transaction to a sibling `.tmp` path, so a
+commit still cannot land without the export having been written successfully, and
+only the atomic `os.replace` and the summary prose happen after the commit
+returns. Putting the real file and the "Genealogy complete" line inside the
+transaction meant a failing `COMMIT` destroyed
+`data/genealogy_<concept>_<pv>.json` — the de-facto backup (incident 4) —
+replacing it with a description of a map the database does not hold, and printed
+a full success report for a run that wrote nothing. **A backup must never
+describe a state the database did not reach.** A crash between commit and rename
+leaves a committed map, the previous backup and a `.tmp` file, which is the one
+residue worth having.
 **And the assembled JSON gains `stamp` per edge** (the resolved three-state
 value, computed against each paper's own stored digest, so the JSON and the page
 agree by construction). `verified` stays on every edge, so
@@ -574,9 +585,17 @@ the design's own falsifier 12 — corrupt one character, re-run — print the
 disk/database disagreement as a note and then exit 0 under "Every stamp examined
 re-checks out". Each stamp is counted exactly once, after all four of its checks,
 so a stamp can no longer be reported verified in the same breath as having its
-span declared wrong. It reports verified / inferred / stale / span-mismatch /
-unreadable / file-moved, exits non-zero on any span mismatch, on any file the
-database describes wrongly, and on the global check (more than one stamp examined
+span declared wrong. **It reports both verdicts where they differ** (issue #66):
+its own, against the bytes on disk, and the reader's, against
+`papers.extracted_text_digest`. Resolving only against the disk answers a truer
+question than the product asks and then reports it as though it were the site's,
+so with a NULL paper digest — the state left by running live-data step 2 before
+step 1 — it said "every stamp re-checks out" over a corpus every page renders
+stale. A disagreement is a finding and fails the run, and the message names the
+ordering mistake that usually causes it. It reports verified / inferred / stale /
+span-mismatch / unreadable / file-moved / page-differs, exits non-zero on any
+span mismatch, on any file the database describes wrongly, on any stamp a reader
+is not shown the same way, and on the global check (more than one stamp examined
 and not one file readable), and it does not re-anchor, repair or write. Ever.
 
 **Stage F: magnitude** (`stage_f_magnitude.py <concept> [--prompt-version PV]`).
@@ -625,6 +644,16 @@ be regenerable without disturbing a shape a curator has judged. It is the second
 most expensive stage after extraction and roughly doubles what a map costs,
 which buys the difference between an account a reader must trust paragraph by
 paragraph and one they can audit sentence by sentence.
+**Stage H inherits the empty-fold rule** (issue #57), because it calls the same
+`quote_is_grounded` every other stage calls, and that is the point of there being
+one matcher. A claim whose passage is only citation marks or whitespace used to
+check out, since the empty string is a substring of everything; it now does not,
+at generation and on `--recheck` alike. The direction is safe on this page
+specifically: the thread page renders a claim's quote only when `verified` is
+true, so such a claim loses its stamp and its quote and keeps its text, which is
+exactly what the stage already does with a passage that fails. Claim-level stamps
+are still not re-checkable from stored data — they are the third stamp population
+and migration 015 does not cover them (open question 2 in the design).
 `--recheck` re-grounds the stored quotes without asking the model for new ones,
 and costs nothing. A stamp is computed once, at generation, against the text of
 that moment: re-extracting a corpus leaves every stamp on the map asserting a

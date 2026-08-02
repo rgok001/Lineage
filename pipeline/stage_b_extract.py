@@ -367,10 +367,21 @@ def reground(conn, concept: str, prompt_version: str, params: dict,
                  "quote_end": span[1] if span else None,
                  "quote_text_digest": digest if attempted else None,
                  "quote_extractor_version": paper_ever if attempted else None}
-        unchanged = (ok == was and had_start == after["quote_start"]
-                     and had_end == after["quote_end"]
-                     and had_digest == digest and had_ever == paper_ever)
-        if unchanged:
+        # The "has anything moved?" test is derived from `after` rather than
+        # written beside it (issue #64). Spelling the comparison out a second time
+        # let the two drift the moment the write learned about `attempted`: the
+        # predicate went on asking about the raw `digest`, so a row already in the
+        # correct all-NULL state was rewritten on every run forever, and a row
+        # still carrying a digest written before that fix was judged unchanged and
+        # so could never be repaired by the only thing that repairs it. Comparing
+        # against the dict that is about to be written makes both impossible.
+        # `stored`, not `before`: `before` is the verified count this function
+        # reports at the end, and shadowing it here made the summary arithmetic
+        # subtract an int from a dict on every run that reached this line.
+        stored = {"quote_start": had_start, "quote_end": had_end,
+                  "quote_text_digest": had_digest,
+                  "quote_extractor_version": had_ever}
+        if ok == was and stored == after:
             print(f"  [{i}/{total}] {arxiv}: still {stamp}", flush=True)
             continue
 

@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -131,21 +132,45 @@ def main() -> None:
     # first was the alternative and is worse: the set of paths that matters is
     # only known after the sweep has removed the orphans, so the probe would
     # answer for a different set of edges than the one being published.
+    # ── and the announcement follows the commit, never predicts it ────────────
+    #
+    # Issue #65. The first version of this transaction swallowed the JSON export
+    # and the whole success summary, which had previously run after the writes
+    # were durable. A COMMIT that fails — a dropped connection, a serialization
+    # failure, a full server disk — then left the operator having read
+    # "Genealogy complete: N edges" for a run that wrote nothing, and, worse, left
+    # `data/genealogy_<concept>_<pv>.json` overwritten with a description of a map
+    # the database does not hold. That file is the de-facto backup (incident 4),
+    # so the failure destroyed the copy of the map as it was at the moment it was
+    # most needed.
+    #
+    # The content is still produced inside the transaction, to a sibling temp
+    # path, so a commit still cannot land without the export having been written
+    # successfully. Only the atomic rename and the success prose happen after the
+    # commit returns. A crash between the two leaves a committed map, the previous
+    # backup intact and a `.tmp` file, which is the one residue worth having:
+    # **a backup must never describe a state the database did not reach.**
+    result = None
     try:
         with conn.transaction():
-            _ground(conn, args, gen_id, nodes, prompt_version)
+            result = _ground(conn, args, gen_id, nodes, prompt_version)
+    except BaseException:
+        if result is not None:
+            result["tmp"].unlink(missing_ok=True)
+        raise
     finally:
         conn.close()
 
+    os.replace(result["tmp"], result["out"])
+    _report(result)
 
-def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> None:
+
+def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
     """Everything this stage writes, inside the caller's transaction.
 
-    The JSON export is written from here too, after the refusal has passed but
-    before the commit. That ordering is deliberate and it is the safe one: a file
-    written for a run that then fails to commit is a file describing a map that
-    did not change, which a re-run overwrites; a commit with no file is a map
-    whose documented backup is missing (incident 4).
+    Returns what the caller needs to publish the export and narrate the run once
+    the commit has actually landed. Nothing in here prints a success line and
+    nothing in here puts a file where a reader will find it.
     """
     sweep_orphan_edges(conn, gen_id, nodes)
 
@@ -366,25 +391,38 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> None:
     }
     out = Path(args.json) if args.json else data_dir() / f"genealogy_{args.concept}_{prompt_version}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(genealogy, indent=2), encoding="utf-8")
+    # A sibling of the real path, so the rename after the commit is atomic: on
+    # every platform os.replace is only atomic within one filesystem.
+    tmp = out.with_name(out.name + ".tmp")
+    tmp.write_text(json.dumps(genealogy, indent=2), encoding="utf-8")
 
-    print(f"\nGenealogy complete: {len(nodes)} concept-states, {len(edges)} edges "
-          f"({shown_verified} solid/verified, {shown_inferred} dotted/inferred, "
-          f"{stale_count} stale).")
-    if verified_count != shown_verified:
-        print(f"  ({verified_count} edges have both quotes matching the text this run "
-              f"read; {verified_count - shown_verified} of them cannot be shown as "
+    return {"out": out, "tmp": tmp, "nodes": len(nodes), "edges": len(edges),
+            "verified": shown_verified, "inferred": shown_inferred,
+            "stale": stale_count, "matched": verified_count}
+
+
+def _report(r: dict) -> None:
+    """The success narrative, after the commit has landed and the export is in
+    place. Every sentence here is in the past tense about something that is now
+    durable; a line printed before the commit is a prediction (issue #65, and
+    issue #21 in `workbench.py` before it)."""
+    print(f"\nGenealogy complete: {r['nodes']} concept-states, {r['edges']} edges "
+          f"({r['verified']} solid/verified, {r['inferred']} dotted/inferred, "
+          f"{r['stale']} stale).")
+    if r["matched"] != r["verified"]:
+        print(f"  ({r['matched']} edges have both quotes matching the text this run "
+              f"read; {r['matched'] - r['verified']} of them cannot be shown as "
               f"verified because that text is not what papers.extracted_text_digest "
               f"describes.)")
-    if stale_count:
-        print(f"  {stale_count} of them render STALE rather than as either: their stamp "
+    if r["stale"]:
+        print(f"  {r['stale']} of them render STALE rather than as either: their stamp "
               f"names bytes\n  that are not the bytes papers.extracted_text_digest now "
               f"describes, or no digest\n  was recorded at all. A stale stamp is not a "
               f"failed check, it is an unrepeated one.")
         print("  If this is the first run after migration 015, run "
               "extract_text.py (no --force) first:\n"
               "  the papers have no current digest to compare against yet.")
-    print(f"Assembled JSON -> {out}")
+    print(f"Assembled JSON -> {r['out']}")
 
 
 if __name__ == "__main__":

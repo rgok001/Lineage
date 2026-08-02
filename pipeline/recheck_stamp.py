@@ -80,6 +80,7 @@ class Tally:
         self.span_mismatch = 0
         self.unreadable = 0
         self.file_moved = 0
+        self.render_disagrees = 0
         self.files_read = 0
 
 
@@ -158,6 +159,34 @@ def check_one(label: str, quote: str | None, verified: object,
     if state == STAMP_STALE:
         why = ("no digest recorded" if not stamp_digest
                else "the stamp names bytes this file does not have")
+
+    # 2b. And the same three lines given the digest the READER's page compares
+    #     against, which is the database's. Issue #66: resolving only against the
+    #     disk answers a truer question than the product asks, and then reports
+    #     the answer to a question nobody asked as though it were the site's. With
+    #     papers.extracted_text_digest NULL — the state left by running the
+    #     runbook's live-data step 2 before step 1 — the file agrees with the
+    #     stamp, so this tool said "verified, everything re-checks out" over a
+    #     corpus every page was rendering stale.
+    #
+    #     Both are reported, and a disagreement is a finding. The tool holds both
+    #     digests and is the only thing that does; saying which of the two answers
+    #     it is giving costs one line and is the difference between an instrument
+    #     and an opinion.
+    render_state = stamp_state(verified, stamp_digest, paper_digest)
+    if render_state != state:
+        tally.render_disagrees += 1
+        findings.append("render disagrees")
+        print(f"  {label}: THE PAGE AND THE FILE DISAGREE ABOUT THIS STAMP")
+        print(f"      against the bytes on disk:  {state}")
+        print(f"      against papers.extracted_text_digest (what every reader "
+              f"sees): {render_state}")
+        if not paper_digest:
+            print("      the paper has no recorded digest at all, so every surface "
+                  "renders this stale.")
+            print("      Run `python pipeline/extract_text.py` (no --force) — that "
+                  "is live-data step 1,")
+            print("      and it is meant to run BEFORE the re-ground.")
 
     # 3. The stored span, sliced out of the file and folded against the quote.
     #    This does NOT confirm the boolean — the same matcher put the span there,
@@ -272,6 +301,11 @@ def main() -> None:
     print(f"  file moved    {tally.file_moved}   (disk and database disagree about "
           f"the bytes)")
     print(f"  span mismatch {tally.span_mismatch}")
+    print(f"  page differs  {tally.render_disagrees}   (this tool's verdict against "
+          f"the file is not what a reader is shown)")
+    print("\nThe verdicts above are resolved against the bytes on this disk. A "
+          "reader's page resolves against\npapers.extracted_text_digest, and where "
+          "the two differ the line above says so per stamp.")
 
     # The global check, in the shape Stage B's --reground and Stage E carry: a
     # per-stamp tolerance that survives one missing file is exactly what makes a
@@ -302,9 +336,28 @@ def main() -> None:
             f"bytes that are actually there, then\n"
             f"  re-ground the affected maps. Nothing was written; this tool does "
             f"not repair.")
+    # A corpus every reader sees as stale must never leave this tool under a clean
+    # exit (issue #66). The tool's answer may be the truer one — the stamp really
+    # is about the bytes on disk — but its audience is somebody deciding whether
+    # the published map is honest, and "every stamp re-checks out" over pages that
+    # all say "not re-checked" is a sentence that will be believed.
+    if tally.render_disagrees:
+        sys.exit(
+            f"\n{tally.render_disagrees} stamp(s) re-check against the file but are "
+            f"NOT what a reader is shown.\n"
+            f"  This tool resolves against the bytes on disk; every page resolves "
+            f"against papers.extracted_text_digest.\n"
+            f"  Where those disagree the site is the one the public sees, so the "
+            f"map is not yet saying what this\n"
+            f"  tool has just proved. The usual cause is the two live-data steps "
+            f"run in the wrong order: the papers\n"
+            f"  backfill (`python pipeline/extract_text.py`, no --force) comes "
+            f"before the re-ground, not after.\n"
+            f"  Nothing was written; this tool does not repair.")
     if not clean:
         sys.exit("\nFindings above.")
-    print("\nEvery stamp examined re-checks out.")
+    print("\nEvery stamp examined re-checks out, and every one of them re-checks "
+          "out the same way a reader's page resolves it.")
 
 
 if __name__ == "__main__":

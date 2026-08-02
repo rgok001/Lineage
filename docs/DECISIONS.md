@@ -678,6 +678,19 @@ The why behind the load-bearing choices, in one place:
     ("`<cit.>`", whitespace) is no longer grounded at all: the empty string is a
     substring of everything, so that check could only ever agree with itself, and
     a quote carrying no characters of the paper is not evidence.
+    **Three of those repairs then had to be repaired** (issues 64 to 66, same
+    day), and the pattern in all three is a fix that moved a value without moving
+    everything downstream of it. The re-ground's "has anything moved?" test was
+    written beside the values it tests rather than derived from them, so it went
+    on asking about the pre-fix expression. Stage E's new transaction swallowed
+    the JSON export and the success report, which had been after the writes were
+    durable, so a failing `COMMIT` destroyed the backup and announced a success:
+    **a backup must never describe a state the database did not reach**, so the
+    content is written to a temp path inside the transaction and renamed after it.
+    And `recheck_stamp.py`, having been moved from the database's digest to the
+    disk's, then answered only the disk's question, which is truer than the
+    product's and is not the product's: it now reports both and treats a
+    disagreement as a finding.
 
 ## Shipped since the first draft
 
