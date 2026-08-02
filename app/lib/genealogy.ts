@@ -411,7 +411,14 @@ export const EDGE_MEANING: Record<string, string> = {
  *  `stampOf`'s first line; if that line ever moves it moves here and in
  *  `pipeline/common.py` too. The home page said "287 verified quotes" about
  *  stamps nobody could re-check, which is the sentence migration 015 exists to
- *  stop. */
+ *  stop.
+ *
+ *  The `<> ''` and `COALESCE(..., '') = ''` tests are not decoration (issue #60).
+ *  `IS NOT NULL` alone let a pair of empty strings satisfy `'' = ''` and counted
+ *  the edge **verified**, where both `stamp_state` and `stampOf` treat `""` as
+ *  falsy and return stale. Nothing writes an empty digest today — `text_digest`
+ *  only ever returns `sha256:<64 hex>` — so this was latent, and the polarity was
+ *  wrong in the one copy where the answer is a number on the front page. */
 export async function listGenealogies() {
   const rows = (await sql`
     SELECT g.id, g.concept, g.prompt_version, g.status, g.updated_at,
@@ -426,17 +433,18 @@ export async function listGenealogies() {
               JOIN papers sp ON sp.id = e.source_paper_id
               JOIN papers tp ON tp.id = e.target_paper_id
              WHERE e.genealogy_id = g.id AND e.verified
-               AND e.source_text_digest IS NOT NULL
+               AND e.source_text_digest <> '' AND e.target_text_digest <> ''
                AND e.source_text_digest = sp.extracted_text_digest
-               AND e.target_text_digest IS NOT NULL
                AND e.target_text_digest = tp.extracted_text_digest)                      AS verified_count,
            (SELECT count(*) FROM edges e
               JOIN papers sp ON sp.id = e.source_paper_id
               JOIN papers tp ON tp.id = e.target_paper_id
              WHERE e.genealogy_id = g.id
-               AND (e.source_text_digest IS NULL
+               AND (COALESCE(e.source_text_digest, '') = ''
+                    OR COALESCE(sp.extracted_text_digest, '') = ''
                     OR e.source_text_digest IS DISTINCT FROM sp.extracted_text_digest
-                    OR e.target_text_digest IS NULL
+                    OR COALESCE(e.target_text_digest, '') = ''
+                    OR COALESCE(tp.extracted_text_digest, '') = ''
                     OR e.target_text_digest IS DISTINCT FROM tp.extracted_text_digest)) AS stale_count
     FROM genealogies g
     ORDER BY g.updated_at DESC

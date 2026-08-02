@@ -271,10 +271,15 @@ directions, because a failed check against text that has since changed is no mor
 about today's text than a passing one. `edge_stamp_state` / `edgeStampOf` apply
 it to a unit carrying two stamps: either side stale makes the edge stale. A third
 expression of the rule exists in SQL, in `listGenealogies`, and only because the
-home page needs it as an aggregate per map; the three move together. Every
+home page needs it as an aggregate per map; the three move together, and the SQL
+one tests `<> ''` as well as NULL because `'' = ''` otherwise counted an edge
+verified where both languages say stale (issue #60). Every
 surface that shows a stamp resolves it this way: the evidence page and its header
 count, the influence map's solid-versus-dotted lines and its header count, the
 paper dossier, the thread page, the home page's per-map counts, both exports.
+`recheck_stamp.py` is the deliberate exception and resolves against the digest of
+the bytes it has just read, because it is the only consumer that holds the file
+and that difference is the whole reason it exists.
 
 The request also carries a **subject field** and an optional **sense gloss**
 (migration 006): `field_id` (an OpenAlex field, default `fields/17` = Computer

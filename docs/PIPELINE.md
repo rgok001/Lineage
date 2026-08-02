@@ -361,7 +361,7 @@ verbatim, plus section and novelty claims (structured output via
 when not. A spend cap (`TRACE_SPEND_CAP_USD`) aborts cleanly mid-run.
 `--refresh` re-extracts papers that already have a row, UPDATEing in place: `genealogies.nodes` holds definition_ids, so a delete-and-reinsert would mint new ids and orphan the curated node membership on every map built from that concept. It nulls the embedding, because the text it encodes has changed and stale is worse than absent: absent is visible to the re-embed step, stale is visible to nothing. Scope it with `--only <arxiv ids>`, which is what an audit hands you.
 `--reground` is the free half of that repair: it re-checks the quotes already stored against the extracted text as it is now and rewrites the stamp alone, leaving the quote, the embedding and everything else untouched. It calls the same matcher Stage E calls, makes no model call and needs no API key, prints the verified count before and after, and reports separately the definitions it could not check because the paper's text is not on this disk. The worker runs it immediately before Stage E on every trace, so a definition's stamp is never older than the text it describes (decision 18).
-Since migration 015 the stamp is `quote_verified` plus four columns — the matched span, the digest of the bytes the match read, and the extractor version of that text — so **a row is rewritten whenever anything about the stamp moved, not only when the verdict flipped**. The old behaviour skipped a row whose boolean did not move, which after 015 would leave a re-checked stamp with a NULL digest, still rendering stale after the very run that re-checked it. The printed narrative still names only the definitions whose verdict moved, because on the first run after 015 every checkable row is rewritten and one line each would drown the ones that matter; the count of rewritten stamps is printed separately. Every existing guard is untouched: the missing, empty and unreadable branches still leave the stamp exactly as it was and count loudly (those rows keep a NULL or old digest, so they render stale rather than lying), the `checked > 1 and grounded == 0` refusal stands, and the writes are still one transaction.
+Since migration 015 the stamp is `quote_verified` plus four columns — the matched span, the digest of the bytes the match read, and the extractor version of that text — so **a row is rewritten whenever anything about the stamp moved, not only when the verdict flipped**. A row whose match was never attempted, because the paper does not define the concept or the quote is empty, is written with all four NULL rather than with a real digest: a digest is the assertion "a check ran against these bytes", and writing one from the branch that skipped the check made the row resolve to `inferred`, whose published meaning is "could not be string-matched" (issue #62). NULL renders stale, which is what an unattempted check is, and it matches what the creation path in the same file already writes. The old behaviour skipped a row whose boolean did not move, which after 015 would leave a re-checked stamp with a NULL digest, still rendering stale after the very run that re-checked it. The printed narrative still names only the definitions whose verdict moved, because on the first run after 015 every checkable row is rewritten and one line each would drown the ones that matter; the count of rewritten stamps is printed separately. Every existing guard is untouched: the missing, empty and unreadable branches still leave the stamp exactly as it was and count loudly (those rows keep a NULL or old digest, so they render stale rather than lying), the `checked > 1 and grounded == 0` refusal stands, and the writes are still one transaction.
 `--corpus` scopes extraction to one trace's papers; without it the query takes
 every extracted paper in the shared papers table, which is correct for
 single-concept research use and wrong for the worker (section 10, incident 3).
@@ -456,24 +456,56 @@ the boolean and the span would be telling different stories about the same stamp
 The span names the smallest range of whole source characters covering the match,
 so a match that begins or ends inside a character whose lowercase is several
 characters covers that character rather than cutting it in half.
+**A quote that folds to nothing is not grounded** (issue #57). The fold removes
+whitespace and citation marks, so `"<cit.>"`, `"   "` and `"<cit.><ref>"` all
+fold to the empty string, and the empty string is a substring of everything: the
+pre-015 boolean said True for those and 015 would have turned that into a stored
+digest and span inviting a third party to trust them, with every one of the
+re-checker's comparisons satisfied by the empty match. A verbatim quote carrying
+no characters of the paper is not evidence (CLAUDE.md rule 1), so the matcher
+answers None. This is the one input on which the matcher deliberately does not
+reproduce the old boolean, and it claims less rather than more.
 Since migration 015 Stage E writes eight more columns per edge — span, text
 digest and extractor version for each side — and three things change with them.
 **"Could not check" stops being written as "inferred":** a NULL or unreadable
 text path used to return a plain false, which is a failed verdict from a check
 that never ran, and it now writes a false `verified` with a NULL digest, which
-renders stale. **A whole-run refusal:** if more than one edge is checked and not
-one text file could be read, the stage refuses and changes nothing, on the same
-reasoning and the same degenerate boundary as the orphan sweep above and Stage
-B's `--reground` guard — that is an unmounted or empty `DATA_DIR`, not a map that
-failed, and the per-edge tolerance that makes one missing file survivable is
-exactly what makes a total outage invisible (incident 12). **And the assembled
-JSON gains `stamp` per edge** (the resolved three-state value, computed against
-each paper's own stored digest, so the JSON and the page agree by construction)
-and `stale_edges` in `stats`. `verified` stays on every edge, so
-`restore_genealogy.py` and the existing exports keep working. The stage's own
-summary counts the three states disjointly at the stamp rather than at the
-boolean, because a summary that folds stale into verified is the same overclaim
-as a page doing it.
+renders stale. A file that read fine yields its digest even when the quote fails,
+so "we read these bytes and found nothing" renders inferred and only a genuine
+absence of bytes renders stale; the four causes — no path recorded, unreadable,
+a quote holding no text of the paper, and a real miss — are reported separately
+per side, because an edge whose file read perfectly used to print "text could not
+be read" and send an operator to look at a healthy disk (issue #58).
+**A whole-run refusal:** if more than one edge is checked, at least one text file
+was opened, and *every* opened file failed to read, the stage refuses and changes
+nothing, on the same reasoning and the same degenerate boundary as the orphan
+sweep above and Stage B's `--reground` guard — that is an unmounted or empty
+`DATA_DIR`, not a map that failed, and the per-edge tolerance that makes one
+missing file survivable is exactly what makes a total outage invisible (incident
+12). It counts *reads*, not edges: a map whose papers have no
+`extracted_text_path` at all has proved nothing about the disk, and counting
+those as unreadable made a small map built from the ~12 papers with no text
+unable to complete Stage E, blaming the mount (issue #58).
+**Every write this stage makes is in one transaction** (issue #55). The
+connection is autocommit and the refusal sits after the grounding loop, so the
+orphan `DELETE` and the quote re-sync `UPDATE` had already committed when it
+printed "Nothing was written and every stamp stands as it was". That was not only
+a false sentence: the re-sync rewrites the edge quotes and deliberately touches
+none of the stamp columns, so a refused run left a new quote beside the old span,
+the old digest and the old `verified`, which the page then resolved to
+**verified**. The refusal now rolls all of it back and the sentence is true. The
+JSON export is written inside the transaction, before the commit, so a run that
+fails to commit cannot leave a map without its documented backup.
+**And the assembled JSON gains `stamp` per edge** (the resolved three-state
+value, computed against each paper's own stored digest, so the JSON and the page
+agree by construction). `verified` stays on every edge, so
+`restore_genealogy.py` and the existing exports keep working. In `stats`,
+`verified_edges`, `inferred_edges` and `stale_edges` are counted off the resolved
+stamp, are disjoint and sum to `edges`; `both_quotes_matched_this_run` is the
+stored boolean under a name that says so. They were the boolean, its complement
+and the stamp, which counted a stale edge twice and summed to more than the edge
+count (issue #59). The stage's own summary counts the same way, because a summary
+that folds stale into verified is the same overclaim as a page doing it.
 
 **Auxiliaries.**
 `workbench.py`: CLI curation (merge, rename, split-out, delete, reclassify);
@@ -535,10 +567,17 @@ and folds it against the stored quote (disagreement means the span is wrong), an
 re-runs `grounded_span` over the whole file (disagreement with the stored span
 means the match is not where we said). Those four comparisons arrive by three
 different paths — the database, the disk and the matcher — so each of them can
-return false. It reports verified / inferred / stale / span-mismatch /
-unreadable, exits non-zero on any span mismatch and on the global check (more
-than one stamp examined and not one file readable), and it does not re-anchor,
-repair or write. Ever.
+return false. **The verdict is resolved against the bytes on disk, not against
+`papers.extracted_text_digest`** (issue #56): resolving against the database's
+value is the comparison the application already makes without a disk, and it made
+the design's own falsifier 12 — corrupt one character, re-run — print the
+disk/database disagreement as a note and then exit 0 under "Every stamp examined
+re-checks out". Each stamp is counted exactly once, after all four of its checks,
+so a stamp can no longer be reported verified in the same breath as having its
+span declared wrong. It reports verified / inferred / stale / span-mismatch /
+unreadable / file-moved, exits non-zero on any span mismatch, on any file the
+database describes wrongly, and on the global check (more than one stamp examined
+and not one file readable), and it does not re-anchor, repair or write. Ever.
 
 **Stage F: magnitude** (`stage_f_magnitude.py <concept> [--prompt-version PV]`).
 Fills `definitions.attention` and `definitions.displacement` (migration 011),

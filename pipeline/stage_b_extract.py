@@ -344,8 +344,8 @@ def reground(conn, concept: str, prompt_version: str, params: dict,
         # (see the extract loop below). A row that says the paper does not define
         # the concept has no definition quote to stand behind, whatever string
         # happens to sit in the column.
-        span = (grounded_span(text, quote)
-                if bool(defines) and bool(quote) else None)
+        attempted = bool(defines) and bool(quote)
+        span = grounded_span(text, quote) if attempted else None
         ok = span is not None
         grounded += ok
         # The extractor version is copied from the paper's row, not taken from
@@ -354,10 +354,19 @@ def reground(conn, concept: str, prompt_version: str, params: dict,
         # provenance claim on exactly the papers backlog item 4 is about, whose
         # text predates the current extractor. NULL there means the text predates
         # the column, which is the whole truth about it.
+        #
+        # No digest when no match was attempted (issue #62). A digest on a stamp
+        # is the assertion "a check ran against these bytes", so writing one from
+        # the branch that skipped the check made a row with no quote resolve to
+        # `inferred`, whose published meaning is "could not be string-matched"
+        # — a failed check that never ran, which is the thing decision 21 and the
+        # missing-file branch above both refuse to write. NULL renders stale,
+        # which is what an unattempted check is, and it matches what the creation
+        # path in this same file already writes for these rows.
         after = {"quote_start": span[0] if span else None,
                  "quote_end": span[1] if span else None,
-                 "quote_text_digest": digest,
-                 "quote_extractor_version": paper_ever}
+                 "quote_text_digest": digest if attempted else None,
+                 "quote_extractor_version": paper_ever if attempted else None}
         unchanged = (ok == was and had_start == after["quote_start"]
                      and had_end == after["quote_end"]
                      and had_digest == digest and had_ever == paper_ever)

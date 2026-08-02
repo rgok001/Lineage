@@ -107,11 +107,23 @@ def check_one(label: str, quote: str | None, verified: object,
               stamp_digest: str | None, stamp_extractor: str | None,
               path: str | None, paper_digest: str | None,
               cache: dict, tally: Tally, verbose: bool) -> bool:
-    """Re-check one stamp. Returns False if its span is wrong.
+    """Re-check one stamp. Returns False when this stamp is a finding.
 
-    A span mismatch is the only finding that fails the run, because it is the
-    matcher and the stored offsets disagreeing about the same file, and that
-    invalidates the feature rather than describing the corpus.
+    Two rules earned by issue #56, both of them about a check that could only
+    agree with itself:
+
+    **The verdict is resolved against the bytes on disk, not against the
+    database's claim about them.** Resolving against `papers.extracted_text_digest`
+    is the comparison the application already makes from the database alone; it
+    needs no disk and it re-derives nothing. This tool's whole reason to exist is
+    that it holds the file, and the design's falsifier 12 — corrupt one character
+    and re-run — passed silently for exactly that reason: it printed the
+    disk/database disagreement as a note and then asked the database whether the
+    stamp was fresh.
+
+    **Every row is counted exactly once, after all of its checks have run.** The
+    first version incremented `verified` before the span checks, so a stamp could
+    be reported verified in the same breath as having its span declared wrong.
     """
     tally.examined += 1
     loaded = load(path, cache)
@@ -122,75 +134,80 @@ def check_one(label: str, quote: str | None, verified: object,
               f"be checked. Renders stale.")
         return True
     text, disk_digest = loaded
+    findings: list[str] = []
 
     # 1. The disk against the database's claim about the disk. These are written
     #    by different code at different moments; extract_text.py's skip path is
     #    what keeps papers.extracted_text_digest honest, and if it has not run
-    #    since the file changed, this is where that shows.
+    #    since the file changed, this is where that shows. It is a finding and not
+    #    a note: the database is describing a file that is not there.
     moved = paper_digest is not None and disk_digest != paper_digest
     if moved:
         tally.file_moved += 1
+        findings.append("file moved")
         print(f"  {label}: THE FILE ON DISK IS NOT THE FILE THE DATABASE DESCRIBES")
         print(f"      papers.extracted_text_digest {paper_digest}")
         print(f"      the bytes on disk now        {disk_digest}")
 
-    # 2. The stamp against the file it claims to be about. Resolved with the same
-    #    three lines the pipeline and the app use, against the paper's stored
-    #    digest, because that is what the reader's page compares.
-    state = stamp_state(verified, stamp_digest, paper_digest)
+    # 2. The stamp against the bytes this tool just read. Same three lines the
+    #    pipeline and the app use, given the digest of the file rather than the
+    #    database's opinion of it, so a change to the file makes the stamp stale
+    #    here even when nothing has told the database yet.
+    state = stamp_state(verified, stamp_digest, disk_digest)
+    why = ""
     if state == STAMP_STALE:
-        tally.stale += 1
         why = ("no digest recorded" if not stamp_digest
-               else "no current digest on the paper" if not paper_digest
-               else "the stamp names bytes the paper no longer has")
+               else "the stamp names bytes this file does not have")
+
+    # 3. The stored span, sliced out of the file and folded against the quote.
+    #    This does NOT confirm the boolean — the same matcher put the span there,
+    #    so agreement proves nothing. It confirms that the offsets name the
+    #    passage they claim to name, which is what a reader would use them for.
+    if quote and start is not None and end is not None:
+        if not (0 <= start <= end <= len(text)):
+            findings.append("span out of range")
+            print(f"  {label}: SPAN OUT OF RANGE — [{start}, {end}) in a "
+                  f"{len(text)}-character file")
+        elif _fold(text[start:end]) != _fold(quote):
+            findings.append("span mismatch")
+            print(f"  {label}: SPAN MISMATCH — text[{start}:{end}] is not this quote")
+            print(f"      at the span: {text[start:end][:120]!r}")
+            print(f"      the quote:   {quote[:120]!r}")
+
+    # 4. And the match re-run from scratch over the whole file. A disagreement
+    #    with the stored span means the match is not where we said it was, even
+    #    when both ends fold correctly — two identical passages, and the stored
+    #    offsets naming the second.
+    if quote:
+        found = grounded_span(text, quote)
+        if start is not None and end is not None and found != (start, end):
+            findings.append("span disagrees with the matcher")
+            print(f"  {label}: SPAN DISAGREES WITH THE MATCHER — stored "
+                  f"[{start}, {end}), found {found}")
+        elif start is None and found is not None and not moved:
+            # Not a failure: a stamp that recorded no span against text that has
+            # since been re-extracted is exactly what a stale stamp is. Worth
+            # saying, because it is free to fix with a re-ground.
+            print(f"  {label}: no span stored, but the quote is in the file at "
+                  f"{found} — a re-ground would make this stamp re-checkable")
+
+    # One row, one tally, after every check. A stamp whose span is broken is not
+    # also a verified stamp, whatever its digests say.
+    span_broken = any(f.startswith("span") for f in findings)
+    if span_broken:
+        tally.span_mismatch += 1
+    elif state == STAMP_STALE:
+        tally.stale += 1
         print(f"  {label}: STALE — {why}")
     elif state == STAMP_VERIFIED:
         tally.verified += 1
     else:
         tally.inferred += 1
 
-    if not quote:
-        return True
-
-    # 3. The stored span, sliced out of the file and folded against the quote.
-    #    This does NOT confirm the boolean — the same matcher put the span there,
-    #    so agreement proves nothing. It confirms that the offsets name the
-    #    passage they claim to name, which is what a reader would use them for.
-    ok = True
-    if start is not None and end is not None:
-        if not (0 <= start <= end <= len(text)):
-            tally.span_mismatch += 1
-            print(f"  {label}: SPAN OUT OF RANGE — [{start}, {end}) in a "
-                  f"{len(text)}-character file")
-            ok = False
-        elif _fold(text[start:end]) != _fold(quote):
-            tally.span_mismatch += 1
-            print(f"  {label}: SPAN MISMATCH — text[{start}:{end}] is not this quote")
-            print(f"      at the span: {text[start:end][:120]!r}")
-            print(f"      the quote:   {quote[:120]!r}")
-            ok = False
-
-    # 4. And the match re-run from scratch over the whole file. A disagreement
-    #    with the stored span means the match is not where we said it was, even
-    #    when both ends fold correctly — two identical passages, and the stored
-    #    offsets naming the second.
-    found = grounded_span(text, quote)
-    if start is not None and end is not None and found != (start, end):
-        tally.span_mismatch += 1
-        print(f"  {label}: SPAN DISAGREES WITH THE MATCHER — stored "
-              f"[{start}, {end}), found {found}")
-        ok = False
-    elif start is None and found is not None and not moved:
-        # Not a failure: a stamp that recorded no span against text that has since
-        # been re-extracted is exactly what a stale stamp is. Worth saying, because
-        # it is free to fix with a re-ground.
-        print(f"  {label}: no span stored, but the quote is in the file at {found} "
-              f"— a re-ground would make this stamp re-checkable")
-
-    if verbose and ok:
+    if verbose and not findings:
         ext = stamp_extractor or "extractor not recorded"
         print(f"  {label}: {state}, span [{start}, {end}), {ext}")
-    return ok
+    return not findings
 
 
 def main() -> None:
@@ -269,6 +286,22 @@ def main() -> None:
                  f"the matcher disagree about the same file, which invalidates the "
                  f"stamps rather than describing the corpus. Nothing was written; "
                  f"this tool does not repair.")
+    # A file the database is wrong about fails the run (issue #56). It used to be
+    # printed and then ignored, so the design's own falsifier 12 — corrupt one
+    # character, re-run — reported the disagreement and exited 0 under the line
+    # "Every stamp examined re-checks out." The repair is free and is named here
+    # rather than left to be remembered.
+    if tally.file_moved:
+        sys.exit(
+            f"\n{tally.file_moved} stamp(s) belong to a file the database describes "
+            f"wrongly: the bytes on disk are not the bytes\n"
+            f"papers.extracted_text_digest names. Every stamp on those papers is "
+            f"stale whatever the app currently shows,\nbecause the app compares "
+            f"against the database's value and only this tool has read the file.\n"
+            f"  Run `python pipeline/extract_text.py` (no --force) to record the "
+            f"bytes that are actually there, then\n"
+            f"  re-ground the affected maps. Nothing was written; this tool does "
+            f"not repair.")
     if not clean:
         sys.exit("\nFindings above.")
     print("\nEvery stamp examined re-checks out.")

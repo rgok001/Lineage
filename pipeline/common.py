@@ -423,20 +423,28 @@ def grounded_span(text: str, quote: str) -> tuple[int, int] | None:
     `_fold(text[start:end])` can be a character longer than `_fold(quote)`. A
     span that named half a character would be an offset no reader could use.
 
-    An all-whitespace quote folds to the empty string, which `in` finds at 0.
-    That is a pass today and stays a pass here, reported as the empty span (0, 0):
-    this function is the only implementation of "is this quote in this text", so
-    it may not quietly decide a case the boolean used to decide differently.
+    **A quote that folds to nothing is not grounded** (issue #57). `_fold` removes
+    whitespace and citation marks, so `"<cit.>"`, `"   "` and `"<cit.><ref>"` all
+    fold to the empty string, and `"" in anything` is true. The pre-015 boolean
+    said True for those and reported the empty span (0, 0); 015 would have turned
+    that into a stored digest and span inviting a third party to trust it, and
+    every one of the re-checker's comparisons is satisfied by an empty match, so
+    the check could only ever agree with itself. A verbatim quote carrying no
+    characters of the paper is not evidence (CLAUDE.md rule 1), so the honest
+    answer is that nothing was found: None, no span, no tick.
+
+    This is the one place where this function deliberately does NOT reproduce the
+    pre-change boolean, and it is a change in the direction of claiming less.
     """
     if not text or not quote:
         return None
-    folded, origin = _fold_indexed(text)
     needle = _fold(quote)
+    if not needle:
+        return None
+    folded, origin = _fold_indexed(text)
     at = folded.find(needle)
     if at < 0:
         return None
-    if not needle:
-        return (0, 0)
     return (origin[at], origin[at + len(needle) - 1] + 1)
 
 

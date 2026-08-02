@@ -665,6 +665,19 @@ The why behind the load-bearing choices, in one place:
     `extractor_version IS DISTINCT FROM <current>` a usable re-extraction queue.
     The design is `docs/design/recheckable-stamp.md`; three of its render sites
     were found during implementation and are named there.
+    **Two rules were added after review found the first implementation could
+    still only agree with itself** (issues 55 to 63, Tester, same day). Stage E
+    now makes every write inside one transaction, because the whole-run refusal
+    sat after the loop on an autocommit connection: the quote re-sync had already
+    committed when it said "nothing was written", leaving a new quote beside the
+    old span and the old tick, which the page resolved to verified. And
+    `recheck_stamp.py` now resolves against the bytes it has just read rather than
+    against the database's digest of them — resolving against the database is the
+    comparison the application already makes without a disk, and it is why the
+    design's own falsifier 12 passed silently. A quote that folds to nothing
+    ("`<cit.>`", whitespace) is no longer grounded at all: the empty string is a
+    substring of everything, so that check could only ever agree with itself, and
+    a quote carrying no characters of the paper is not evidence.
 
 ## Shipped since the first draft
 

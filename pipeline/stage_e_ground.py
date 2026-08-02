@@ -20,9 +20,9 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (edge_stamp_state, grounded_span, read_grounding_text,  # noqa: E402
-                    REPO_ROOT, STAMP_STALE, STAMP_VERIFIED, data_dir, env,
-                    node_ids)
+from common import (_fold, edge_stamp_state, grounded_span,  # noqa: E402
+                    read_grounding_text, REPO_ROOT, STAMP_INFERRED, STAMP_STALE,
+                    STAMP_VERIFIED, data_dir, env, node_ids)
 
 
 # An edge whose source_node or target_node is not in genealogies.nodes has no
@@ -109,6 +109,44 @@ def main() -> None:
         sys.exit(f'No genealogy for "{args.concept}" at prompt {prompt_version}.')
     gen_id, nodes = gen
 
+    # ── one transaction, because a refusal has to be able to undo everything ──
+    #
+    # Issue #55. The connection is autocommit, and the whole-run refusal below
+    # sits after the grounding loop, so the orphan DELETE and the quote re-sync
+    # UPDATE had both committed by the time it printed "Nothing was written and
+    # every stamp stands as it was." Both halves of that sentence were false.
+    #
+    # Worse than a wrong message: the re-sync rewrites source_quote/target_quote
+    # and deliberately touches none of the eight stamp columns, because the loop
+    # below was going to rewrite them all. When the refusal intervened, the edge
+    # was left holding a NEW quote beside the OLD span, the OLD digest and the OLD
+    # `verified = true`, and since the paper's digest had not moved either, the
+    # page resolved it to VERIFIED. A tick standing behind a quote no check had
+    # ever seen, produced by the refusal added to prevent exactly that.
+    #
+    # So every write this stage makes now happens inside one transaction that is
+    # not committed until the refusal question is settled. sys.exit raises
+    # SystemExit, the context manager rolls back on any exception, and the
+    # sentence becomes true. Deciding the refusal earlier by probing the files
+    # first was the alternative and is worse: the set of paths that matters is
+    # only known after the sweep has removed the orphans, so the probe would
+    # answer for a different set of edges than the one being published.
+    try:
+        with conn.transaction():
+            _ground(conn, args, gen_id, nodes, prompt_version)
+    finally:
+        conn.close()
+
+
+def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> None:
+    """Everything this stage writes, inside the caller's transaction.
+
+    The JSON export is written from here too, after the refusal has passed but
+    before the commit. That ordering is deliberate and it is the safe one: a file
+    written for a run that then fails to commit is a file describing a map that
+    did not change, which a re-run overwrites; a commit with no file is a map
+    whose documented backup is missing (incident 4).
+    """
     sweep_orphan_edges(conn, gen_id, nodes)
 
     # An edge's quotes ARE the two papers' Stage B definition quotes (decision 6):
@@ -153,12 +191,23 @@ def main() -> None:
     """, (gen_id,)).fetchall()
 
     text_cache: dict[str, tuple[str, str] | None] = {}
-    files_read: set[str] = set()
+    reads_attempted: set[str] = set()
+    reads_failed: set[str] = set()
 
-    def match(path: str, quote: str) -> tuple[bool, tuple[int, int] | None, str | None]:
-        """(verdict, span, digest of the bytes it was checked against).
+    # Why a side could not produce a tick. Issue #58: these were all one value,
+    # so a healthy DATA_DIR with no paths recorded and an unmounted one were the
+    # same state, and an edge whose file read perfectly printed "text could not be
+    # read" because its quote was blank. The refusal below is about the disk, so
+    # it may only count the one that is about the disk.
+    NO_PATH = "no extracted text recorded for this paper"
+    UNREADABLE = "extracted text could not be read on this disk"
+    EMPTY_QUOTE = "the stored quote contains no text of the paper"
+    NOT_FOUND = "quote not found in the extracted text"
 
-        The digest is None when no check happened, and that is the point: since
+    def match(path: str, quote: str) -> tuple[bool, tuple[int, int] | None, str | None, str | None]:
+        """(verdict, span, digest of the bytes it was checked against, why not).
+
+        The digest is None when no bytes were read, and that is the point: since
         migration 015 the schema finally has somewhere to put the difference
         between "we looked and it was not there" and "we could not look". A
         digest-less stamp renders stale, which claims nothing. Before 015 an
@@ -166,29 +215,44 @@ def main() -> None:
         false, which is a failed verdict from a check that never ran — the thing
         decision 21 and the --reground missing-file branch both refuse to write.
 
+        A file that read fine yields its digest even when the quote fails, empty
+        or otherwise: bytes were read and the matcher was run, so the stamp
+        honestly says "checked against these, found nothing" and renders inferred
+        rather than stale. Only a genuine absence of bytes renders stale.
+
         Tolerating the per-file failure is also what makes the whole-run refusal
-        below reachable: if the first missing file aborted the run, "not one file
-        could be read" could never be observed, and incident 12 is what a total
-        outage looks like when only the per-item path can see it.
+        below reachable: if the first missing file aborted the run, "every read
+        failed" could never be observed, and incident 12 is what a total outage
+        looks like when only the per-item path can see it.
 
         Reading and hashing once per path per run, because a paper with twenty
         edges is one file.
         """
-        if not quote or not path:
-            return False, None, None
+        if not path:
+            return False, None, None, NO_PATH
         if path not in text_cache:
+            reads_attempted.add(path)
             try:
                 text_cache[path] = read_grounding_text(path)
-                files_read.add(path)
             except (OSError, UnicodeDecodeError) as exc:
                 text_cache[path] = None
+                reads_failed.add(path)
                 print(f"  ⚠ could not read {path}: {exc}")
         loaded = text_cache[path]
         if loaded is None:
-            return False, None, None
+            return False, None, None, UNREADABLE
         text, digest = loaded
+        if not quote:
+            return False, None, digest, EMPTY_QUOTE
         span = grounded_span(text, quote)
-        return span is not None, span, digest
+        if span is None:
+            # grounded_span refuses a quote that folds to nothing (issue #57), so
+            # a quote of "<cit.>" arrives here rather than matching at (0, 0).
+            # Distinguished from a real miss, because "we hold no words of the
+            # paper" and "the paper does not contain these words" are different
+            # findings and only one of them is about the paper.
+            return False, None, digest, (EMPTY_QUOTE if not _fold(quote) else NOT_FOUND)
+        return True, span, digest, None
 
     print(f'Grounding {len(edges)} edges for "{args.concept}" (prompt {prompt_version})…\n')
     assembled_edges = []
@@ -199,8 +263,8 @@ def main() -> None:
          s_quote, t_quote, s_path, t_path,
          s_now, t_now, s_ever, t_ever) in edges:
         checked += 1
-        s_ok, s_span, s_digest = match(s_path, s_quote)
-        t_ok, t_span, t_digest = match(t_path, t_quote)
+        s_ok, s_span, s_digest, s_why = match(s_path, s_quote)
+        t_ok, t_span, t_digest, t_why = match(t_path, t_quote)
         verified = s_ok and t_ok
         verified_count += verified
         # Resolved here against the paper's own current digest, which is written
@@ -213,16 +277,14 @@ def main() -> None:
 
         mark = {"verified": "SOLID  ✓ verified", "inferred": "dotted ◌ inferred",
                 "stale": "dotted ◌ stale   "}[state]
-        if state == STAMP_STALE:
-            # Not "the quote is not there". Either no check ran, or the text this
-            # check ran against is not the text the database now describes.
-            unreadable = [side for side, d in (("src", s_digest), ("tgt", t_digest)) if d is None]
-            reason = ("  [" + "+".join(unreadable) + " text could not be read]" if unreadable
-                      else "  [checked against text the papers table no longer describes]")
-        elif verified:
-            reason = ""
-        else:
-            reason = f"  [{'src' if not s_ok else ''}{'+' if not s_ok and not t_ok else ''}{'tgt' if not t_ok else ''} quote not found]"
+        # The true cause per side, not one word covering four states (issue #58).
+        # A blank quote against a file that read perfectly used to print "text
+        # could not be read", which sends an operator to look at a disk that is
+        # fine.
+        causes = [f"{side} {why}" for side, why in (("src", s_why), ("tgt", t_why)) if why]
+        if state == STAMP_STALE and not causes:
+            causes = ["checked against text the papers table no longer describes"]
+        reason = ("  [" + "; ".join(causes) + "]") if causes else ""
         print(f"  {mark}  {etype.upper():<9} {s_arxiv} -> {t_arxiv}  conf {conf:.2f}{reason}")
 
         assembled_edges.append({
@@ -236,13 +298,23 @@ def main() -> None:
     # orphan sweep above carries. The per-edge tolerance that makes one missing
     # file survivable is exactly what makes a total outage invisible: an unmounted
     # or empty DATA_DIR grounds nothing and would otherwise be published as a map
-    # whose every edge went inferred. The boundary is zero, not a fraction — "not
-    # one file readable" is a state, not a calibration — and, like the sweep, it
-    # needs more than one edge for "not one of them" to mean anything.
-    if checked > 1 and not files_read:
+    # whose every edge went inferred. The boundary is zero, not a fraction — "every
+    # read failed" is a state, not a calibration — and, like the sweep, it needs
+    # more than one edge for "not one of them" to mean anything.
+    #
+    # It counts READS, not edges (issue #58). The first version counted paths it
+    # had loaded, which never grew for an edge whose paper has no
+    # extracted_text_path at all, so a small healthy map built from the ~12 papers
+    # that have no text (issue #5) refused and blamed the mount. A map with
+    # nothing recorded to read has not proved the disk is broken; it has proved
+    # its papers have no text, which is a different finding and is not this
+    # stage's to refuse over. Only an attempted read that failed is evidence about
+    # the disk.
+    if checked > 1 and reads_attempted and reads_failed == reads_attempted:
         sys.exit(
-            f"\nRefusing to ground this map: {checked} edges were checked and not one "
-            f"extracted text file could be read.\n"
+            f"\nRefusing to ground this map: {checked} edges were checked, "
+            f"{len(reads_attempted)} extracted text file(s) were opened, and every "
+            f"one of them failed to read.\n"
             f"  That is an unmounted or empty DATA_DIR, not a map that failed, and this\n"
             f"  stage cannot tell them apart. Nothing was written and every stamp stands\n"
             f"  as it was.\n"
@@ -264,31 +336,40 @@ def main() -> None:
               t_digest, t_ever, eid))
 
     conn.execute("UPDATE genealogies SET status='complete', updated_at=now() WHERE id=%s", (gen_id,))
-    conn.commit()
-
-    genealogy = {
-        "concept": args.concept, "prompt_version": prompt_version,
-        "nodes": nodes, "edges": assembled_edges,
-        # `verified` stays on every edge, so restore_genealogy.py and the exports
-        # keep working; `stamp` is the resolved three-state value beside it.
-        "stats": {"nodes": len(nodes), "edges": len(assembled_edges),
-                  "verified_edges": verified_count,
-                  "inferred_edges": len(edges) - verified_count,
-                  "stale_edges": stale_count},
-    }
-    out = Path(args.json) if args.json else data_dir() / f"genealogy_{args.concept}_{prompt_version}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(genealogy, indent=2), encoding="utf-8")
-    conn.close()
 
     # Counted at the stamp, not at the boolean, and the three are disjoint. An
     # edge whose quotes both matched text the papers table no longer describes
     # is not displayable as verified, and a summary that folds it into the
     # verified count is the same overclaim as the page making it.
     shown_verified = sum(1 for e in assembled_edges if e["stamp"] == STAMP_VERIFIED)
+    shown_inferred = sum(1 for e in assembled_edges if e["stamp"] == STAMP_INFERRED)
+
+    genealogy = {
+        "concept": args.concept, "prompt_version": prompt_version,
+        "nodes": nodes, "edges": assembled_edges,
+        # `verified` stays on every edge, so restore_genealogy.py and the exports
+        # keep working; `stamp` is the resolved three-state value beside it.
+        #
+        # The three state counts are disjoint and sum to `edges` (issue #59). They
+        # were the boolean, the boolean's complement and the stamp, so an edge
+        # that matched text the papers table no longer describes was counted both
+        # verified and stale and the three summed to more than the edge count.
+        # This file is the CLI's deliverable and the de-facto backup (incident 4);
+        # an agent reading `verified_edges` out of it was reading the overclaiming
+        # number the console summary two lines below had already stopped printing.
+        # The boolean keeps a count under a name that says what it is.
+        "stats": {"nodes": len(nodes), "edges": len(assembled_edges),
+                  "verified_edges": shown_verified,
+                  "inferred_edges": shown_inferred,
+                  "stale_edges": stale_count,
+                  "both_quotes_matched_this_run": verified_count},
+    }
+    out = Path(args.json) if args.json else data_dir() / f"genealogy_{args.concept}_{prompt_version}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(genealogy, indent=2), encoding="utf-8")
+
     print(f"\nGenealogy complete: {len(nodes)} concept-states, {len(edges)} edges "
-          f"({shown_verified} solid/verified, "
-          f"{len(edges) - shown_verified - stale_count} dotted/inferred, "
+          f"({shown_verified} solid/verified, {shown_inferred} dotted/inferred, "
           f"{stale_count} stale).")
     if verified_count != shown_verified:
         print(f"  ({verified_count} edges have both quotes matching the text this run "
