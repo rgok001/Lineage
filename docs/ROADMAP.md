@@ -1,13 +1,17 @@
 # Roadmap
 
+CLASS: law
+RECOMPUTED BY: nothing. The owner decides what gets built. The measurements
+below are dated and stay dated: re-measuring may change the plan, but only the
+owner changes this file.
+
 What to build. Written 2026-08-02 from measurements taken across the live
 system on 2026-08-01 by four roles, and designed against them.
 
-**This file is capability. `docs/BACKLOG.md` is defects** — the gap between what
-is claimed and what is delivered. The two are kept apart deliberately: a defect
-register that absorbs features stops being a list of things that are wrong, and
-a roadmap that absorbs defects stops being a list of things to build. Items here
-cite backlog numbers where the two touch.
+**This file is the plan. GitHub Issues is the work.** Every item below is a
+ticket and the ticket is canonical: if this file and an issue disagree, the
+issue is right. What lives here is direction, sequencing and the reasoning for
+both, which does not belong in a ticket. What a thing *is* lives in its ticket.
 
 ---
 
@@ -57,199 +61,39 @@ curatorial one.
 
 ## Key feature drops
 
-### F1. The re-checkable stamp
-**The most important item in this document.** No verification stamp in the
-database can be re-checked from stored data, because the text it was matched
-against is not stored — only a path on one worker's disk. The tick is an
-assertion by the pipeline about a file on one machine at one moment.
+Each is a GitHub issue and the issue is canonical. What follows is the plan;
+what a thing *is* lives in its ticket.
 
-This is the direct descendant of the project's defining incident, the grounding
-check that read its own source and therefore could not fail. On a platform it is
-fatal: a tick only our worker can substantiate is not evidence, it is a claim
-about evidence.
+| | | |
+|---|---|---|
+| **F1** | The re-checkable stamp | [#29](https://github.com/rgok001/Lineage/issues/29) |
+| **F2** | The map report | [#30](https://github.com/rgok001/Lineage/issues/30) |
+| **F3** | Remove Stage D's same-cluster discard | [#31](https://github.com/rgok001/Lineage/issues/31) |
+| **F4** | Versioned maps | [#32](https://github.com/rgok001/Lineage/issues/32) |
+| **F5** | Corpus recency | [#33](https://github.com/rgok001/Lineage/issues/33) |
+| **F6** | A requester can see the state of their own request | [#34](https://github.com/rgok001/Lineage/issues/34) |
+| **F7** | Sources beyond arXiv | [#35](https://github.com/rgok001/Lineage/issues/35) |
+| **F8** | A map has an owner, and can be private | [#36](https://github.com/rgok001/Lineage/issues/36) |
+| **F9** | Bring your own corpus | [#37](https://github.com/rgok001/Lineage/issues/37) |
 
-Migration 015 adds to definitions and edge evidence the matched span offsets, a
-digest of the extracted-text file the match ran against, and the extractor
-version. A stamp whose digest no longer matches renders as **stale, not
-re-checked** — never as verified, and never silently re-anchored to the new
-text, which incident 10 established is dishonest.
-
-Unblocks backlog item 4 (32 papers whose quotes were matched against text the
-extractor no longer produces, 12 with no text at all): re-extract those *after*
-this ships, so stamps that move do so visibly.
-
-### F2. The map report
-One row per map, computed on read from a view, **not stored** — a stored quality
-figure that survives a curatorial edit is a lie with a timestamp. The app and a
-CLI command select from the same view, so the two cannot disagree.
-
-Reports: verified fraction of definitions and edges; distinct quote strings
-against edge count; share of edges on node pairs carrying contradictory types;
-largest node's share of edges; singleton share; citation pairs discarded and
-why; corpus year distribution and median; run cost and wall clock.
-
-**No thresholds.** With two maps there is no distribution to set one against,
-and this project has paid four times for a threshold moved because a rate looked
-wrong. Numbers are published with the two known maps beside them as the only
-reference points, labelled n=2. A threshold gets set when there are enough maps
-to take a quantile from, against a stated distribution, with the resulting rate
-named in the commit that sets it.
-
-This is not an eval harness and needs no golden set. Every number comes from the
-map's own rows. "Is this map right" needs ground truth and stays out.
-
-### F3. Remove Stage D's same-cluster discard
-`pipeline/stage_d_edges.py:145` drops any citation pair whose two papers landed
-in the same cluster. Measured: **176 of 479 pairs, 36.7% of the evidence,
-deleted by a clustering decision, silently.** 41.5% of those sit inside the
-46-paper node backlog item 21 says is mislabelled. Edges with both ends inside
-the largest node: **0 of 305, and 0 of 287** — by construction.
-
-The comment defending it is accurate and now argues for the wrong thing. It
-dates from when the map was drawn node-to-node; the front door draws papers
-individually, and on a paper-level map a within-cluster citation is exactly as
-informative as a cross-cluster one.
-
-Removing it recovers the evidence, breaks the coupling by which a clustering
-error destroys edges, and makes the hub node harmless. **Raises the recurring
-cost of every future map by roughly 37% of Stage D**, about +$0.25 to +$0.60.
-The only change here that raises unit cost, and it buys back a third of the
-evidence.
-
-### F4. Versioned maps
-Today one map exists per concept name, forever. The second person to request
-`attention` is refused, and the first map can never be re-run because
-re-clustering would overwrite it. Correct under a curated collection, which is
-why it appears in none of the backlog items. Under a platform it means **the
-generator can generate each thing exactly once, which is not a generator.**
-
-A genealogy row becomes the unit of identity, Stage C keyed by genealogy id
-rather than concept plus prompt version, so a re-trace creates a new map beside
-the old one. Deletion becomes scoped to the map's requester.
-
-The largest item here, roughly a week, and the thing that separates two showcase
-maps from a platform. Prerequisite for F5, for a second requester, and for
-validating F3 by running the same concept twice.
-
-### F5. Corpus recency
-Median corpus year is **2017**; 7 of 304 papers are 2022 or later; `attention`
-stops at **2021**. Anyone asking about a term that matters now gets a map that
-ends before it existed. The cause is structural: ranking by citation count is
-backward-looking, because recent papers have not been cited yet.
-
-Measured, not guessed: put the corpus year distribution in the map report first,
-then set a recency floor against what OpenAlex actually offers for that concept
-and field. At $2 to $4 a map, four selection variants cost an afternoon.
-
-### F6. A requester can see the state of their own request
-Not email — sending to a stranger needs a verified domain that a Vercel
-subdomain cannot be. Showing a signed-in visitor their own requests needs no
-domain and is an hour's work. Without it, someone who asks for a map has no way
-to learn it exists.
-
-### F7. Sources beyond arXiv
-**Came off `CLAUDE.md`'s OUT list on 2026-08-02 (Product Owner).** It is the
-single biggest limit on who this product is useful to, and the public roadmap
-page had been promising it while the spec forbade it.
-
-Today the corpus is arXiv only, so the product serves machine learning and
-adjacent preprint fields and nothing else. A commercial lawyer, a clinician or a
-historian cannot use it at all. Every other constraint in this document limits
-how good a map is; this one limits whether a map can exist.
-
-**The part that is not obvious, and that governs how it must be built.** The
-verification claim rests on having the paper's full text. arXiv supplies LaTeX
-source, which extracts cleanly and is why the grounding check works at all. Most
-other sources supply PDFs, and PDF extraction is measurably the weaker path
-here: all 7 PDF-sourced papers in the current corpus carry text an older
-extractor produced, and the extraction audit treats them as a separate and worse
-population. So this is not "add more URLs to the fetcher". **It stresses the one
-layer the entire verified stamp depends on**, and a source whose text extracts
-badly produces maps that fail grounding rather than maps that are merely thinner.
-
-Direction, from the public roadmap page: resolve open-access copies through DOIs,
-and add biomedical full text, which is available as structured XML rather than
-PDF and is therefore the cheapest real test of whether the pipeline generalises
-beyond LaTeX.
-
-**Sequenced after F2, deliberately.** A new source changes extraction quality,
-and adding one before there is an instrument to measure that produces more maps
-nobody can assess. F2's report is what turns "we added a source" into "here is
-what that source does to the verified fraction".
-
-Needs its own design before any code: which sources, what each supplies as text,
-what the fallback is when only an abstract is available, and whether a map may
-mix sources or must declare one. Roughly a month once designed.
-
-### F8. A map has an owner, and can be private
-**Decision 27, 2026-08-02.** Whoever paid for a map owns it: private by default,
-theirs to curate, with an option to publish. Today there is no read
-authorisation of any kind — no visibility concept across fourteen migrations,
-and `isOwner` only decides what to render, never denies a read.
-
-The visibility column goes on `genealogies` and nowhere else, which is the clean
-line: the map is owned, the extractions underneath are shared. Enforcement has to
-reach every read path, and the one most likely to be missed is
-`app/app/g/[id]/export/route.ts`, which today takes an id from the URL and
-returns the map's quotes and bibliography with no check at all. Any read model
-bolted on above it is bypassed there.
-
-Also in scope, because they are the same boundary: `/api/traces` is
-unauthenticated and returns requester login, request note, sense gloss and raw
-pipeline stderr to anyone; and the request note and gloss are a statement of what
-someone is about to write about, which is not theirs to publish.
-
-Prerequisite: F4, since a map cannot have an owner before it has an identity
-separate from its concept name.
-
-### F9. Bring your own corpus
-**Decision 27, 2026-08-02.** Already on the public roadmap's considering list.
-The user supplies the papers rather than having them selected, which removes the
-corpus-selection step and, for anyone whose field does not preprint, is a faster
-route to usefulness than F7.
-
-**The carve-out from decision 27 is load-bearing here.** Extractions from arXiv
-are shared across users because those papers are public anyway. Extractions from
-uploaded papers are owned by the uploader and never enter another user's map,
-because the caching that makes the platform cheap would otherwise surface an
-unpublished manuscript in a stranger's map, attributed. The cache key gains a
-nullable owner; null means public-source and shareable.
-
-Two things to settle in its design: what happens when an uploaded paper is one
-the platform already holds from arXiv, and the copyright position on storing
-extracted text from papers a user supplies. Neither is settled here.
-
----
+**F1 is the one that matters most.** No verification stamp in the database can be
+re-checked from stored data, because the text it was matched against is not
+stored. That is the project's defining incident one level up, and on a platform
+where strangers generate maps, a tick only our worker can substantiate is not
+evidence, it is a claim about evidence.
 
 ## Quality-of-life enhancements
 
-**Q1. Parallelise Stages B and D** (backlog 24). About 143 extractions and 305
-classifications run one at a time; most of a trace is network wait. A pool of
-eight takes Stage B from ~10 minutes to 1–2, which is most of the gap between
-the measured 23.3 and 18.3 minutes and the public "about fifteen". **Must land
-after the run-level spend cap**, because parallel workers overshoot a cap
-checked between sequential calls.
-
-**Q2. A preview before a run.** Already promised publicly. A free OpenAlex
-pre-flight showing the candidate corpus, its year span and an estimated cost
-before anyone spends. Becomes load-bearing if requester-pays ever arrives
-(decision 26).
-
-**Q3. Show the reproducibility facts.** `prompt_version` and `definitions.model`
-are stored and rendered nowhere, so the reproducibility claim on `/about` is true
-of the database and false of the interface.
-
-**Q4. Print confidence at the resolution it has.** Two decimal places on a value
-taking two distinct values across 53% of edges is false precision, on a page
-where `/about` argues against exactly that for other metrics.
-
-**Q5.** Node labels ask for the common thread rather than a name (backlog 21),
-and render as provisional until curated. **Q6.** Proper 403s instead of
-fail-closed 500s. **Q7.** A marker at the timeline's horizon saying the story
-starts in 2011 because arXiv does, not because the idea does (backlog 22).
-**Q8.** Corroboration counts (backlog 26), worth more after F3.
-
----
+| | | |
+|---|---|---|
+| **Q1** | Parallelise Stages B and D | [#38](https://github.com/rgok001/Lineage/issues/38) |
+| **Q2** | A preview before a run | [#39](https://github.com/rgok001/Lineage/issues/39) |
+| **Q3** | Show the reproducibility facts | [#40](https://github.com/rgok001/Lineage/issues/40) |
+| **Q4** | Print confidence at the resolution it has | [#41](https://github.com/rgok001/Lineage/issues/41) |
+| **Q5** | Node labels ask for the common thread rather than a name | [#42](https://github.com/rgok001/Lineage/issues/42) |
+| **Q6** | Proper 403s instead of fail-closed 500s | [#43](https://github.com/rgok001/Lineage/issues/43) |
+| **Q7** | A marker at the timeline's horizon | [#44](https://github.com/rgok001/Lineage/issues/44) |
+| **Q8** | Corroboration counts | [#45](https://github.com/rgok001/Lineage/issues/45) |
 
 ## Sequencing
 

@@ -1,9 +1,56 @@
 # Lineage — concept genealogy engine
 
+CLASS: law
+RECOMPUTED BY: nothing. The owner decides this file. It is not derived from the
+code, so a change to the code cannot make it stale. Where the system disagrees
+with it, either the system is violating its law or the law has moved: say which.
+
 ## What this is
 A web app that traces how an academic concept evolved across papers. User enters a concept (e.g. "attention"), the system reads ~150 arXiv papers and produces an interactive genealogy: a timeline of concept-states (nodes) connected by typed, evidence-backed relationships (edges).
 
 This is a **real application, not a portfolio demonstrator** (revised — it began as the latter). The app is database-backed: it reads and writes live Postgres, and the workbench edits persist. Still prefer boring tech and shipping over speculative generality — but robustness, correctness and a usable UI are now in scope, not deferred. The four core product rules below were always non-negotiable and remain so.
+
+## Where the work lives
+
+**GitHub Issues is the only list of open work**, and is canonical: https://github.com/rgok001/Lineage/issues
+If a document and an issue disagree, the issue is right. Titles carry the original item id (`[B21]`, `[F3]`, `[Q7]`) because commit messages and
+`docs/AS-BUILT.md` cite those numbers; they are never reused.
+`docs/ROADMAP.md` holds direction and sequencing, not items. `docs/AS-BUILT.md` holds what is true and why.
+
+**No design and no code without a ticket.** Before an Architect designs, before
+a Developer edits a file, there must be a GitHub issue for the work. If none
+exists, create it first and say so. This is not bureaucracy: it is what stops
+the fifth undocumented fix, and it is why the item numbers in this repository
+can be cited from a commit message years later. Reference the issue in the
+commit, so the ticket and the change that closed it stay attached.
+
+## The need this answers
+
+**The need.** Someone writing a literature review needs to know how a concept
+actually developed: which papers moved it, and what each one changed. A search
+returns a pile of papers ranked by relevance, not the shape of the idea. Asking a
+language model returns a fluent paragraph nobody can check, occasionally citing
+work that does not exist. The only reliable method is to reconstruct it by hand
+from the papers, which takes weeks, and every researcher who needs it does it
+again from scratch.
+
+**What Lineage does about it.** It reads the literature around a term and lays
+out the lines of work the idea split into, in order, with a verbatim quote from
+the source behind each claim. The reconstruction is the product; the checking is
+what makes it worth having. A reader who doubts a claim can verify it in seconds
+rather than taking it on trust.
+
+**What is guaranteed and what is not.** A quote carrying the verified stamp is
+string-matched against that paper's own extracted text. That is mechanical and it
+holds. The shape — which papers cluster together, which relationships exist and
+in which direction, which papers matter most — is the tool's reading, and is
+labelled as such wherever it appears. See `docs/ROADMAP.md` for why that
+distinction governs what gets built next.
+
+**Who it is for, and what it is not.** The product is the generator, not a
+curated collection: it provides the capability to make a map, and does not claim
+expertise in any field a map covers. It reads arXiv only, so it is useful for
+machine learning and adjacent preprint fields and not yet for anything else.
 
 ## Core product rules (do not violate)
 1. Every edge displayed carries verbatim evidence quotes from both papers.
@@ -56,6 +103,52 @@ be designed and built when it is reached. It does not mean scaffolding for it no
 - Database access is refused by default. `.claude/settings.json` sets `LINEAGE_NO_DB=1`, so `env("DATABASE_URL")` raises rather than connecting. Real runs against Neon happen from a terminal outside Claude Code. Reaching production takes an act, not an omission.
 - `LINEAGE_READ_URL` is the read-only connection: the `lineage_ro` Postgres role, SELECT and nothing else. It is the only database access any agent may use, and the Operator is the only role that uses it. It is deliberately not named DATABASE_URL so that no existing code path can route through it by accident.
 - Prefer boring tech. No microservices, no Kubernetes, no message brokers. One repo, one Postgres, one Next.js app, one worker process.
+
+## The record: one destination per kind of thing
+
+Every record file declares its class in its first two lines. A fact lives in
+exactly one file and everywhere else links to it. Two homes for one fact is how
+this record goes stale, and it has already cost us: the deleted
+`docs/ARCHITECTURE.md` still forbade non-arXiv sources weeks after this file
+released them, and the public roadmap page was promising them meanwhile.
+
+| Kind of thing | Destination | Class |
+|---|---|---|
+| Product law, scope, non-negotiable rules | `CLAUDE.md` | law |
+| What to build next, and why | `docs/ROADMAP.md` | law |
+| How the system actually works today | `docs/AS-BUILT.md` | derived |
+| What went wrong and what it taught | `docs/INCIDENTS.md` | history |
+| Setup and CLI usage | `README.md` | derived |
+| Open work, one item per ticket | GitHub Issues | ticket |
+| A lesson a role earned | `.claude/memory/<role>/` | derived |
+| One role's note to another | `.claude/memory/board.md` | ticket |
+| Which lessons were actually used | `.claude/memory/verdicts.md` | history |
+| Whether the team is working | `.claude/memory/dashboard.md` | derived |
+
+**law** — decided, not observed. Only the owner edits it. Cannot go stale,
+because it is a choice rather than a description of something that moves.
+
+**history** — dated and append-only. Never edit an entry after the fact; a
+correction is a new entry naming the one it corrects. Cannot go stale, because
+an entry is a claim about a moment.
+
+**derived** — describes something that changes underneath it. **Must name what
+recomputes it and on what trigger, in its own header. A derived file with no
+named recomputer is deleted, not fixed** — nothing is keeping it true, so it is
+a liability wearing a document's clothes.
+
+**ticket** — born with the work and removed when it closes. Cannot age, because
+it does not outlive the thing it describes.
+
+Staleness is therefore possible in exactly one class, and that class names its
+owner. The whole exposure is one command:
+
+```sh
+grep -A1 "^CLASS: derived" CLAUDE.md README.md docs/*.md .claude/memory/*.md
+```
+
+If something you want to write fits no row above, it does not get written. Add
+the row first, deliberately, or put the content in the file that already owns it.
 
 ## UI design tokens (from approved mockup — keep consistent)
 - Palette: paper #EDF0F1, card #FBFCFC, ink #1C2B33, ink-soft #5A6B74, line #D8DEE1

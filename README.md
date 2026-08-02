@@ -1,5 +1,9 @@
 # Lineage
 
+CLASS: derived
+RECOMPUTED BY: the Developer, in the same commit as any change to setup, the
+CLI, or how the pipeline is run.
+
 Concept genealogy engine — traces how an academic concept evolved across arXiv
 papers. See [CLAUDE.md](CLAUDE.md) for the full spec, scope, and build order.
 
