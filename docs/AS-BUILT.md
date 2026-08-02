@@ -1606,11 +1606,11 @@ The why behind the load-bearing choices, in one place:
     stranger asks for is spent from it.
     That makes three existing items load-bearing rather than merely correct.
     **The spend cap must bound a run, not a stage** (backlog item 2 and the
-     flag): today it covers Stage B and Stage D only, is read fresh
+    `--spend-cap` flag): today it covers Stage B and Stage D only, is read fresh
     per stage so it resets rather than accumulating, and F, G and H compute
-    spend and check nothing. ** must actually be written**
-    (it is  on both maps; the real figure sits in
-    ), because it is the instrument that says when the
+    spend and check nothing. **`genealogies.spend_usd` must actually be written**
+    (it is `0.0000` on both maps; the real figure sits in
+    `trace_requests.progress`), because it is the instrument that says when the
     trigger condition has been met. **And the non-owner quota must be
     enforceable**, since count-then-insert with no constraint behind it is the
     only thing between a stranger and the balance.
