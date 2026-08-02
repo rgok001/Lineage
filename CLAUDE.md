@@ -23,7 +23,15 @@ extends · contests · narrows · renames · merges · migrates
 - Minimal accounts: save/load maps
 
 ## Scope: OUT (do not build, do not scaffold "for later")
-Reference-manager integration, collaboration/sharing, PDF annotation, non-arXiv sources, browser extension, mobile apps, social features, formal eval harness/golden set.
+Reference-manager integration, collaboration/sharing, PDF annotation, browser extension, mobile apps, social features, formal eval harness/golden set.
+
+**Non-arXiv sources came off this list on 2026-08-02** (Product Owner). It is the
+single biggest limit on who the product is useful to, and the public roadmap page
+had been promising it while this list forbade it. It is now roadmap item F7 and is
+sequenced after the map can report on its own quality, not before: a new source
+changes extraction quality, and adding one before there is an instrument to see
+that produces more maps nobody can assess. Coming off the OUT list means it may
+be designed and built when it is reached. It does not mean scaffolding for it now.
 
 ## Architecture (4 zones)
 1. ACQUISITION (metadata-first: never fetch full text before corpus selection)

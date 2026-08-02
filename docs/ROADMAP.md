@@ -141,6 +141,40 @@ Measured, not guessed: put the corpus year distribution in the map report first,
 then set a recency floor against what OpenAlex actually offers for that concept
 and field. At $2 to $4 a map, four selection variants cost an afternoon.
 
+### F7. Sources beyond arXiv
+**Came off `CLAUDE.md`'s OUT list on 2026-08-02 (Product Owner).** It is the
+single biggest limit on who this product is useful to, and the public roadmap
+page had been promising it while the spec forbade it.
+
+Today the corpus is arXiv only, so the product serves machine learning and
+adjacent preprint fields and nothing else. A commercial lawyer, a clinician or a
+historian cannot use it at all. Every other constraint in this document limits
+how good a map is; this one limits whether a map can exist.
+
+**The part that is not obvious, and that governs how it must be built.** The
+verification claim rests on having the paper's full text. arXiv supplies LaTeX
+source, which extracts cleanly and is why the grounding check works at all. Most
+other sources supply PDFs, and PDF extraction is measurably the weaker path
+here: all 7 PDF-sourced papers in the current corpus carry text an older
+extractor produced, and the extraction audit treats them as a separate and worse
+population. So this is not "add more URLs to the fetcher". **It stresses the one
+layer the entire verified stamp depends on**, and a source whose text extracts
+badly produces maps that fail grounding rather than maps that are merely thinner.
+
+Direction, from the public roadmap page: resolve open-access copies through DOIs,
+and add biomedical full text, which is available as structured XML rather than
+PDF and is therefore the cheapest real test of whether the pipeline generalises
+beyond LaTeX.
+
+**Sequenced after F2, deliberately.** A new source changes extraction quality,
+and adding one before there is an instrument to measure that produces more maps
+nobody can assess. F2's report is what turns "we added a source" into "here is
+what that source does to the verified fraction".
+
+Needs its own design before any code: which sources, what each supplies as text,
+what the fallback is when only an abstract is available, and whether a map may
+mix sources or must declare one. Roughly a month once designed.
+
 ### F6. A requester can see the state of their own request
 Not email — sending to a stranger needs a verified domain that a Vercel
 subdomain cannot be. Showing a signed-in visitor their own requests needs no
@@ -220,9 +254,10 @@ two.
 - **A formal eval harness or golden set.** Stays on the OUT list. F2 is not one.
 - **Requester billing**, until the trigger in decision 26 fires. Building it now
   is scaffolding for later.
-- **Non-arXiv sources**, this month. On `CLAUDE.md`'s OUT list and simultaneously
-  on the public roadmap as "working on next" — a contradiction that must be
-  resolved in one direction before any code is written.
+- **Non-arXiv sources before F2 ships.** No longer forbidden — the contradiction
+  was resolved on 2026-08-02 in favour of expanding, and it is now F7. What stays
+  out is building it early: a source that extracts badly produces maps that fail
+  grounding, and F2's report is what makes that visible instead of surprising.
 
 ---
 
@@ -230,9 +265,10 @@ two.
 
 1. **Who pays for a trace.** *Answered: the owner, until the product earns
    organic usage — decision 26.*
-2. **Does the OUT list still forbid non-arXiv sources?** `CLAUDE.md` says yes and
-   the public roadmap page promises it as next. One of them is wrong today, and
-   both readers and agents act on both.
+2. **Does the OUT list still forbid non-arXiv sources?** *Answered 2026-08-02:
+   no. Sources expand. Removed from `CLAUDE.md`'s OUT list, filed as F7, and
+   sequenced after F2 so its effect on extraction quality is measurable rather
+   than assumed.*
 3. **Is a stranger's map public by default?** Decides whether migration 015
    carries a visibility column, and whether request notes and sense glosses are
    ever readable by anyone but their author. Default if unanswered: public, with
