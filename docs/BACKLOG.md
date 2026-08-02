@@ -335,6 +335,51 @@ Cost: $0, under an hour.
 
 ---
 
+### 28. Nothing in this repository re-runs any of the checks that were used to prove it correct
+**Confirmed 2026-08-02.**
+
+Filed from a narrow finding and deliberately widened; the narrow version is
+recorded first because it is what was asked for.
+
+**The narrow finding.** Decision 18 asserted that the `Viewer` brand's boundary
+"is kept as an executable probe rather than as this paragraph". There is no such
+probe committed anywhere outside `node_modules`. It was written and run by a
+tester and never checked in. The as-built has been corrected and now says what is
+true, that five forgery variants were driven through the compiler and that
+nothing re-runs them when `app/lib/authz.ts` changes. The record is honest; the
+gap in the repository is real. This is incident 13's failure mode surviving inside
+the entry written about incident 13.
+
+**The wider finding.** `git ls-files` returns exactly one test-shaped tracked
+file, `app/scripts/security-test.mjs`, and there is no test runner configured
+anywhere: no pytest, no vitest, no jest, no `test` script in `app/package.json`.
+Every check written on 2026-08-01 lived in a session scratchpad and is gone. That
+includes the brand probe, the cross-language twin probes over 39 and then 61
+malformed inputs, the database-guard probe, the reground probe with its 17
+assertions, an exhaustive subtractive proof over 15,552 signal combinations, and
+a 200,000-string check that a text fold never manufactures a match. Several were
+the sole evidence for a decision entry. All of them would fail loudly if the
+behaviour they pin were changed, and none of them will ever run again.
+
+**Why this matters more under the platform decision than it did yesterday.**
+Every quality property in the system currently holds because somebody looked. The
+roadmap's whole shape is moving those properties into the pipeline so that a
+stranger's map is trustworthy without the owner reading it. That is not
+achievable while the repository has nowhere to put a check that must keep
+passing.
+
+**The unresolved part is ownership, not effort.** The tester writes probes and
+does not commit code. The developer commits code and does not own the tester's
+evidence. So a probe that must survive in the repository belongs to neither role
+as they are written today, which is why fourteen of them were written and
+discarded in a single day without anyone breaking a rule.
+
+Fix: a place for checks to live and a command that runs them, then commit the
+brand probe as the first inhabitant. The role prompts need a sentence saying
+whose job it is; that is a change to `.claude/agents/`, and it is the Product
+Owner's to make.
+Cost: $0, half a day for the harness, minutes per probe thereafter.
+
 ## P3 — none of these is a live defect
 
 Items 10 to 18 are also small. Items 22 to 26 are not all small: they are here
