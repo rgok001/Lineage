@@ -2,15 +2,21 @@
 #
 # One background worker, one persistent disk. The worker polls trace_requests
 # for owner-approved jobs and runs the pipeline (see worker/run.py); the disk
-# holds DATA_DIR (fetched papers, extracted text, exports) and the embedding
-# model cache, both of which must outlive restarts.
+# holds DATA_DIR (fetched papers, extracted text, exports), which must outlive
+# restarts. It held an embedding-model cache until embeddings moved to Voyage.
 #
 # Secrets are sync:false — Render asks for them in the dashboard on first
-# deploy; they are never committed:
+# deploy; they are never committed. All four are required:
 #   DATABASE_URL       Neon DIRECT (unpooled) connection string. The pooled
 #                      endpoint is for the serverless app; this worker holds
 #                      one long-lived connection.
-#   ANTHROPIC_API_KEY  pays for stages B, C (labels) and D
+#   ANTHROPIC_API_KEY  pays for stages B, C (labels), D, F, G and H. It appears
+#                      in no env() call because the Anthropic SDK reads it from
+#                      the environment itself; it is required all the same.
+#   VOYAGE_API_KEY     embeddings for Stage A's relevance filter and Stage C's
+#                      clustering. Omitted from this list until 2026-08-02, and
+#                      a worker without it boots healthy and then fails every
+#                      trace on its first embedding call.
 #   OPENALEX_MAILTO    contact email for the OpenAlex polite pool
 
 services:

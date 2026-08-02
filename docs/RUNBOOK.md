@@ -51,7 +51,9 @@ is `app/`). Env var changes in Vercel do not reach an existing build: redeploy
 after changing them.
 
 **Deploying the worker.** Render dashboard -> New -> Blueprint -> this repo;
-Render reads `render.yaml` and prompts for the three secrets. Success looks
+Render reads `render.yaml` and prompts for every secret it marks `sync: false`;
+the table above says what each one is for. A count was written here instead, and
+it was still saying three after `VOYAGE_API_KEY` became the fourth. Success looks
 like "Worker up. Polling every 10s for approved trace requests" in the logs.
 
 **Backup and restore.** Stage E's JSON exports under `data/` are the map

@@ -14,7 +14,8 @@ papers. See [CLAUDE.md](CLAUDE.md) for the full spec, scope, and build order.
   actually runs, is [docs/PIPELINE.md](docs/PIPELINE.md); this file is how to
   invoke them.
 - `pipeline/db/` — migrations + tiny migration runner.
-- `app/` — Next.js front end + API (Phase 3+).
+- `worker/` — the trace worker: claims approved requests and runs the stages.
+- `app/` — Next.js front end + API. Vercel deploys from here.
 - `docker-compose.yml` — optional local Postgres 16 + pgvector fallback.
 
 ## Setup
@@ -27,12 +28,12 @@ fallback — see `docker-compose.yml`.
 # 1. Secrets / config
 cp .env.example .env        # set DATABASE_URL to your Neon string + API keys
 
-# 2. Python env + migrate (creates the four tables in Neon)
+# 2. Python env + migrate (applies every pending migration; safe to re-run)
 python -m venv .venv && .venv\Scripts\activate   # Windows
 pip install -r pipeline/requirements.txt
 python pipeline/db/migrate.py
 
-# 3. App (later phases)
+# 3. App
 cd app && npm install && npm run dev
 ```
 
@@ -60,7 +61,8 @@ python pipeline/stage_b_extract.py "attention" --model claude-haiku-4-5
 
 # Stage C: embed definitions + cluster into concept-states (nodes)
 python pipeline/stage_c_cluster.py "attention"                     # LLM-labelled nodes
-python pipeline/stage_c_cluster.py "attention" --no-label          # offline, free
+python pipeline/stage_c_cluster.py "attention" --no-label          # no LLM labels; still
+                                                                   # embeds via Voyage
 
 # Stage D: classify edges from cross-node citations (Semantic Scholar, no key)
 python pipeline/stage_d_edges.py "attention" --dry-run             # show citation links
@@ -68,6 +70,22 @@ python pipeline/stage_d_edges.py "attention"
 
 # Stage E: grounding check + assemble genealogy JSON
 python pipeline/stage_e_ground.py "attention"
+
+# Stage F: per-paper magnitude (attention + displacement). Run after Stage D,
+# which populates the citation cache it reads
+python pipeline/stage_f_magnitude.py "attention"
+
+# Stage G: compose the threads the map's front door opens on (needs Stage E)
+python pipeline/stage_g_threads.py "attention"
+python pipeline/stage_g_threads.py "attention" --threads 6   # target count; default scales with corpus
+
+# Stage H: a checked quote under each claim in a thread's account (needs Stage G)
+python pipeline/stage_h_claims.py "attention"
+python pipeline/stage_h_claims.py "attention" --thread s0    # one thread, to try it first
+python pipeline/stage_h_claims.py "attention" --recheck      # re-ground stored quotes, no model, free
+
+# F, G and H all spend: none of them has a --dry-run, and --model overrides each
+# stage's own default (Haiku for F and G, Sonnet for H) rather than LLM_MODEL.
 
 # Workbench: curate the draft (every edit is recorded in genealogies.user_edits,
 # attributed to LINEAGE_ACTOR if set, else user@host, and always as unverified)
@@ -95,19 +113,30 @@ python worker/run.py           # poll forever (10s interval)
 python worker/run.py --once    # process at most one job, then exit
 ```
 
-Needs the same root `.env` as the pipeline (direct DB endpoint, API key,
-DATA_DIR). Vercel never runs traces — a trace takes ~15 min and needs a disk,
-so the worker runs on any long-lived box (a laptop counts).
+Needs the same root `.env` as the pipeline; every variable it reads, and which
+Neon endpoint each wants, is in the environment table in
+[docs/RUNBOOK.md](docs/RUNBOOK.md). Vercel never runs traces: a trace takes
+roughly 18 to 23 minutes (two runs measured on 2026-08-01: 18.3 and 23.3
+minutes) and needs a disk, so the worker runs on any long-lived box (a laptop
+counts).
 
 ### Deploying the worker (Render)
 
 `render.yaml` declares the production worker: a Render Background Worker with
-a 5 GB persistent disk mounted at `/data` for papers, exports, and the
-embedding-model cache. Deploy: Render dashboard -> New -> Blueprint -> pick
-this repo; Render reads `render.yaml` and prompts for the three secrets
-(DATABASE_URL = the DIRECT/unpooled Neon string, ANTHROPIC_API_KEY,
-OPENALEX_MAILTO). First build downloads the embedding models to the disk;
-later restarts reuse them. Pushes to master auto-deploy the worker.
+a 5 GB persistent disk mounted at `/data`. The disk holds `DATA_DIR` and
+nothing else: fetched papers, extracted text, exports. Nothing is downloaded
+into it at build time, because embeddings are the Voyage hosted API and the
+worker loads no models.
+
+Deploy: Render dashboard -> New -> Blueprint -> pick this repo. Render reads
+`render.yaml` and prompts for the four secrets it marks `sync: false`:
+`DATABASE_URL` (the DIRECT, unpooled Neon string), `ANTHROPIC_API_KEY`,
+`VOYAGE_API_KEY` and `OPENALEX_MAILTO`. All four are required, including
+`ANTHROPIC_API_KEY`, which no code reads by name because the Anthropic SDK
+takes it from the environment itself. A worker missing `VOYAGE_API_KEY` boots
+and looks healthy, then fails every trace at corpus selection. Pushes to master
+auto-deploy the worker; the rest of the procedure is
+[docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Extraction audit
 
@@ -168,7 +197,10 @@ python pipeline/extract_text.py --concept "attention" --force  # scoped: the pap
 python pipeline/stage_b_extract.py "attention" --refresh       # fresh quotes, ids kept
 python pipeline/stage_c_cluster.py "attention" --embed-only    # vectors, no re-clustering
 python pipeline/stage_e_ground.py "attention"                  # re-ground, honestly
-python pipeline/stage_h_claims.py "attention"                  # re-check claim quotes
+python pipeline/stage_h_claims.py "attention" --recheck        # re-ground stored claim
+                                                               # quotes, free; without
+                                                               # --recheck it rewrites the
+                                                               # accounts for $4-6
 python pipeline/check_extraction.py --concept "attention"      # confirm staleness gone
 ```
 
