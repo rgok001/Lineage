@@ -141,6 +141,12 @@ Measured, not guessed: put the corpus year distribution in the map report first,
 then set a recency floor against what OpenAlex actually offers for that concept
 and field. At $2 to $4 a map, four selection variants cost an afternoon.
 
+### F6. A requester can see the state of their own request
+Not email — sending to a stranger needs a verified domain that a Vercel
+subdomain cannot be. Showing a signed-in visitor their own requests needs no
+domain and is an hour's work. Without it, someone who asks for a map has no way
+to learn it exists.
+
 ### F7. Sources beyond arXiv
 **Came off `CLAUDE.md`'s OUT list on 2026-08-02 (Product Owner).** It is the
 single biggest limit on who this product is useful to, and the public roadmap
@@ -174,12 +180,6 @@ what that source does to the verified fraction".
 Needs its own design before any code: which sources, what each supplies as text,
 what the fallback is when only an abstract is available, and whether a map may
 mix sources or must declare one. Roughly a month once designed.
-
-### F6. A requester can see the state of their own request
-Not email — sending to a stranger needs a verified domain that a Vercel
-subdomain cannot be. Showing a signed-in visitor their own requests needs no
-domain and is an hour's work. Without it, someone who asks for a map has no way
-to learn it exists.
 
 ---
 
