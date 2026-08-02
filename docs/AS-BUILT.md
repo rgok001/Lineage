@@ -90,8 +90,8 @@ machines without the other noticing.
 CLAUDE.md            product spec and non-negotiable rules
 README.md            setup and CLI usage
 render.yaml          Render blueprint for the trace worker
-docs/                AS-BUILT.md (this file), ROADMAP.md,
-                     ROADMAP.md
+docs/                AS-BUILT.md (this file), INCIDENTS.md, ROADMAP.md,
+                     design/ (one file per design that needed writing down)
 pipeline/            stages A-H + auxiliaries (Python, CLI-first; the worker
                      runs thirteen steps, see section 4)
   common.py          env loading, polite HTTP session, data_dir()
