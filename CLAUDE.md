@@ -14,8 +14,8 @@ This is a **real application, not a portfolio demonstrator** (revised — it beg
 
 **GitHub Issues is the only list of open work**, and is canonical: https://github.com/rgok001/Lineage/issues
 If a document and an issue disagree, the issue is right. Titles carry the original item id (`[B21]`, `[F3]`, `[Q7]`) because commit messages and
-`docs/AS-BUILT.md` cite those numbers; they are never reused.
-`docs/ROADMAP.md` holds direction and sequencing, not items. `docs/AS-BUILT.md` holds what is true and why.
+the `docs/` record cite those numbers; they are never reused.
+`docs/ROADMAP.md` holds direction and sequencing, not items. `docs/AS-BUILT.md` holds what is true today, `docs/DECISIONS.md` holds why, and `docs/RUNBOOK.md` holds how to operate it.
 
 **No design and no code without a ticket.** Before an Architect designs, before
 a Developer edits a file, there must be a GitHub issue for the work. If none
@@ -117,6 +117,8 @@ released them, and the public roadmap page was promising them meanwhile.
 | Product law, scope, non-negotiable rules | `CLAUDE.md` | law |
 | What to build next, and why | `docs/ROADMAP.md` | law |
 | How the system actually works today | `docs/AS-BUILT.md` | derived |
+| How to operate it: env vars, deploys, procedures | `docs/RUNBOOK.md` | derived |
+| Why a load-bearing choice was made | `docs/DECISIONS.md` | history |
 | What went wrong and what it taught | `docs/INCIDENTS.md` | history |
 | Setup and CLI usage | `README.md` | derived |
 | Open work, one item per ticket | GitHub Issues (https://github.com/rgok001/Lineage/issues) | ticket |
