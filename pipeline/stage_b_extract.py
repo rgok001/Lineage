@@ -36,7 +36,8 @@ import psycopg
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import quote_is_grounded, REPO_ROOT, data_dir, env  # noqa: E402
+from common import (grounded_span, quote_is_grounded, read_grounding_text,  # noqa: E402
+                    REPO_ROOT, data_dir, env)
 
 DEFAULT_MODEL = "claude-opus-4-8"
 
@@ -137,7 +138,7 @@ def cost_usd(model: str, in_tok: int, out_tok: int) -> float:
 # concept's corpus (research CLI use), wrong for the worker: a new trace would
 # re-bill the LLM against every paper any previous trace ever fetched.
 SELECT_PAPERS = f"""
-SELECT p.id, p.arxiv_id, p.title, p.extracted_text_path
+SELECT p.id, p.arxiv_id, p.title, p.extracted_text_path, p.extractor_version
 FROM papers p
 WHERE p.extracted_text_path IS NOT NULL
   AND COALESCE(p.text_title_match, 0) >= {TITLE_MATCH_MIN}
@@ -149,13 +150,22 @@ WHERE p.extracted_text_path IS NOT NULL
 {{corpus_filter}}{{arxiv_filter}}ORDER BY p.cited_by_count DESC NULLS LAST
 """
 
+# The stamp is the boolean AND the four columns migration 015 added: where in
+# the text the quote was found, a digest of the bytes it was found in, and which
+# extractor produced them. They are written by the same statement as the boolean
+# because they are one fact about one moment; a boolean whose digest arrived
+# separately would be a stamp qualified by something that might not describe it.
 INSERT_DEF = """
 INSERT INTO definitions (paper_id, concept, prompt_version, defines_concept,
                          definition, verbatim_quote, quote_verified, section,
-                         novelty_claims, model)
+                         novelty_claims, model,
+                         quote_start, quote_end, quote_text_digest,
+                         quote_extractor_version)
 VALUES (%(paper_id)s, %(concept)s, %(prompt_version)s, %(defines_concept)s,
         %(definition)s, %(verbatim_quote)s, %(quote_verified)s, %(section)s,
-        %(novelty_claims)s, %(model)s)
+        %(novelty_claims)s, %(model)s,
+        %(quote_start)s, %(quote_end)s, %(quote_text_digest)s,
+        %(quote_extractor_version)s)
 ON CONFLICT (paper_id, concept, prompt_version) DO NOTHING
 """
 
@@ -181,14 +191,18 @@ UPDATE definitions SET
     section         = %(section)s,
     novelty_claims  = %(novelty_claims)s,
     model           = %(model)s,
-    embedding       = NULL
+    embedding       = NULL,
+    quote_start             = %(quote_start)s,
+    quote_end               = %(quote_end)s,
+    quote_text_digest       = %(quote_text_digest)s,
+    quote_extractor_version = %(quote_extractor_version)s
 WHERE paper_id = %(paper_id)s AND concept = %(concept)s
   AND prompt_version = %(prompt_version)s
 """
 
 # The mirror of SELECT_PAPERS: papers that DO have a row, so they can be redone.
 SELECT_PAPERS_REFRESH = f"""
-SELECT p.id, p.arxiv_id, p.title, p.extracted_text_path
+SELECT p.id, p.arxiv_id, p.title, p.extracted_text_path, p.extractor_version
 FROM papers p
 JOIN definitions d ON d.paper_id = p.id
 WHERE p.extracted_text_path IS NOT NULL
@@ -215,7 +229,9 @@ WHERE p.extracted_text_path IS NOT NULL
 # instead.
 SELECT_DEFS_REGROUND = """
 SELECT d.id, p.arxiv_id, p.extracted_text_path, d.verbatim_quote,
-       d.quote_verified, d.defines_concept
+       d.quote_verified, d.defines_concept,
+       d.quote_start, d.quote_end, d.quote_text_digest,
+       d.quote_extractor_version, p.extractor_version
 FROM definitions d
 JOIN papers p ON p.id = d.paper_id
 WHERE d.concept = %(concept)s
@@ -234,7 +250,11 @@ WHERE d.concept = %(concept)s
 # an UPDATE in this file that is wrong about its scope rewrites another map's
 # stamps in silence.
 REGROUND_DEF = """
-UPDATE definitions SET quote_verified = %(quote_verified)s
+UPDATE definitions SET quote_verified = %(quote_verified)s,
+       quote_start             = %(quote_start)s,
+       quote_end               = %(quote_end)s,
+       quote_text_digest       = %(quote_text_digest)s,
+       quote_extractor_version = %(quote_extractor_version)s
 WHERE id = %(def_id)s AND concept = %(concept)s
   AND prompt_version = %(prompt_version)s
 """
@@ -246,9 +266,16 @@ def reground(conn, concept: str, prompt_version: str, params: dict,
 
     Costs nothing: no model, no network, no key, disk reads only. Mirrors
     stage_h_claims.py --recheck deliberately, down to keeping the payload and
-    moving only the stamp, and it calls the same `quote_is_grounded` every other
-    stage calls. One comparison function is why "verified" means one thing
-    across this system.
+    moving only the stamp, and it calls the same matcher every other stage calls.
+    One comparison function is why "verified" means one thing across this system.
+
+    Since migration 015 the stamp is four columns and a boolean, so a row is
+    rewritten when ANYTHING about it moved, not only when the verdict flipped.
+    The old `continue` on an unchanged boolean would have left every re-checked
+    stamp with a NULL digest — still rendering stale after the very run that
+    re-checked it. The printed narrative still reports only the rows whose
+    verdict moved, so the log does not become one line per definition saying
+    nothing happened.
     """
     rows = conn.execute(
         SELECT_DEFS_REGROUND.format(corpus_filter=corpus_filter,
@@ -268,9 +295,11 @@ def reground(conn, concept: str, prompt_version: str, params: dict,
     # UPDATE inside this loop on an autocommit connection, which meant the first
     # rows were committed before the last row had been looked at, and there was
     # no point at which the run as a whole could be refused.
-    pending: list[tuple[int, str, bool]] = []
+    pending: list[tuple[int, str, bool, dict]] = []
+    moved_rows = moved_gained = 0
 
-    for i, (def_id, arxiv, tpath, quote, was, defines) in enumerate(rows, 1):
+    for i, (def_id, arxiv, tpath, quote, was, defines,
+            had_start, had_end, had_digest, had_ever, paper_ever) in enumerate(rows, 1):
         was = bool(was)
         stamp = "verified" if was else "unverified"
         tfile = (dd / tpath) if tpath else None
@@ -287,9 +316,11 @@ def reground(conn, concept: str, prompt_version: str, params: dict,
             print(f"  [{i}/{total}] {arxiv}: {why}, stamp left as {stamp}", flush=True)
             continue
         try:
-            # The same read Stage B does when it creates the stamp. A recompute
-            # that reads the file differently from the compute is not a recompute.
-            text = tfile.read_text(encoding="utf-8")
+            # The same read Stage B does when it creates the stamp, through the
+            # one helper both use, so the offsets stored here are offsets into
+            # the same decoding of the same bytes. A recompute that reads the
+            # file differently from the compute is not a recompute.
+            text, digest = read_grounding_text(tpath)
         except (OSError, UnicodeDecodeError) as exc:
             unchecked.append((arxiv, was))
             print(f"  [{i}/{total}] {arxiv}: text unreadable ({exc}), "
@@ -313,13 +344,36 @@ def reground(conn, concept: str, prompt_version: str, params: dict,
         # (see the extract loop below). A row that says the paper does not define
         # the concept has no definition quote to stand behind, whatever string
         # happens to sit in the column.
-        ok = bool(defines) and bool(quote) and quote_is_grounded(text, quote)
+        span = (grounded_span(text, quote)
+                if bool(defines) and bool(quote) else None)
+        ok = span is not None
         grounded += ok
-        if ok == was:
+        # The extractor version is copied from the paper's row, not taken from
+        # the running extract_text: it is provenance about the TEXT, and this
+        # code did not produce the text. Claiming otherwise would be a false
+        # provenance claim on exactly the papers backlog item 4 is about, whose
+        # text predates the current extractor. NULL there means the text predates
+        # the column, which is the whole truth about it.
+        after = {"quote_start": span[0] if span else None,
+                 "quote_end": span[1] if span else None,
+                 "quote_text_digest": digest,
+                 "quote_extractor_version": paper_ever}
+        unchanged = (ok == was and had_start == after["quote_start"]
+                     and had_end == after["quote_end"]
+                     and had_digest == digest and had_ever == paper_ever)
+        if unchanged:
             print(f"  [{i}/{total}] {arxiv}: still {stamp}", flush=True)
             continue
 
-        pending.append((def_id, arxiv, ok))
+        pending.append((def_id, arxiv, ok, after))
+        if ok == was:
+            # The verdict did not move; the stamp became re-checkable, or the
+            # text under it changed identity. Not narrated per row, because on
+            # the first run after 015 that is every row and the log would drown
+            # the definitions that actually moved.
+            continue
+        moved_rows += 1
+        moved_gained += ok
         moved = ("not found before, found in the text now" if ok
                  else "not found in the extracted text as it is on disk now")
         print(f"  [{i}/{total}] {arxiv}: {moved}", flush=True)
@@ -352,19 +406,26 @@ def reground(conn, concept: str, prompt_version: str, params: dict,
         # UPDATE commits on its own and a failure partway leaves the concept
         # half-flipped, which is a third state nobody can read.
         with conn.transaction():
-            for def_id, _arxiv, ok in pending:
+            for def_id, _arxiv, ok, stamp_cols in pending:
                 conn.execute(REGROUND_DEF, {"def_id": def_id, "concept": concept,
                                             "prompt_version": prompt_version,
-                                            "quote_verified": ok})
+                                            "quote_verified": ok, **stamp_cols})
 
-    gained = sum(1 for *_, ok in pending if ok)
-    lost = len(pending) - gained
-    after = before - lost + gained
+    # Counted over the rows whose VERDICT moved, not over every row written.
+    # Since 015 a row is written when its span or its digest moved too, and
+    # folding those into "newly verified" would report a re-check that changed
+    # nobody's mind as a corpus of stamps flipping.
+    gained, lost = moved_gained, moved_rows - moved_gained
+    after_count = before - lost + gained
     print(f'\n"{concept}" at prompt {prompt_version}: {total} definitions, '
           f"{checked} re-checked against the text on disk.")
     print(f"  verified before: {before}")
-    print(f"  verified after:  {after}  ({gained} newly verified, "
+    print(f"  verified after:  {after_count}  ({gained} newly verified, "
           f"{lost} not found in the extracted text now on disk)")
+    print(f"  stamps rewritten: {len(pending)} of {checked} re-checked "
+          f"(a stamp is rewritten when its span, its text digest or its "
+          f"verdict moved, so the first run after migration 015 rewrites "
+          f"every one it could check)")
     if unchecked:
         still = sum(1 for _, was in unchecked if was)
         print(f"\n  Could NOT be checked, the paper's extracted text is missing or "
@@ -478,7 +539,7 @@ def main() -> None:
 
     # ---- estimate -----------------------------------------------------------
     prompts = []
-    for pid, aid, title, tpath in rows:
+    for pid, aid, title, tpath, _ever in rows:
         # The DB is shared across machines but the files are per-disk: a paper
         # extracted on another worker is flagged extracted here, yet its text
         # file may be absent on this disk. Skip rather than crash the whole run.
@@ -520,7 +581,8 @@ def main() -> None:
                  f"Lower --limit, use a cheaper --model, or raise the cap.")
 
     # ---- extract ------------------------------------------------------------
-    text_path_by_id = {aid: tpath for _, aid, _, tpath in rows}
+    text_path_by_id = {aid: tpath for _, aid, _, tpath, _ever in rows}
+    extractor_by_id = {aid: ever for _, aid, _, _, ever in rows}
     spend = 0.0
     kept = dropped = unverified = 0
     for i, (pid, aid, title, user_prompt) in enumerate(prompts, 1):
@@ -539,11 +601,18 @@ def main() -> None:
             continue
 
         # Grounding check at the point of creation: the quote must literally
-        # occur in the text we sent, or it is not evidence.
+        # occur in the text we sent, or it is not evidence. The stamp records
+        # what was true of that moment — where it matched, and the digest of the
+        # bytes it matched against — so it can be re-checked by somebody who was
+        # not here (migration 015). A quote we never looked for leaves all four
+        # NULL, and NULL renders stale, which is exactly the claim it deserves.
         verified = False
+        span = None
+        digest = None
         if ex.defines_concept and ex.verbatim_quote:
-            full = (data_dir() / text_path_by_id[aid]).read_text(encoding="utf-8")
-            verified = quote_is_grounded(full, ex.verbatim_quote)
+            full, digest = read_grounding_text(text_path_by_id[aid])
+            span = grounded_span(full, ex.verbatim_quote)
+            verified = span is not None
 
         # Always record the verdict — "does not define it" is a finding worth
         # caching, not an absence of one. Without a row, every re-run re-pays
@@ -555,6 +624,14 @@ def main() -> None:
             "quote_verified": verified, "section": ex.section or None,
             "novelty_claims": psycopg.types.json.Json(ex.novelty_claims),
             "model": args.model,
+            "quote_start": span[0] if span else None,
+            "quote_end": span[1] if span else None,
+            "quote_text_digest": digest,
+            # The extractor version of the TEXT, read from the paper's row rather
+            # than from the running extract_text: this stage did not produce the
+            # file, and extract_text skips papers already extracted, so the
+            # running version is not reliably the one that made these bytes.
+            "quote_extractor_version": extractor_by_id.get(aid),
         })
         conn.commit()
 

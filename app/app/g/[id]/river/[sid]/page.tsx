@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "../../../../../lib/db";
 import { getRiver, readableQuote } from "../../../../../lib/genealogy";
+import { STAMP_COLOR, STAMP_LABEL, stampOf } from "../../../../../lib/stamp";
 
 export const dynamic = "force-dynamic";
 
@@ -23,13 +24,21 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
   const arxivs = s.papers.map((p) => p.arxiv);
   const quoteRows = (arxivs.length && g.length
     ? await sql`
-        SELECT p.arxiv_id AS arxiv, d.verbatim_quote AS quote, d.quote_verified AS verified
+        SELECT p.arxiv_id AS arxiv, d.verbatim_quote AS quote, d.quote_verified AS verified,
+               d.quote_text_digest, p.extracted_text_digest
         FROM definitions d JOIN papers p ON p.id = d.paper_id
         WHERE p.arxiv_id = ANY(${arxivs}) AND d.concept = ${g[0].concept}
           AND d.prompt_version = ${g[0].prompt_version} AND d.defines_concept = true
       `
-    : []) as { arxiv: string; quote: string | null; verified: boolean | null }[];
-  const evidence = new Map(quoteRows.map((r) => [r.arxiv, r]));
+    : []) as { arxiv: string; quote: string | null; verified: boolean | null;
+               quote_text_digest: string | null; extracted_text_digest: string | null }[];
+  const evidence = new Map(quoteRows.map((r) => [r.arxiv, {
+    ...r,
+    // The same resolver the dossier and the evidence page use (migration 015).
+    // This page shows the same quote as the dossier, so it must say the same
+    // thing about it.
+    stamp: stampOf(r.verified, r.quote_text_digest, r.extracted_text_digest),
+  }]));
 
   return (
     <main style={{ padding: "2rem 1.5rem 5rem" }}>
@@ -47,7 +56,7 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
         )}
         <p style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)",
           margin: "1.3rem 0 0", paddingTop: ".9rem", borderTop: "1px solid var(--line)" }}>
-          {s.papers.length} papers, in the order the idea moved · each quote is the paper’s own definition, marked verified or inferred
+          {s.papers.length} papers, in the order the idea moved · each quote is the paper’s own definition, marked verified, inferred, or not re-checked
         </p>
 
         <div style={{ position: "relative", marginTop: "2.4rem" }}>
@@ -58,7 +67,7 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
             const claims = Array.isArray(p.claims) ? p.claims.filter((c) => c?.text) : [];
             const ev = evidence.get(p.arxiv);
             const quote = readableQuote((typeof ev?.quote === "string" ? ev.quote : "").replace(/\s+/g, " ").trim());
-            const verified = ev?.verified === true;
+            const stamp = ev?.stamp ?? "stale";
             return (
             <section key={p.arxiv} style={{ position: "relative", padding: "0 0 2.2rem 2rem" }}>
               <span style={{ position: "absolute", left: 0, top: 5, width: 12, height: 12, borderRadius: "50%",
@@ -116,14 +125,14 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
               ) : null}
               {quote && (
                 <div style={{ margin: ".7rem 0 0", padding: ".55rem .8rem", background: "var(--card)",
-                  borderLeft: `2px solid var(--${verified ? "verified" : "inferred"})`, borderRadius: "0 6px 6px 0" }}>
+                  borderLeft: `2px solid ${STAMP_COLOR[stamp]}`, borderRadius: "0 6px 6px 0" }}>
                   <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontStyle: "italic",
                     fontSize: ".92rem", lineHeight: 1.5, color: "var(--ink)" }}>
                     “{quote}”
                   </blockquote>
                   <span style={{ display: "block", marginTop: ".35rem", fontFamily: "var(--font-mono)",
-                    fontSize: ".64rem", color: `var(--${verified ? "verified" : "inferred"})`, letterSpacing: ".04em" }}>
-                    {verified ? "✓ verified" : "○ inferred"} · {p.title.length > 40 ? p.title.slice(0, 40) + "…" : p.title}, {p.year}
+                    fontSize: ".64rem", color: STAMP_COLOR[stamp], letterSpacing: ".04em" }}>
+                    {STAMP_LABEL[stamp]} · {p.title.length > 40 ? p.title.slice(0, 40) + "…" : p.title}, {p.year}
                   </span>
                 </div>
               )}

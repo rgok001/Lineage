@@ -1,6 +1,7 @@
 """Shared plumbing for pipeline CLI scripts: env loading and polite HTTP."""
 
 import getpass
+import hashlib
 import os
 import socket
 import sys
@@ -366,6 +367,79 @@ def _fold(s: str) -> str:
     return _MATCH_MARK.sub("", "".join(s.split())).lower()
 
 
+def _fold_indexed(s: str) -> tuple[str, list[int]]:
+    """`_fold(s)`, plus the index in `s` that each folded character came from.
+
+    The same three steps in the same order, because a span map that describes a
+    different fold from the one the matcher runs is worse than no span at all:
+    it would be wrong invisibly, which is the class of fault ticket #29 exists to
+    remove.
+
+    Steps 1 and 2 only ever delete, so their index tracking is exact. Step 3 is
+    where the care is. `str.lower()` is not the concatenation of its characters'
+    lowercase: Python implements the Greek final-sigma rule contextually, so
+    "ΟΔΟΣ".lower() ends in ς while "Σ".lower() is σ. Folding per character would
+    therefore produce a string `_fold` does not produce, and every stored span
+    would describe a match the matcher never made. So the *content* is taken from
+    lowering the whole string, exactly as `_fold` does, and only the per-character
+    *lengths* are used to build the map — final sigma is length-preserving, while
+    the expansions that are not ("İ".lower() is two characters) are
+    context-free. If those two ever disagree in total length the map cannot be
+    trusted, so this raises rather than returning a span it cannot justify.
+    """
+    kept: list[str] = []
+    origin: list[int] = []
+    for i, c in enumerate(s):
+        if not c.isspace():          # step 1: "".join(s.split())
+            kept.append(c)
+            origin.append(i)
+    stripped = "".join(kept)
+
+    for m in reversed(list(_MATCH_MARK.finditer(stripped))):   # step 2
+        del kept[m.start():m.end()]
+        del origin[m.start():m.end()]
+    stripped = "".join(kept)
+
+    folded = stripped.lower()        # step 3, whole-string, as _fold does
+    mapped: list[int] = []
+    for c, i in zip(kept, origin):
+        mapped.extend([i] * len(c.lower()))
+    if len(mapped) != len(folded):
+        raise ValueError(
+            "the folded text and its index map came out different lengths "
+            f"({len(folded)} vs {len(mapped)}); a character in this text "
+            "lowercases differently in context than on its own, so no span can "
+            "be justified for it")
+    return folded, mapped
+
+
+def grounded_span(text: str, quote: str) -> tuple[int, int] | None:
+    """Where in `text` this quote is, as half-open character offsets, or None.
+
+    The leftmost occurrence, and the *smallest range of whole source characters
+    that covers it*. Whole characters matter in one direction only: when a match
+    begins or ends inside a character whose lowercase is several characters
+    ("İ"), the span covers that character rather than cutting it in half, so
+    `_fold(text[start:end])` can be a character longer than `_fold(quote)`. A
+    span that named half a character would be an offset no reader could use.
+
+    An all-whitespace quote folds to the empty string, which `in` finds at 0.
+    That is a pass today and stays a pass here, reported as the empty span (0, 0):
+    this function is the only implementation of "is this quote in this text", so
+    it may not quietly decide a case the boolean used to decide differently.
+    """
+    if not text or not quote:
+        return None
+    folded, origin = _fold_indexed(text)
+    needle = _fold(quote)
+    at = folded.find(needle)
+    if at < 0:
+        return None
+    if not needle:
+        return (0, 0)
+    return (origin[at], origin[at + len(needle) - 1] + 1)
+
+
 def quote_is_grounded(text: str, quote: str) -> bool:
     """Is this quote genuinely a span of that text?
 
@@ -375,10 +449,89 @@ def quote_is_grounded(text: str, quote: str) -> bool:
     had copied correctly. Folding those two away makes the check test what it
     claims to test. It is not fuzzy matching: every other character must be
     identical and in order.
+
+    One matcher, deliberately: this is `grounded_span` with the answer thrown
+    away. Two implementations of the same question would eventually disagree and
+    the disagreement would be invisible, because the boolean and the span would
+    be telling different stories about the same stamp.
     """
-    if not text or not quote:
-        return False
-    return _fold(quote) in _fold(text)
+    return grounded_span(text, quote) is not None
+
+
+# ── what a stamp was checked against ────────────────────────────────────────
+#
+# Ticket #29. A stamp that cannot be re-checked from stored data is a claim
+# about evidence rather than evidence, so every stamp now carries a digest of
+# the bytes the match ran against, and `papers` carries the digest of the bytes
+# on disk now. The two are written by different code at different moments and
+# are never copied from one another, which is what lets the comparison return
+# false.
+
+TEXT_DIGEST_ALGO = "sha256"
+
+
+def text_digest(raw: bytes) -> str:
+    """`sha256:<64 hex>` of a file's bytes.
+
+    Over bytes and not over a decoded string, so a third party reproduces it with
+    `sha256sum` and nothing depends on how a platform translates newlines. The
+    algorithm is written into the value so that changing it later is visible in
+    the data rather than silent. Nothing here is `hash()`ed: str.__hash__ is
+    salted per process and this value has to survive a restart (migration 014's
+    note, earned the same way).
+    """
+    return f"{TEXT_DIGEST_ALGO}:{hashlib.sha256(raw).hexdigest()}"
+
+
+def read_grounding_text(rel_path: str) -> tuple[str, str]:
+    """(text, digest) for a path relative to DATA_DIR.
+
+    Every stage that grounds anything reads through this and nothing else, so the
+    offsets they all store are offsets into the same decoding of the same bytes.
+    Raises on a missing or undecodable file; callers already handle that and must
+    keep handling it as "could not check", never as "not found" (decision 21).
+    """
+    raw = (data_dir() / rel_path).read_bytes()
+    return raw.decode("utf-8"), text_digest(raw)
+
+
+STAMP_VERIFIED = "verified"
+STAMP_INFERRED = "inferred"
+STAMP_STALE = "stale"
+
+
+def stamp_state(verified: object, stamp_digest: str | None,
+                current_digest: str | None) -> str:
+    """What a stamp may be displayed as, given the text as it is now.
+
+    Twin of `stampOf` in app/lib/stamp.ts; the two must agree on every input, and
+    the truth table that pins them is in docs/design/recheckable-stamp.md.
+
+    **Stale dominates the boolean, in both directions.** A failed check against
+    text that has since changed is no more about today's text than a passing one
+    is, and one rule with no exceptions is the only version of this that survives
+    being copied into a second language. There is no threshold here and there
+    must never be one: it is exact equality of a digest, or it is stale.
+    """
+    if not stamp_digest or not current_digest or stamp_digest != current_digest:
+        return STAMP_STALE
+    return STAMP_VERIFIED if verified else STAMP_INFERRED
+
+
+def edge_stamp_state(verified: object,
+                     source_digest: str | None, source_current: str | None,
+                     target_digest: str | None, target_current: str | None) -> str:
+    """The same rule for a unit carrying two stamps.
+
+    An edge's boolean is one verdict over both quotes, so there is no per-side
+    boolean to resolve; what there is per side is whether that side's text has
+    moved. Either side stale makes the edge stale, because half a re-checkable
+    edge is not a re-checkable edge.
+    """
+    if (stamp_state(True, source_digest, source_current) == STAMP_STALE
+            or stamp_state(True, target_digest, target_current) == STAMP_STALE):
+        return STAMP_STALE
+    return STAMP_VERIFIED if verified else STAMP_INFERRED
 
 
 # ── reading genealogies.nodes ───────────────────────────────────────────────

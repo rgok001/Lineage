@@ -18,7 +18,9 @@ Usage:
 
 import argparse
 import gzip
+import hashlib
 import io
+import json
 import re
 import sys
 import tarfile
@@ -27,7 +29,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import REPO_ROOT, data_dir, env  # noqa: E402
+from common import REPO_ROOT, data_dir, env, text_digest  # noqa: E402
 
 
 def read_archive(raw_bytes: bytes) -> tuple[dict[str, str], dict[str, bytes]]:
@@ -266,16 +268,36 @@ def skip_ws(s: str, i: int) -> int:
     return i
 
 
+# The marks we inject into pylatexenc's context, as data, so the extractor
+# version below can digest them without importing pylatexenc. `_latex_context`
+# builds its MacroTextSpecs from this same list, so the digest covers the marks
+# actually used rather than a second copy of them.
+CITE_MARK = "<cit.>"
+REF_MARK = "<ref>"
+# pylatexenc and pymupdf are asked for these modes and no others. They are the
+# rest of "what text comes out" that is not one of our own patterns.
+PARSE_MATH_MODE = "text"
+PARSE_STRICT_SPACES = False
+PDF_TEXT_MODE = "text"
+
+
+def _lineage_macro_specs() -> list[tuple[str, str]]:
+    return ([(m, CITE_MARK) for m in CITE_MACROS]
+            + [(m, REF_MARK) for m in REF_MACROS])
+
+
 def _latex_context():
     from pylatexenc.latex2text import get_default_latex_context_db, MacroTextSpec
     db = get_default_latex_context_db()
     db.add_context_category(
         "lineage-citations",
         prepend=True,
-        macros=[MacroTextSpec(m, simplify_repl="<cit.>") for m in CITE_MACROS]
-        + [MacroTextSpec(m, simplify_repl="<ref>") for m in REF_MACROS],
+        macros=[MacroTextSpec(name, simplify_repl=repl)
+                for name, repl in _lineage_macro_specs()],
     )
     return db
+
+
 
 
 def tidy_marks(text: str) -> str:
@@ -302,8 +324,10 @@ def _parse(latex: str) -> str | None:
     will fix."""
     from pylatexenc.latex2text import LatexNodes2Text
     try:
-        return LatexNodes2Text(latex_context=_latex_context(), math_mode="text",
-                               strict_latex_spaces=False).latex_to_text(latex)
+        return LatexNodes2Text(latex_context=_latex_context(),
+                               math_mode=PARSE_MATH_MODE,
+                               strict_latex_spaces=PARSE_STRICT_SPACES
+                               ).latex_to_text(latex)
     except Exception:
         return None
 
@@ -359,7 +383,7 @@ def pdf_to_text(source) -> str:
     else:
         doc = fitz.open(source)
     with doc:
-        raw = "\n".join(page.get_text() for page in doc)
+        raw = "\n".join(page.get_text(PDF_TEXT_MODE) for page in doc)
     # PDF layout splits words across line breaks ("con-\nvergence"); rejoin them
     # so exact-match grounding isn't defeated by hyphenation artifacts.
     raw = re.sub(r"(\w)-\n(\w)", r"\1\2", raw)
@@ -400,6 +424,66 @@ def normalize(text: str) -> str:
 
 
 MIN_LATEX_CHARS = 500  # below this, a .tex is probably just an \includepdf stub
+
+
+# ── which extractor produced a paper's text ─────────────────────────────────
+#
+# Ticket #29. A stamp says which bytes it was checked against; this says which
+# code produced those bytes. It is provenance and a re-extraction queue, not an
+# invalidator: if the text on disk has not changed, a stamp against it is still
+# about that text, whatever the extractor has since learned. Letting this redden
+# a stamp would redden the whole corpus on every extractor commit, and a detector
+# that fires on nearly all of its input has stopped measuring its input — this
+# project has paid for that four times (decisions 24 and 25).
+#
+# Built exactly like check_version() in check_extraction.py (migration 014,
+# decision 25), for the reasons it gives, and curated for the same reason:
+#
+# - NOT a hash of this file. A digest over a busy file is a detector that fires
+#   on nearly every commit, including on a docstring.
+# - NOT the pylatexenc or pymupdf release strings. Those redden on
+#   `pip install -U` while nothing on disk has changed. A library bump only
+#   changes a stored text when we re-extract, and re-extracting moves
+#   papers.extracted_text_digest, which is already the thing that moves a stamp.
+# - A digest and not a hand-bumped integer: a number somebody has to remember to
+#   raise is a number somebody forgets, and 014 earned that sentence.
+#
+# Declared here rather than beside _latex_context because it reads every constant
+# above it and the module is evaluated top to bottom. The inputs are the ones the
+# design names; adding to the list changes what "the same extractor" means, so it
+# belongs in a commit that says so.
+
+
+def _rx(p: re.Pattern) -> list:
+    """A pattern's identity: source AND flags. `re.IGNORECASE` on
+    UNKNOWN_CITE_RE is the difference between catching \\Citep and dropping it,
+    and a digest blind to flags would call those two the same extractor."""
+    return [p.pattern, p.flags]
+
+
+def extractor_version() -> str:
+    """A short digest of what decides the text this module emits.
+
+    Reads the module globals when called rather than closing over them, so a test
+    can move a constant and ask for the version again.
+    """
+    inputs = {
+        "citations": [sorted(CITE_MACROS), sorted(REF_MACROS),
+                      _rx(UNKNOWN_CITE_RE), _lineage_macro_specs()],
+        "own_macros": [_rx(DEF_HEAD), _rx(ARGC), _rx(OPTIONAL_DEFAULT),
+                       MAX_EXPANSION_PASSES],
+        "fallback": [_rx(RAW_STRIP), MAX_BISECT_DEPTH, MIN_BISECT_CHARS,
+                     MIN_LATEX_CHARS],
+        "parsers": [PARSE_MATH_MODE, PARSE_STRICT_SPACES, PDF_TEXT_MODE],
+    }
+    # sort_keys, so a dict reordering is not an extractor change; and json's own
+    # number formatting, so 4 and 4.0 do not read as the same input. Nothing here
+    # is hash()ed: str.__hash__ is salted per process and this value is stored.
+    blob = json.dumps(inputs, sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+EXTRACTOR_VERSION = extractor_version()
 
 
 def extract_one(raw_path: Path, source_format: str) -> str | None:
@@ -446,10 +530,16 @@ def main() -> None:
                          "without this re-extracts the whole table, and changing "
                          "text under a curated map's quotes is not something to "
                          "do as a side effect of repairing a different one")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="report what would be extracted and which papers' "
+                         "extracted_text_digest would be written or corrected, "
+                         "and write nothing — no file and no row. This is the "
+                         "rehearsal for the digest backfill (RUNBOOK section 8)")
     args = ap.parse_args()
 
     text_root = data_dir() / "text"
-    text_root.mkdir(parents=True, exist_ok=True)
+    if not args.dry_run:
+        text_root.mkdir(parents=True, exist_ok=True)
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
 
     params: dict = {}
@@ -458,7 +548,8 @@ def main() -> None:
         scope = ("  AND EXISTS (SELECT 1 FROM definitions d WHERE d.paper_id = papers.id "
                  "AND d.concept = %(concept)s)\n")
         params["concept"] = args.concept
-    sql = ("SELECT arxiv_id, source_format, raw_path, extracted_text_path, title "
+    sql = ("SELECT arxiv_id, source_format, raw_path, extracted_text_path, title, "
+           "extracted_text_digest "
            f"FROM papers WHERE raw_path IS NOT NULL\n{scope}ORDER BY arxiv_id")
     rows = conn.execute(sql, params).fetchall()
     if args.force and not args.concept:
@@ -471,14 +562,58 @@ def main() -> None:
         print("Nothing to extract (no fetched papers).")
         return
 
+    if args.dry_run:
+        print("[dry-run] Nothing will be written: no text file, no row.\n")
+
     done = failed = skipped = 0
+    digests_written = digests_changed = digests_unreadable = 0
     flagged: list[tuple[str, float]] = []
-    for i, (aid, fmt, raw_path, etpath, title) in enumerate(rows, 1):
+    for i, (aid, fmt, raw_path, etpath, title, stored_digest) in enumerate(rows, 1):
         # Skip only if already extracted AND the text file is on THIS disk. The
         # DB is shared across machines but files are per-disk, so a paper marked
         # extracted on another worker still needs its text produced here.
         if not args.force and etpath and (data_dir() / etpath).exists():
             skipped += 1
+            # The named recomputer for papers.extracted_text_digest (ticket #29).
+            # A derived value stored and then left to age is this project's first
+            # named fault, and this column would age silently: a file changed by
+            # anything other than this script — a hand edit, a truncated write, a
+            # restored disk — would leave every stamp on that paper agreeing with
+            # a digest that describes bytes which are gone.
+            #
+            # Updating it makes those stamps go stale, which claims LESS. It never
+            # touches a stamp's own digest, which would claim more and is the
+            # silent re-anchoring incident 10 named as dishonest.
+            #
+            # extractor_version is deliberately NOT written here. A skip knows the
+            # bytes and not who made them; claiming this extractor produced a file
+            # it merely read would be a false provenance claim, and would empty
+            # the `extractor_version IS DISTINCT FROM <current>` queue that is the
+            # whole point of the column. It stays NULL until a real extraction.
+            try:
+                digest = text_digest((data_dir() / etpath).read_bytes())
+            except OSError as exc:
+                digests_unreadable += 1
+                print(f"[{i}/{len(rows)}] {aid}: text present but unreadable "
+                      f"({etpath}): {exc}")
+                continue
+            if digest == stored_digest:
+                continue
+            if stored_digest is None:
+                digests_written += 1
+            else:
+                digests_changed += 1
+                print(f"[{i}/{len(rows)}] {aid}: ⚠ THE TEXT ON DISK IS NOT THE TEXT "
+                      f"THE DATABASE DESCRIBES ({etpath})")
+                print(f"    stored {stored_digest}")
+                print(f"    on disk {digest}")
+                print("    Recording the file as it is. Every stamp checked against "
+                      "the old bytes now renders stale, which is the truth about it.")
+            if not args.dry_run:
+                conn.execute(
+                    "UPDATE papers SET extracted_text_digest=%s WHERE arxiv_id=%s",
+                    (digest, aid))
+                conn.commit()
             continue
         raw = data_dir() / raw_path  # paths are stored relative to DATA_DIR
         if not raw.exists():
@@ -498,9 +633,20 @@ def main() -> None:
             continue
 
         out = text_root / f"{aid.replace('/', '_')}.txt"
-        out.write_text(text, encoding="utf-8")
         rel = str(out.relative_to(data_dir())).replace("\\", "/")
         score = title_match(title, text)
+        if args.dry_run:
+            print(f"    [dry-run] would write {len(text):,} chars -> {rel}")
+            done += 1
+            continue
+        # newline="\n" so the artefact is the same bytes whichever platform
+        # extracted it, and the digest below is therefore comparable across them.
+        # On the Linux worker this changes nothing.
+        out.write_text(text, encoding="utf-8", newline="\n")
+        # From the file, after the write, and not from the string in memory: the
+        # column describes the bytes on disk, not the intention that produced
+        # them. A truncated or partially-written file must digest as what it is.
+        digest = text_digest(out.read_bytes())
         # The extraction verdict goes out with the file it describes. It is a
         # measurement of one specific text, and the line above has just replaced
         # that text; leaving the stamp behind is how every verdict in the table
@@ -513,12 +659,19 @@ def main() -> None:
         # The check version (migration 014) goes with the verdict it qualifies:
         # a version left standing over no verdict names a calibration for a
         # measurement that no longer exists.
+        # The digest and the extractor version (migration 015) go in the same
+        # statement as the path, and this is the only statement in the repository
+        # that writes extracted_text_path. The invariant is that path, digest and
+        # extractor version are written together or not at all: a path without a
+        # digest is a file nobody can name, and a digest without the path it
+        # describes is worse.
         conn.execute(
             "UPDATE papers SET extracted_text_path=%s, text_title_match=%s, "
+            "extracted_text_digest=%s, extractor_version=%s, "
             "extraction_verdict=NULL, extraction_signals='[]'::jsonb, "
             "extraction_check_version=NULL, "
             "extraction_checked_at=NULL WHERE arxiv_id=%s",
-            (rel, score, aid),
+            (rel, score, digest, EXTRACTOR_VERSION, aid),
         )
         conn.commit()
         score_str = "title n/a" if score is None else f"title match {score:.0%}"
@@ -529,7 +682,18 @@ def main() -> None:
         done += 1
 
     conn.close()
-    print(f"\nDone: {done} extracted, {skipped} already present, {failed} failed.")
+    verb = "would be extracted" if args.dry_run else "extracted"
+    print(f"\nDone: {done} {verb}, {skipped} already present, {failed} failed.")
+    print(f"Extractor version: {EXTRACTOR_VERSION}")
+    if digests_written or digests_changed or digests_unreadable:
+        w = "would be written" if args.dry_run else "written"
+        print(f"\nDigests of text already on this disk (migration 015), {w}: "
+              f"{digests_written} newly recorded, {digests_changed} corrected "
+              f"because the file had changed under us, {digests_unreadable} "
+              f"unreadable.")
+        if digests_changed:
+            print("  A corrected digest makes that paper's stamps render stale. "
+                  "They are stale: they were checked against bytes that are gone.")
     if flagged:
         print(f"\n⚠ {len(flagged)} paper(s) below the {TITLE_MATCH_MIN:.0%} title-match "
               f"threshold — text and metadata likely describe different papers:")

@@ -26,7 +26,10 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
             {data.papers.length} pivotal of {data.total_papers} papers ·{" "}
             {data.edges.length === 0
               ? "no links between them"
-              : `${data.edges.filter((e) => e.verified).length} of ${data.edges.length} links shown quote-verified`}
+              /* Counted on the resolved stamp, not the stored boolean. A count
+                 that folds "not re-checked since the text changed" into
+                 "verified" is the same overclaim as the line itself. */
+              : `${data.edges.filter((e) => e.stamp === "verified").length} of ${data.edges.length} links shown quote-verified`}
           </span>
         </div>
         {data.through_line && (

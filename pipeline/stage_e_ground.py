@@ -20,7 +20,9 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import quote_is_grounded, REPO_ROOT, data_dir, env, node_ids  # noqa: E402
+from common import (edge_stamp_state, grounded_span, read_grounding_text,  # noqa: E402
+                    REPO_ROOT, STAMP_STALE, STAMP_VERIFIED, data_dir, env,
+                    node_ids)
 
 
 # An edge whose source_node or target_node is not in genealogies.nodes has no
@@ -141,43 +143,125 @@ def main() -> None:
     edges = conn.execute("""
         SELECT e.id, e.source_node, e.target_node, e.edge_type, e.confidence,
                sp.arxiv_id, tp.arxiv_id, e.source_quote, e.target_quote,
-               sp.extracted_text_path, tp.extracted_text_path
+               sp.extracted_text_path, tp.extracted_text_path,
+               sp.extracted_text_digest, tp.extracted_text_digest,
+               sp.extractor_version, tp.extractor_version
         FROM edges e
         JOIN papers sp ON sp.id = e.source_paper_id
         JOIN papers tp ON tp.id = e.target_paper_id
         WHERE e.genealogy_id = %s
     """, (gen_id,)).fetchall()
 
-    text_cache: dict[str, str] = {}
+    text_cache: dict[str, tuple[str, str] | None] = {}
+    files_read: set[str] = set()
 
-    def contains(path: str, quote: str) -> bool:
+    def match(path: str, quote: str) -> tuple[bool, tuple[int, int] | None, str | None]:
+        """(verdict, span, digest of the bytes it was checked against).
+
+        The digest is None when no check happened, and that is the point: since
+        migration 015 the schema finally has somewhere to put the difference
+        between "we looked and it was not there" and "we could not look". A
+        digest-less stamp renders stale, which claims nothing. Before 015 an
+        unreadable file crashed this stage and a NULL path was written as a plain
+        false, which is a failed verdict from a check that never ran — the thing
+        decision 21 and the --reground missing-file branch both refuse to write.
+
+        Tolerating the per-file failure is also what makes the whole-run refusal
+        below reachable: if the first missing file aborted the run, "not one file
+        could be read" could never be observed, and incident 12 is what a total
+        outage looks like when only the per-item path can see it.
+
+        Reading and hashing once per path per run, because a paper with twenty
+        edges is one file.
+        """
         if not quote or not path:
-            return False
+            return False, None, None
         if path not in text_cache:
-            text_cache[path] = (data_dir() / path).read_text(encoding="utf-8")
-        return quote_is_grounded(text_cache[path], quote)
+            try:
+                text_cache[path] = read_grounding_text(path)
+                files_read.add(path)
+            except (OSError, UnicodeDecodeError) as exc:
+                text_cache[path] = None
+                print(f"  ⚠ could not read {path}: {exc}")
+        loaded = text_cache[path]
+        if loaded is None:
+            return False, None, None
+        text, digest = loaded
+        span = grounded_span(text, quote)
+        return span is not None, span, digest
 
     print(f'Grounding {len(edges)} edges for "{args.concept}" (prompt {prompt_version})…\n')
     assembled_edges = []
-    verified_count = 0
+    verified_count = stale_count = 0
+    checked = 0
+    pending: list[tuple] = []
     for (eid, sn, tn, etype, conf, s_arxiv, t_arxiv,
-         s_quote, t_quote, s_path, t_path) in edges:
-        s_ok = contains(s_path, s_quote)
-        t_ok = contains(t_path, t_quote)
+         s_quote, t_quote, s_path, t_path,
+         s_now, t_now, s_ever, t_ever) in edges:
+        checked += 1
+        s_ok, s_span, s_digest = match(s_path, s_quote)
+        t_ok, t_span, t_digest = match(t_path, t_quote)
         verified = s_ok and t_ok
         verified_count += verified
-        conn.execute("UPDATE edges SET verified=%s WHERE id=%s", (verified, eid))
+        # Resolved here against the paper's own current digest, which is written
+        # by extract_text and never by this stage, so the two can disagree and
+        # the comparison can return false. This is the same resolution the app
+        # performs at render time, so the JSON and the page agree by construction.
+        state = edge_stamp_state(verified, s_digest, s_now, t_digest, t_now)
+        stale_count += state == STAMP_STALE
+        pending.append((eid, verified, s_span, s_digest, s_ever, t_span, t_digest, t_ever))
 
-        stamp = "SOLID  ✓ verified" if verified else "dotted ◌ inferred"
-        reason = "" if verified else f"  [{'src' if not s_ok else ''}{'+' if not s_ok and not t_ok else ''}{'tgt' if not t_ok else ''} quote not found]"
-        print(f"  {stamp}  {etype.upper():<9} {s_arxiv} -> {t_arxiv}  conf {conf:.2f}{reason}")
+        mark = {"verified": "SOLID  ✓ verified", "inferred": "dotted ◌ inferred",
+                "stale": "dotted ◌ stale   "}[state]
+        if state == STAMP_STALE:
+            # Not "the quote is not there". Either no check ran, or the text this
+            # check ran against is not the text the database now describes.
+            unreadable = [side for side, d in (("src", s_digest), ("tgt", t_digest)) if d is None]
+            reason = ("  [" + "+".join(unreadable) + " text could not be read]" if unreadable
+                      else "  [checked against text the papers table no longer describes]")
+        elif verified:
+            reason = ""
+        else:
+            reason = f"  [{'src' if not s_ok else ''}{'+' if not s_ok and not t_ok else ''}{'tgt' if not t_ok else ''} quote not found]"
+        print(f"  {mark}  {etype.upper():<9} {s_arxiv} -> {t_arxiv}  conf {conf:.2f}{reason}")
 
         assembled_edges.append({
             "source_node": sn, "target_node": tn, "edge_type": etype,
-            "confidence": conf, "verified": verified,
+            "confidence": conf, "verified": verified, "stamp": state,
             "source_paper": s_arxiv, "target_paper": t_arxiv,
             "source_quote": s_quote, "target_quote": t_quote,
         })
+
+    # Incident 12, and the same refusal Stage B's --reground carries and the
+    # orphan sweep above carries. The per-edge tolerance that makes one missing
+    # file survivable is exactly what makes a total outage invisible: an unmounted
+    # or empty DATA_DIR grounds nothing and would otherwise be published as a map
+    # whose every edge went inferred. The boundary is zero, not a fraction — "not
+    # one file readable" is a state, not a calibration — and, like the sweep, it
+    # needs more than one edge for "not one of them" to mean anything.
+    if checked > 1 and not files_read:
+        sys.exit(
+            f"\nRefusing to ground this map: {checked} edges were checked and not one "
+            f"extracted text file could be read.\n"
+            f"  That is an unmounted or empty DATA_DIR, not a map that failed, and this\n"
+            f"  stage cannot tell them apart. Nothing was written and every stamp stands\n"
+            f"  as it was.\n"
+            f"  Check the extracted text first: {data_dir()}")
+
+    for (eid, verified, s_span, s_digest, s_ever,
+         t_span, t_digest, t_ever) in pending:
+        conn.execute("""
+            UPDATE edges SET verified=%s,
+                   source_quote_start=%s, source_quote_end=%s,
+                   source_text_digest=%s, source_extractor_version=%s,
+                   target_quote_start=%s, target_quote_end=%s,
+                   target_text_digest=%s, target_extractor_version=%s
+            WHERE id=%s
+        """, (verified,
+              s_span[0] if s_span else None, s_span[1] if s_span else None,
+              s_digest, s_ever,
+              t_span[0] if t_span else None, t_span[1] if t_span else None,
+              t_digest, t_ever, eid))
 
     conn.execute("UPDATE genealogies SET status='complete', updated_at=now() WHERE id=%s", (gen_id,))
     conn.commit()
@@ -185,16 +269,40 @@ def main() -> None:
     genealogy = {
         "concept": args.concept, "prompt_version": prompt_version,
         "nodes": nodes, "edges": assembled_edges,
+        # `verified` stays on every edge, so restore_genealogy.py and the exports
+        # keep working; `stamp` is the resolved three-state value beside it.
         "stats": {"nodes": len(nodes), "edges": len(assembled_edges),
-                  "verified_edges": verified_count, "inferred_edges": len(edges) - verified_count},
+                  "verified_edges": verified_count,
+                  "inferred_edges": len(edges) - verified_count,
+                  "stale_edges": stale_count},
     }
     out = Path(args.json) if args.json else data_dir() / f"genealogy_{args.concept}_{prompt_version}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(genealogy, indent=2), encoding="utf-8")
     conn.close()
 
+    # Counted at the stamp, not at the boolean, and the three are disjoint. An
+    # edge whose quotes both matched text the papers table no longer describes
+    # is not displayable as verified, and a summary that folds it into the
+    # verified count is the same overclaim as the page making it.
+    shown_verified = sum(1 for e in assembled_edges if e["stamp"] == STAMP_VERIFIED)
     print(f"\nGenealogy complete: {len(nodes)} concept-states, {len(edges)} edges "
-          f"({verified_count} solid/verified, {len(edges) - verified_count} dotted/inferred).")
+          f"({shown_verified} solid/verified, "
+          f"{len(edges) - shown_verified - stale_count} dotted/inferred, "
+          f"{stale_count} stale).")
+    if verified_count != shown_verified:
+        print(f"  ({verified_count} edges have both quotes matching the text this run "
+              f"read; {verified_count - shown_verified} of them cannot be shown as "
+              f"verified because that text is not what papers.extracted_text_digest "
+              f"describes.)")
+    if stale_count:
+        print(f"  {stale_count} of them render STALE rather than as either: their stamp "
+              f"names bytes\n  that are not the bytes papers.extracted_text_digest now "
+              f"describes, or no digest\n  was recorded at all. A stale stamp is not a "
+              f"failed check, it is an unrepeated one.")
+        print("  If this is the first run after migration 015, run "
+              "extract_text.py (no --force) first:\n"
+              "  the papers have no current digest to compare against yet.")
     print(f"Assembled JSON -> {out}")
 
 

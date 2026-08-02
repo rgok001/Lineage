@@ -107,6 +107,30 @@ so a paper's own `\mycite` wrapper expands to the real citation command and then
 folds to a mark. Extraction uses pylatexenc for
 LaTeX and pymupdf with de-hyphenation for PDF, computes `text_title_match`,
 and warns loudly below the 0.5 guard.
+**Since migration 015 it also names the file it produced.** The text is written
+with `newline="\n"` so the artefact is the same bytes whichever platform
+extracted it (no change on the Linux worker), and `papers.extracted_text_digest`
+is taken from `out.read_bytes()` *after* the write rather than from the string in
+memory, because the column describes the file and not the intention. The digest
+and `papers.extractor_version` go out in the same `UPDATE` as
+`extracted_text_path`, which is the only statement in the repository that writes
+that path and must remain so: **path, digest and extractor version are written
+together or not at all.** `EXTRACTOR_VERSION` is a 12-character digest of a
+curated set of the extractor's own inputs (the citation and reference macro
+lists, `UNKNOWN_CITE_RE`, the own-macro patterns, `MAX_EXPANSION_PASSES`, the
+bisect and minimum-length bounds, and the parser mode strings), built exactly
+like `check_version()` in `check_extraction.py` and for the same reasons: not the
+file, which would fire on a docstring, and not the library release strings, which
+would fire on `pip install -U` while nothing on disk moved.
+**The skip path is the named recomputer for the digest.** A paper already
+extracted with its file on this disk is still hashed, and when the result differs
+from the stored digest the run says so loudly and corrects the column, which
+makes the stamps taken against the old bytes go stale. It never touches a stamp's
+own digest, which would claim more rather than less, and it never writes
+`extractor_version`, because a skip knows the bytes and not who made them. Cost
+is one full read of the text corpus per run: ~300 files, tens of megabytes,
+seconds. `--dry-run` reports what would be extracted and which digests would be
+written or corrected, and writes nothing at all.
 
 **A parse failure now costs a paragraph, not a paper.** pylatexenc raises on
 some real arXiv sources (17 of attention's 146, every one an IndexError), and
@@ -336,7 +360,8 @@ verbatim, plus section and novelty claims (structured output via
 `count_tokens` when a key exists and a calibrated 2.6 chars/token heuristic
 when not. A spend cap (`TRACE_SPEND_CAP_USD`) aborts cleanly mid-run.
 `--refresh` re-extracts papers that already have a row, UPDATEing in place: `genealogies.nodes` holds definition_ids, so a delete-and-reinsert would mint new ids and orphan the curated node membership on every map built from that concept. It nulls the embedding, because the text it encodes has changed and stale is worse than absent: absent is visible to the re-embed step, stale is visible to nothing. Scope it with `--only <arxiv ids>`, which is what an audit hands you.
-`--reground` is the free half of that repair: it re-checks the quotes already stored against the extracted text as it is now and rewrites `quote_verified` alone, leaving the quote, the embedding and everything else untouched. It calls the same `quote_is_grounded` Stage E calls, makes no model call and needs no API key, prints the verified count before and after, and reports separately the definitions it could not check because the paper's text is not on this disk. The worker runs it immediately before Stage E on every trace, so a definition's stamp is never older than the text it describes (decision 18).
+`--reground` is the free half of that repair: it re-checks the quotes already stored against the extracted text as it is now and rewrites the stamp alone, leaving the quote, the embedding and everything else untouched. It calls the same matcher Stage E calls, makes no model call and needs no API key, prints the verified count before and after, and reports separately the definitions it could not check because the paper's text is not on this disk. The worker runs it immediately before Stage E on every trace, so a definition's stamp is never older than the text it describes (decision 18).
+Since migration 015 the stamp is `quote_verified` plus four columns — the matched span, the digest of the bytes the match read, and the extractor version of that text — so **a row is rewritten whenever anything about the stamp moved, not only when the verdict flipped**. The old behaviour skipped a row whose boolean did not move, which after 015 would leave a re-checked stamp with a NULL digest, still rendering stale after the very run that re-checked it. The printed narrative still names only the definitions whose verdict moved, because on the first run after 015 every checkable row is rewritten and one line each would drown the ones that matter; the count of rewritten stamps is printed separately. Every existing guard is untouched: the missing, empty and unreadable branches still leave the stamp exactly as it was and count loudly (those rows keep a NULL or old digest, so they render stale rather than lying), the `checked > 1 and grounded == 0` refusal stands, and the writes are still one transaction.
 `--corpus` scopes extraction to one trace's papers; without it the query takes
 every extracted paper in the shared papers table, which is correct for
 single-concept research use and wrong for the worker (section 10, incident 3).
@@ -410,7 +435,8 @@ skipped rather than blanked, so a paper that no longer defines the concept fails
 honestly instead of being emptied into a pass.
 The mandatory grounding check: an edge is `verified` (rendered solid) iff both
 quotes are found verbatim in the extracted source text. The comparison
-(`quote_is_grounded` in `common.py`, shared with Stage B) folds away exactly two
+(`grounded_span` in `common.py`, shared with Stage B, of which
+`quote_is_grounded` is now the boolean-only form) folds away exactly two
 things, both of them ours rather than the paper's: whitespace, which is an
 artifact of line wrapping, and citation marks, which stand where the paper had a
 citation. Nothing else is folded, so a paraphrase, a dropped word or an altered
@@ -422,6 +448,32 @@ dotted and is labelled inferred, never upgraded, never hidden. Writes the
 genealogy JSON export to `data/genealogy_<concept>_<pv>.json` and marks the
 genealogy complete. **These exports are the de-facto backups** (section 10,
 incident 4). Re-run Stage E after curating.
+**One matcher, and it now says where.** `grounded_span` returns the half-open
+character offsets of the leftmost match, or None; `quote_is_grounded` is that
+call with the answer thrown away. Two implementations of "is this quote in this
+text" would eventually disagree and the disagreement would be invisible, because
+the boolean and the span would be telling different stories about the same stamp.
+The span names the smallest range of whole source characters covering the match,
+so a match that begins or ends inside a character whose lowercase is several
+characters covers that character rather than cutting it in half.
+Since migration 015 Stage E writes eight more columns per edge — span, text
+digest and extractor version for each side — and three things change with them.
+**"Could not check" stops being written as "inferred":** a NULL or unreadable
+text path used to return a plain false, which is a failed verdict from a check
+that never ran, and it now writes a false `verified` with a NULL digest, which
+renders stale. **A whole-run refusal:** if more than one edge is checked and not
+one text file could be read, the stage refuses and changes nothing, on the same
+reasoning and the same degenerate boundary as the orphan sweep above and Stage
+B's `--reground` guard — that is an unmounted or empty `DATA_DIR`, not a map that
+failed, and the per-edge tolerance that makes one missing file survivable is
+exactly what makes a total outage invisible (incident 12). **And the assembled
+JSON gains `stamp` per edge** (the resolved three-state value, computed against
+each paper's own stored digest, so the JSON and the page agree by construction)
+and `stale_edges` in `stats`. `verified` stays on every edge, so
+`restore_genealogy.py` and the existing exports keep working. The stage's own
+summary counts the three states disjointly at the stamp rather than at the
+boolean, because a summary that folds stale into verified is the same overclaim
+as a page doing it.
 
 **Auxiliaries.**
 `workbench.py`: CLI curation (merge, rename, split-out, delete, reclassify);
@@ -468,6 +520,25 @@ re-grounds every quote against the text that is actually there.
 `restore_genealogy.py`: the inverse of Stage E's export; re-inserts a
 genealogies row and its edges from a JSON export and records the restoration
 in the audit trail. Written during incident 4 and kept as the recovery path.
+`recheck_stamp.py`
+(`recheck_stamp.py --concept NAME [--arxiv ID ...] [--edges] [--verbose]`): the
+independent re-checker, and the point of migration 015. The stamp columns are
+only worth having if something can consume them, and this is what proves a tick
+is evidence rather than a claim. **It reads `LINEAGE_READ_URL` and never
+`DATABASE_URL`, and issues no statement but `SELECT`**, so it structurally cannot
+re-anchor a stamp, which is the failure incident 10 named as dishonest; it is
+therefore the one tool in this feature an agent may run against production. Per
+stamp it recomputes the file's digest and compares it to
+`papers.extracted_text_digest` (disagreement means the file moved under us) and
+to the stamp's own digest (disagreement means stale), slices `text[start:end]`
+and folds it against the stored quote (disagreement means the span is wrong), and
+re-runs `grounded_span` over the whole file (disagreement with the stored span
+means the match is not where we said). Those four comparisons arrive by three
+different paths — the database, the disk and the matcher — so each of them can
+return false. It reports verified / inferred / stale / span-mismatch /
+unreadable, exits non-zero on any span mismatch and on the global check (more
+than one stamp examined and not one file readable), and it does not re-anchor,
+repair or write. Ever.
 
 **Stage F: magnitude** (`stage_f_magnitude.py <concept> [--prompt-version PV]`).
 Fills `definitions.attention` and `definitions.displacement` (migration 011),

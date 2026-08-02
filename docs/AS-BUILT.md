@@ -123,7 +123,8 @@ pipeline/            stages A-H + auxiliaries (Python, CLI-first; the worker
   common.py          env loading, polite HTTP session, data_dir()
   check_extraction.py  audit of extracted-text fidelity (no model, no network)
   db/migrate.py      ordered SQL migrations, schema_migrations table
-  db/migrations/     001..014
+  db/migrations/     001..015
+  recheck_stamp.py   re-checks stored stamps against the papers (read-only)
 .claude/            settings.json (carries the LINEAGE_NO_DB guard; tracked),
                      launch.json, and memory/ (agents' lessons, boards and
                      verdicts; gitignored). The role prompts are NOT here
@@ -157,13 +158,13 @@ destinations table added for them.
 
 ## 3. Data model
 
-Six tables, migrations `001` through `014`, applied by
+Six tables, migrations `001` through `015`, applied by
 `python pipeline/db/migrate.py` (tracked in `schema_migrations`). Migrations
 `008`-`009` are data fixes (paths relative to `DATA_DIR`; correcting future
 publication years OpenAlex mis-dated). `010`-`012` carry the paper-centric turn
 and are described inline below.
 
-**papers** (001, 002): one row per fetched arXiv paper. Notable columns:
+**papers** (001, 002, 015): one row per fetched arXiv paper. Notable columns:
 `raw_path` and `extracted_text_path` point into `DATA_DIR`;
 `text_title_match` (002) records how well the extracted text matches the
 claimed title. This guard exists because OpenAlex sometimes attaches the wrong
@@ -171,8 +172,25 @@ arXiv id to a work: the fetch succeeds but the text belongs to a different
 paper. Real observed cases: arXiv 1810.04805 (BERT) and 1907.11692 (RoBERTa)
 both carried unrelated titles. Downstream stages must filter
 `text_title_match >= 0.5`.
+`extracted_text_digest` and `extractor_version` (015) say which bytes are at
+that path and which code produced them. The digest is
+`TEXT_DIGEST_ALGO = "sha256"` followed by the hex of the file's bytes, so a
+stranger reproduces it with `sha256sum` and no platform's newline handling
+enters into it. It is written by `extract_text.py` in the same statement as the
+path, and recomputed by its skip path on every run: a file changed by anything
+else — a hand edit, a truncated write, a restored disk — is caught there and the
+column is corrected, which makes the stamps against the old bytes go stale. That
+recompute is the reason this derived value cannot age.
+`extractor_version` is a 12-character digest of the extractor's own curated
+inputs, and it is written **only** when this code produced the file, never on the
+skip path: a skip knows the bytes and not who made them. NULL therefore means
+"this text predates the column", and since NULL IS DISTINCT FROM any version,
+`WHERE extractor_version IS DISTINCT FROM <EXTRACTOR_VERSION>` is the
+re-extraction queue that unblocks backlog item 4. It is provenance and never an
+invalidator: if the bytes have not changed, a stamp against them still describes
+that text (decision 30).
 
-**definitions** (001, 003, 004, 011): Stage B output, one row per
+**definitions** (001, 003, 004, 011, 015): Stage B output, one row per
 (paper, concept, prompt_version). That triple is the cache key, deliberately
 excluding the model so a model switch does not re-bill an extracted corpus;
 `model` (004) records provenance instead. `defines_concept` (003) exists
@@ -191,6 +209,21 @@ attention is on-term weighted uptake (how much later work built on this paper
 (paper, concept, prompt_version) because magnitude is relative to the term
 being traced, and both are nullable (computed by a post-Stage-D job; the
 earliest paper has no earlier work to be displaced from).
+`quote_start`, `quote_end`, `quote_text_digest` and `quote_extractor_version`
+(015) are the re-checkable half of `quote_verified`: half-open character offsets
+into the UTF-8 decoding of the file, the digest of the bytes the match actually
+read, and the extractor version of that text, copied from the paper's row rather
+than from the running extractor because this stage did not produce the file. All
+four are nullable and **NULL is meaningful: it means this stamp was never made
+in a re-checkable way, and it renders stale.** Written together with the boolean
+by Stage B's creation path and by `--reground`, which since 015 rewrites a row
+whenever anything about the stamp moved rather than only when the verdict
+flipped. The span is deliberately not read as a second confirmation of the
+boolean — the same matcher put it there — so it exists for a human to look at
+and for somebody to one day measure where matches land.
+
+**edges** (001, 010, 015): see below; the eight `source_`/`target_`-prefixed
+stamp columns are the same four facts twice, one per quote.
 
 **genealogies** (001, 007, 012): the map itself. `nodes` is JSONB
 (concept-states with members and year ranges), `user_edits` is the append-only
@@ -208,7 +241,7 @@ in `lib/genealogy.ts` still carry the river vocabulary the interface has since
 dropped; the reader sees "threads". Null until the generation job has run for
 that map, and `/g/[id]` redirects to `/g/[id]/evidence` when it is null.
 
-**edges** (001, 010): typed relationships between nodes, with FK to both papers,
+**edges** (001, 010, 015): typed relationships between nodes, with FK to both papers,
 both verbatim quotes, `confidence`, and `verified` (the grounding verdict).
 `ON DELETE CASCADE` from genealogies. Migration 010 adds `rationale` and
 `citation_context`: the *basis* of the edge. Stage D already generated a
@@ -220,6 +253,28 @@ verified); the citation context is a verbatim S2 sentence but from S2's PDF
 extraction, so it cannot pass our string-match grounding and is labelled
 "per Semantic Scholar, not string-verified". Neither wears the verified stamp
 the definition quotes carry.
+Migration 015 adds the two stamps, `source_`- and `target_`-prefixed to match the
+quote columns already there: `source_quote_start`, `source_quote_end`,
+`source_text_digest`, `source_extractor_version` and the four `target_`
+equivalents. Flat columns rather than one JSONB blob, because the staleness test
+is a join predicate against `papers` and the table already carries its evidence
+in this shape. They are not derived by joining to the definition's stamp: Stage
+E's quote re-sync deliberately skips empty definitions, so an edge quote can
+legitimately differ from the definition quote, and a joined stamp would then be
+a verdict about a different string.
+
+**The three render states, in one place.** `stamp_state` in `pipeline/common.py`
+and `stampOf` in `app/lib/stamp.ts` are the same three lines in two languages:
+**stale** when either digest is absent or they differ, **verified** when the
+boolean is true, **inferred** otherwise. Stale dominates the boolean in both
+directions, because a failed check against text that has since changed is no more
+about today's text than a passing one. `edge_stamp_state` / `edgeStampOf` apply
+it to a unit carrying two stamps: either side stale makes the edge stale. A third
+expression of the rule exists in SQL, in `listGenealogies`, and only because the
+home page needs it as an aggregate per map; the three move together. Every
+surface that shows a stamp resolves it this way: the evidence page and its header
+count, the influence map's solid-versus-dotted lines and its header count, the
+paper dossier, the thread page, the home page's per-map counts, both exports.
 
 The request also carries a **subject field** and an optional **sense gloss**
 (migration 006): `field_id` (an OpenAlex field, default `fields/17` = Computer

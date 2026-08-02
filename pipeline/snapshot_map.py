@@ -51,10 +51,18 @@ def main() -> None:
         genealogy = dict(zip(cols, gen))
         gen_id = genealogy["id"]
 
+        # The stamp columns (migration 015) travel with the verdict they qualify.
+        # A snapshot that carried `verified` and left them behind would restore a
+        # tick with nothing saying what it was checked against, which is the
+        # state this whole migration exists to end.
         edges = conn.execute("""
             SELECT e.id, sp.arxiv_id, tp.arxiv_id, e.source_node, e.target_node,
                    e.edge_type, e.confidence, e.verified, e.source_quote, e.target_quote,
-                   e.rationale, e.citation_context
+                   e.rationale, e.citation_context,
+                   e.source_quote_start, e.source_quote_end,
+                   e.source_text_digest, e.source_extractor_version,
+                   e.target_quote_start, e.target_quote_end,
+                   e.target_text_digest, e.target_extractor_version
             FROM edges e
             JOIN papers sp ON sp.id = e.source_paper_id
             JOIN papers tp ON tp.id = e.target_paper_id
@@ -62,20 +70,28 @@ def main() -> None:
         """, (gen_id,)).fetchall()
         edge_cols = ("id", "source_arxiv", "target_arxiv", "source_node", "target_node",
                      "edge_type", "confidence", "verified", "source_quote", "target_quote",
-                     "rationale", "citation_context")
+                     "rationale", "citation_context",
+                     "source_quote_start", "source_quote_end",
+                     "source_text_digest", "source_extractor_version",
+                     "target_quote_start", "target_quote_end",
+                     "target_text_digest", "target_extractor_version")
 
         # The definitions are what a repair overwrites in place, so the old quotes
         # and their verdicts only exist here once it has run.
         defs = conn.execute("""
             SELECT d.id, p.arxiv_id, d.defines_concept, d.definition, d.verbatim_quote,
                    d.quote_verified, d.section, d.novelty_claims, d.model,
-                   d.attention, d.displacement
+                   d.attention, d.displacement,
+                   d.quote_start, d.quote_end, d.quote_text_digest,
+                   d.quote_extractor_version
             FROM definitions d JOIN papers p ON p.id = d.paper_id
             WHERE d.concept = %s AND d.prompt_version = %s ORDER BY d.id
         """, (args.concept, args.prompt_version)).fetchall()
         def_cols = ("id", "arxiv_id", "defines_concept", "definition", "verbatim_quote",
                     "quote_verified", "section", "novelty_claims", "model",
-                    "attention", "displacement")
+                    "attention", "displacement",
+                    "quote_start", "quote_end", "quote_text_digest",
+                    "quote_extractor_version")
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = Path(args.out) if args.out else (

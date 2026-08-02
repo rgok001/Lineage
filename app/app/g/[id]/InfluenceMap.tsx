@@ -170,7 +170,13 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
       }
       out.push({
         key: `${k}`, d: `M${x1},${y1} C${c1x},${c1y} ${c2x},${c2y} ${ex},${ey}`,
-        col: EC[e.type] ?? "var(--ink-faint)", type: e.type, verified: e.verified, lx, ly,
+        // Solid means verified (CLAUDE.md rule 2), and since migration 015 that
+        // is the resolved stamp rather than the stored boolean: an edge whose
+        // quotes were matched against text the papers table no longer describes
+        // has not been checked against what is there now, so it is not entitled
+        // to a solid line. It draws like inferred, which claims less.
+        col: EC[e.type] ?? "var(--ink-faint)", type: e.type,
+        verified: e.stamp === "verified", lx, ly,
       });
     }
     return out;

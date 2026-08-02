@@ -1,5 +1,6 @@
 import { sql } from "./db";
 import { actorTally, curatorialEdits, getRiver, readableQuote, type River, type RiverStream, type UserEdit } from "./genealogy";
+import { stampOf, type StampState } from "./stamp";
 
 /**
  * Export for writing: the thread account as a related-work scaffold, plus the
@@ -20,7 +21,7 @@ import { actorTally, curatorialEdits, getRiver, readableQuote, type River, type 
 
 type PaperMeta = {
   title: string; year: number | null; authors: string[];
-  quote: string | null; verified: boolean | null;
+  quote: string | null; verified: boolean | null; stamp: StampState;
 };
 
 const STOP = new Set(["a", "an", "the", "on", "of", "in", "for", "and", "with", "is", "are", "to", "by"]);
@@ -119,13 +120,15 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
   const arxivs = [...new Set(scope.flatMap((s) => s.papers.map((p) => p.arxiv)))];
   const rows = (await sql`
     SELECT p.arxiv_id AS arxiv, p.title, p.year, p.authors,
-           d.verbatim_quote, d.quote_verified
+           d.verbatim_quote, d.quote_verified,
+           d.quote_text_digest, p.extracted_text_digest
     FROM papers p
     LEFT JOIN definitions d ON d.paper_id = p.id
       AND d.concept = ${g[0].concept} AND d.prompt_version = ${pv} AND d.defines_concept = true
     WHERE p.arxiv_id = ANY(${arxivs})
   `) as { arxiv: string; title: string; year: number | null; authors: string[] | null;
-          verbatim_quote: string | null; quote_verified: boolean | null }[];
+          verbatim_quote: string | null; quote_verified: boolean | null;
+          quote_text_digest: string | null; extracted_text_digest: string | null }[];
 
   const meta = new Map<string, PaperMeta>();
   for (const r of rows)
@@ -133,6 +136,7 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
       title: r.title, year: r.year,
       authors: Array.isArray(r.authors) ? r.authors : [],
       quote: r.verbatim_quote, verified: r.quote_verified,
+      stamp: stampOf(r.quote_verified, r.quote_text_digest, r.extracted_text_digest),
     });
 
   // Keys are assigned in the order the papers are read, so a reader following
@@ -183,8 +187,10 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
     ">\n" +
       "> Every quotation was copied verbatim from the paper's own source text and\n" +
       "> string-verified against it. Quotes marked *inferred* failed that check and\n" +
-      "> must be re-checked before use. Lines labelled *the tool's reading* are model\n" +
-      "> judgment, not quotation, and carry no verification.\n" +
+      "> must be re-checked before use. Quotes marked *not re-checked* have not been\n" +
+      "> matched against the paper's extracted text as it now stands, so they carry no\n" +
+      "> current verification either. Lines labelled *the tool's reading* are\n" +
+      "> model judgment, not quotation, and carry no verification.\n" +
       ">\n" +
       "> **This is a scaffold, not prose.** The citations, quotes and structure are\n" +
       "> real; the argument is yours to write.",
@@ -231,12 +237,23 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
       if (prose) md.push(`${prose}  *(the tool's reading)*\n`);
       if (quote) {
         // The stamp never over-claims: a quote is only marked verified when the
-        // paper's definition quote passed the string match. An explicit false
-        // downgrades it, because an unverified quote in someone's paper is the
-        // failure this tool exists to avoid.
-        const stamp = m?.verified === true
-          ? "\u2713 verified verbatim against the paper's own source text"
-          : "*(inferred: could not be string-matched, re-check before citing)*";
+        // paper's definition quote passed the string match against text that is
+        // still what the paper's row describes. Anything else downgrades it,
+        // because an unverified quote in someone's paper is the failure this
+        // tool exists to avoid.
+        //
+        // A stale quote is exported rather than dropped (open question 3,
+        // answered as the design proposed): it is still real text a real paper
+        // contains, and omitting it would quietly narrow the account, which is
+        // the mistake Stage H already refuses to make. It goes out under its own
+        // caveat and never under the verified wording.
+        const stamp = {
+          verified: "\u2713 verified verbatim against the paper's own source text",
+          inferred: "*(inferred: could not be string-matched, re-check before citing)*",
+          stale: "*(not re-checked: this quote has not been string-matched against the "
+               + "paper's extracted text as it now stands, so it carries no current "
+               + "verification. Check it against the paper before citing.)*",
+        }[m?.stamp ?? "stale"];
         md.push(`> \u201C${quote}\u201D\n>\n> ${stamp}\n`);
       }
     }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "../../../../../lib/db";
 import { getRiver, EDGE_MEANING, readableQuote, TURNING_QUANTILE } from "../../../../../lib/genealogy";
+import { STAMP_COLOR, STAMP_LABEL, edgeStampOf, stampOf } from "../../../../../lib/stamp";
 
 export const dynamic = "force-dynamic";
 
@@ -19,14 +20,21 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
 
   const defs = (await sql`
     SELECT p.id AS pid, p.year, p.title, d.definition, d.verbatim_quote, d.quote_verified,
-           d.section, d.novelty_claims AS novelty, d.displacement
+           d.section, d.novelty_claims AS novelty, d.displacement,
+           d.quote_text_digest, p.extracted_text_digest
     FROM definitions d JOIN papers p ON p.id = d.paper_id
     WHERE p.arxiv_id = ${arxiv} AND d.concept = ${g[0].concept}
       AND d.prompt_version = ${g[0].prompt_version} AND d.defines_concept = true
   `) as { pid: number; year: number; title: string; definition: string | null; verbatim_quote: string | null;
-          quote_verified: boolean | null; section: string | null; novelty: string[] | null; displacement: number | null }[];
+          quote_verified: boolean | null; section: string | null; novelty: string[] | null; displacement: number | null;
+          quote_text_digest: string | null; extracted_text_digest: string | null }[];
   if (!defs.length) notFound();
   const d = defs[0];
+  // The stamp on this page's one quote, resolved the same way every other
+  // surface resolves it (migration 015). `quote_verified === false` used to be
+  // the only qualifier here, which meant a NULL read as verified and a stamp
+  // taken against text that has since been replaced read as verified too.
+  const quoteStamp = stampOf(d.quote_verified, d.quote_text_digest, d.extracted_text_digest);
 
   // Asked separately, and allowed to fail. The app deploys the moment master
   // moves, and migration 013 is applied by hand against a different endpoint, so
@@ -39,16 +47,26 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
   `.then((r) => (r as { extraction_verdict: string | null }[])[0]?.extraction_verdict ?? null)
    .catch(() => null);
 
-  const links = (await sql`
+  const linkRows = (await sql`
     SELECT sp.arxiv_id AS src, sp.title AS src_title, sp.year AS src_year,
            tp.arxiv_id AS dst, tp.title AS dst_title, tp.year AS dst_year,
-           e.edge_type, e.rationale, e.verified
+           e.edge_type, e.rationale, e.verified,
+           e.source_text_digest, e.target_text_digest,
+           sp.extracted_text_digest AS source_current_digest,
+           tp.extracted_text_digest AS target_current_digest
     FROM edges e JOIN papers sp ON sp.id = e.source_paper_id
                  JOIN papers tp ON tp.id = e.target_paper_id
     WHERE e.genealogy_id = ${Number(id)} AND (e.source_paper_id = ${d.pid} OR e.target_paper_id = ${d.pid})
     ORDER BY e.confidence DESC
   `) as { src: string; src_title: string; src_year: number; dst: string; dst_title: string; dst_year: number;
-          edge_type: string; rationale: string | null; verified: boolean }[];
+          edge_type: string; rationale: string | null; verified: boolean;
+          source_text_digest: string | null; target_text_digest: string | null;
+          source_current_digest: string | null; target_current_digest: string | null }[];
+  const links = linkRows.map((l) => ({
+    ...l,
+    stamp: edgeStampOf(l.verified, l.source_text_digest, l.source_current_digest,
+                       l.target_text_digest, l.target_current_digest),
+  }));
   const drew = links.filter((l) => l.dst === arxiv);   // what this paper drew from
   const fed = links.filter((l) => l.src === arxiv);    // what drew from this paper
 
@@ -81,9 +99,10 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
             <span style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)" }}>{other.y}</span>{" "}
             {other.t.length > 64 ? other.t.slice(0, 63) + "…" : other.t}
           </Link>
-          {!l.verified && (
-            <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: ".62rem", color: "var(--inferred)" }}>
-              ○ inferred
+          {l.stamp !== "verified" && (
+            <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: ".62rem",
+              color: STAMP_COLOR[l.stamp] }}>
+              {STAMP_LABEL[l.stamp]}
             </span>
           )}
         </div>
@@ -151,13 +170,15 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
               How it defines “{g[0].concept}”{d.section ? ` · §${d.section}` : ""}
             </div>
             <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontStyle: "italic",
-              fontSize: ".95rem", lineHeight: 1.55, borderLeft: `2px solid var(--${d.quote_verified === false ? "inferred" : "verified"})`,
+              fontSize: ".95rem", lineHeight: 1.55, borderLeft: `2px solid ${STAMP_COLOR[quoteStamp]}`,
               padding: ".55rem .85rem", background: "var(--card)", borderRadius: "0 6px 6px 0" }}>
               “{readableQuote(d.verbatim_quote).length > 500 ? readableQuote(d.verbatim_quote).slice(0, 500) + "…" : readableQuote(d.verbatim_quote)}”
             </blockquote>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", marginTop: ".35rem",
-              color: d.quote_verified === false ? "var(--inferred)" : "var(--verified)" }}>
-              {d.quote_verified === false ? "○ could not be string-matched · shown as inferred" : "✓ verified verbatim against the source text"}
+              color: STAMP_COLOR[quoteStamp], lineHeight: 1.5 }}>
+              {quoteStamp === "verified" && "✓ verified verbatim against the source text"}
+              {quoteStamp === "inferred" && "○ could not be string-matched · shown as inferred"}
+              {quoteStamp === "stale" && "◌ not checked against this paper’s extracted text as it now stands · not shown as verified"}
             </div>
             {/* The stamp above says the quote matches our reading of the paper. It
                 cannot say our reading matches the paper, and when we know that

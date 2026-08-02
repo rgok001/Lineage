@@ -5,7 +5,10 @@ real verified quotes, and leaves the argument to the author. Nothing is invented
 — CLAUDE.md rule 4 forbids fabricating metadata, quotes or citations in any
 output, including this one. Papers whose authors are unknown are reported and
 omitted from BibTeX rather than guessed, and unverified quotes are labelled
-inferred rather than presented as evidence.
+inferred rather than presented as evidence. Since migration 015 a quote whose
+stamp names text the paper no longer has is labelled "not re-checked" and is
+exported with that caveat rather than dropped: it is real text a real paper
+contains, and omitting it would narrow the account in silence.
 
 Usage:
   python pipeline/export_related_work.py "attention"
@@ -22,7 +25,7 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (actor_tally, curatorial_edits, data_dir,  # noqa: E402
-                    edit_op, env)
+                    edge_stamp_state, edit_op, env, stamp_state)
 
 STOP = {"a", "an", "the", "on", "of", "in", "for", "and", "with", "is", "are", "to", "by"}
 
@@ -113,15 +116,22 @@ def main() -> None:
     # real paper metadata — never invented
     papers = {r[0]: {"title": r[1], "year": r[2], "authors": r[3] or []}
               for r in conn.execute("SELECT arxiv_id, title, year, authors FROM papers").fetchall()}
-    defs = {r[0]: {"definition": r[1], "quote": r[2], "verified": r[3]}
+    # The stamp, not the boolean (migration 015). A quote checked against text
+    # that has since been replaced is not verified now, and this document goes
+    # into somebody's paper.
+    defs = {r[0]: {"definition": r[1], "quote": r[2], "verified": r[3],
+                   "stamp": stamp_state(r[3], r[4], r[5])}
             for r in conn.execute("""
-                SELECT p.arxiv_id, d.definition, d.verbatim_quote, d.quote_verified
+                SELECT p.arxiv_id, d.definition, d.verbatim_quote, d.quote_verified,
+                       d.quote_text_digest, p.extracted_text_digest
                 FROM definitions d JOIN papers p ON p.id=d.paper_id
                 WHERE d.concept=%s AND d.prompt_version=%s AND d.defines_concept=true
             """, (args.concept, pv)).fetchall()}
     edges = conn.execute("""
         SELECT e.source_node, e.target_node, e.edge_type, e.confidence, e.verified,
-               sp.arxiv_id, tp.arxiv_id
+               sp.arxiv_id, tp.arxiv_id,
+               e.source_text_digest, e.target_text_digest,
+               sp.extracted_text_digest, tp.extracted_text_digest
         FROM edges e JOIN papers sp ON sp.id=e.source_paper_id
                      JOIN papers tp ON tp.id=e.target_paper_id
         WHERE e.genealogy_id=%s
@@ -164,7 +174,9 @@ def main() -> None:
               f"{len(nodes)} concept-states, with {len(edges)} traced relationships.\n>\n"
               "> Every quotation below was copied verbatim from the paper's own source text and\n"
               "> string-verified against it. Quotes marked *inferred* failed that check and must\n"
-              "> be re-checked before use. **This is a scaffold, not prose** — the citations,\n"
+              "> be re-checked before use; quotes marked *not re-checked* have not been matched\n"
+              "> against the paper's extracted text as it now stands, so they carry no current\n"
+              "> verification either. **This is a scaffold, not prose** — the citations,\n"
               "> quotes and structure are real; the argument is yours to write.\n")
     note = curation_note(user_edits)
     if note:
@@ -188,7 +200,13 @@ def main() -> None:
                 continue
             md.append(f"\n**{m['title']}** ({m['year']}) — \\cite{{{keys[aid]}}}\n")
             md.append(f"{d['definition']}\n")
-            mark = "" if d["verified"] else "  *(inferred — quote could not be verified)*"
+            # A stale quote is exported with its caveat rather than dropped: it is
+            # real text a real paper contains, and omitting it would narrow the
+            # account in silence. It never goes out under the verified wording.
+            mark = {"verified": "",
+                    "inferred": "  *(inferred — quote could not be verified)*",
+                    "stale": "  *(not re-checked — not matched against the paper's "
+                             "extracted text as it now stands)*"}[d["stamp"]]
             md.append(f"\n> “{clean_quote(d['quote'])}”{mark}\n")
         md.append(f"\n_[Your synthesis of this sense: what it enabled, what it left unsolved.]_\n")
 
@@ -201,10 +219,15 @@ def main() -> None:
             by_type.setdefault(e[2], []).append(e)
         for etype, group in sorted(by_type.items()):
             md.append(f"\n### {etype}\n")
-            for sn, tn, et, conf, ver, sa, ta in sorted(group, key=lambda e: papers.get(e[5], {}).get("year") or 0):
+            for (sn, tn, et, conf, ver, sa, ta,
+                 sd, td, spd, tpd) in sorted(group, key=lambda e: papers.get(e[5], {}).get("year") or 0):
                 s_label = next(n["label"] for n in nodes if n["node_id"] == sn)
                 t_label = next(n["label"] for n in nodes if n["node_id"] == tn)
-                stamp = "verified" if ver else "**inferred — verify before citing**"
+                stamp = {"verified": "verified",
+                         "inferred": "**inferred — verify before citing**",
+                         "stale": "**not re-checked against the text as it now stands "
+                                  "— verify before citing**"
+                         }[edge_stamp_state(ver, sd, spd, td, tpd)]
                 md.append(f"- \\cite{{{keys[sa]}}} → \\cite{{{keys[ta]}}}: "
                           f"*{s_label}* **{et}** into *{t_label}* "
                           f"(confidence {conf:.2f}, {stamp}).")

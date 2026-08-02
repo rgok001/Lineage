@@ -1,5 +1,6 @@
 import type { Viewer } from "./authz";
 import { sql } from "./db";
+import { edgeStampOf, type StampState } from "./stamp";
 
 export type Member = { arxiv_id: string; year: number; title: string };
 export type Node = {
@@ -18,6 +19,11 @@ export type Edge = {
   edge_type: string;
   confidence: number;
   verified: boolean;
+  /** Resolved server-side from the two stamp digests and the two papers' current
+   *  digests (migration 015). `verified` stays beside it because it is still the
+   *  stored verdict; `stamp` is what may be shown, and it is never more than
+   *  `verified` claims. */
+  stamp: StampState;
   source_paper: string;
   target_paper: string;
   source_quote: string;
@@ -223,7 +229,13 @@ export function turningCutoff(values: number[]): number {
   if (!xs.length) return Infinity;
   return xs[Math.min(xs.length - 1, Math.floor(TURNING_QUANTILE * xs.length))];
 }
-export type MapEdge = { from: string; to: string; type: string; verified: boolean };
+export type MapEdge = {
+  from: string; to: string; type: string; verified: boolean;
+  /** Same resolution as `Edge.stamp`. The map draws a stale edge dotted, like an
+   *  inferred one: it is not entitled to a solid line, because nothing has
+   *  checked its quotes against the text that is there now. */
+  stamp: StampState;
+};
 export type InfluenceMapData = {
   concept: string;
   through_line: string;
@@ -303,11 +315,18 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
   const arxivs = [...picked.keys()];
   const rawEdges = (await sql`
     SELECT sp.arxiv_id AS from, tp.arxiv_id AS to, e.edge_type AS type, e.verified,
+           e.source_text_digest, e.target_text_digest,
+           sp.extracted_text_digest AS source_current_digest,
+           tp.extracted_text_digest AS target_current_digest,
            sp.year AS from_year, tp.year AS to_year
     FROM edges e JOIN papers sp ON sp.id = e.source_paper_id
                  JOIN papers tp ON tp.id = e.target_paper_id
     WHERE e.genealogy_id = ${id} AND sp.arxiv_id = ANY(${arxivs}) AND tp.arxiv_id = ANY(${arxivs})
-  `) as (MapEdge & { from_year: number; to_year: number })[];
+  `) as (MapEdge & {
+    from_year: number; to_year: number;
+    source_text_digest: string | null; target_text_digest: string | null;
+    source_current_digest: string | null; target_current_digest: string | null;
+  })[];
 
   // An edge means "the newer paper did X to the older one's concept", so a link
   // pointing backwards in time is a data error: arXiv revisions let two papers
@@ -315,7 +334,11 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
   // rather than draw a lineage the data cannot support.
   const edges: MapEdge[] = rawEdges
     .filter((e) => e.to_year >= e.from_year)
-    .map(({ from, to, type, verified }) => ({ from, to, type, verified }));
+    .map((e) => ({
+      from: e.from, to: e.to, type: e.type, verified: e.verified,
+      stamp: edgeStampOf(e.verified, e.source_text_digest, e.source_current_digest,
+                         e.target_text_digest, e.target_current_digest),
+    }));
 
   // Judged against the whole scored corpus, not against the handful that reached
   // the map, so being a turning point is a property of the paper rather than of
@@ -378,7 +401,17 @@ export const EDGE_MEANING: Record<string, string> = {
 /** `edit_count` is the count of CURATORIAL edits, computed here rather than in
  *  SQL so that what counts as curation has one definition (`CURATORIAL_OPS`)
  *  instead of a second one in a query. `jsonb_array_length` used to stand here
- *  and it counted incident 12's restore as somebody's editorial work. */
+ *  and it counted incident 12's restore as somebody's editorial work.
+ *
+ *  `verified_count` and `stale_count` are `stampOf`'s rule in SQL, and this is
+ *  the only place it is written a third time. It is here rather than in
+ *  TypeScript because these are one aggregate per map on the front page, and
+ *  resolving them in TypeScript would mean fetching every edge of every map to
+ *  count them. The predicate is exactly "digest present and equal", which is
+ *  `stampOf`'s first line; if that line ever moves it moves here and in
+ *  `pipeline/common.py` too. The home page said "287 verified quotes" about
+ *  stamps nobody could re-check, which is the sentence migration 015 exists to
+ *  stop. */
 export async function listGenealogies() {
   const rows = (await sql`
     SELECT g.id, g.concept, g.prompt_version, g.status, g.updated_at,
@@ -389,13 +422,29 @@ export async function listGenealogies() {
              WHERE d.concept = g.concept AND d.prompt_version = g.prompt_version
                AND d.defines_concept = true)                                             AS paper_count,
            (SELECT count(*) FROM edges e WHERE e.genealogy_id = g.id)                    AS edge_count,
-           (SELECT count(*) FROM edges e WHERE e.genealogy_id = g.id AND e.verified)     AS verified_count
+           (SELECT count(*) FROM edges e
+              JOIN papers sp ON sp.id = e.source_paper_id
+              JOIN papers tp ON tp.id = e.target_paper_id
+             WHERE e.genealogy_id = g.id AND e.verified
+               AND e.source_text_digest IS NOT NULL
+               AND e.source_text_digest = sp.extracted_text_digest
+               AND e.target_text_digest IS NOT NULL
+               AND e.target_text_digest = tp.extracted_text_digest)                      AS verified_count,
+           (SELECT count(*) FROM edges e
+              JOIN papers sp ON sp.id = e.source_paper_id
+              JOIN papers tp ON tp.id = e.target_paper_id
+             WHERE e.genealogy_id = g.id
+               AND (e.source_text_digest IS NULL
+                    OR e.source_text_digest IS DISTINCT FROM sp.extracted_text_digest
+                    OR e.target_text_digest IS NULL
+                    OR e.target_text_digest IS DISTINCT FROM tp.extracted_text_digest)) AS stale_count
     FROM genealogies g
     ORDER BY g.updated_at DESC
   `) as {
     id: number; concept: string; prompt_version: string; status: string;
     updated_at: string; user_edits: UserEdit[]; stream_count: number | null;
     paper_count: number; edge_count: number; verified_count: number;
+    stale_count: number;
   }[];
   return rows.map((g) => ({ ...g, edit_count: curatorialEdits(g.user_edits).length }));
 }
@@ -435,10 +484,17 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
   if (!rows.length) return null;
   const g = rows[0];
 
+  // The four digest columns are the whole staleness test (migration 015): two
+  // stamp digests written by the code that performed each match, and the two
+  // papers' current digests written by the code that wrote each file. They are
+  // read together here so the page never has to ask a second question.
   const edges = (await sql`
     SELECT e.id, e.source_node, e.target_node, e.edge_type, e.confidence, e.verified,
            sp.arxiv_id AS source_paper, tp.arxiv_id AS target_paper,
            e.source_quote, e.target_quote, e.rationale, e.citation_context,
+           e.source_text_digest, e.target_text_digest,
+           sp.extracted_text_digest AS source_current_digest,
+           tp.extracted_text_digest AS target_current_digest,
            ds.novelty_claims AS source_novelty, dt.novelty_claims AS target_novelty,
            ds.section AS source_section, dt.section AS target_section
     FROM edges e
@@ -450,7 +506,10 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
       AND dt.concept = ${g.concept} AND dt.prompt_version = ${g.prompt_version} AND dt.defines_concept = true
     WHERE e.genealogy_id = ${id}
     ORDER BY e.id
-  `) as Edge[];
+  `) as (Edge & {
+    source_text_digest: string | null; target_text_digest: string | null;
+    source_current_digest: string | null; target_current_digest: string | null;
+  })[];
 
   const paperRows = (await sql`
     SELECT p.arxiv_id AS arxiv, p.year, p.title, d.attention, d.displacement, d.novelty_claims AS novelty
@@ -476,7 +535,12 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
     // call.
     user_edits: (Array.isArray(g.user_edits) ? g.user_edits : []) as UserEdit[],
     has_river: Boolean(g.has_river),
-    edges: edges.map((e) => ({ ...e, confidence: Number(e.confidence) })),
+    edges: edges.map((e) => ({
+      ...e,
+      confidence: Number(e.confidence),
+      stamp: edgeStampOf(e.verified, e.source_text_digest, e.source_current_digest,
+                         e.target_text_digest, e.target_current_digest),
+    })),
     papers: paperRows.map((p) => ({
       ...p,
       attention: p.attention === null ? null : Number(p.attention),

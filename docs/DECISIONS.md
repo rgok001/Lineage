@@ -627,6 +627,45 @@ The why behind the load-bearing choices, in one place:
     documents agreeing with each other is exactly what let it. That gap is what
     `pipeline/check_record.py` now closes on commit (issue 54).
 
+30. **A stamp names the bytes it was checked against, and a stamp that cannot be
+    re-checked says so** (2026-08-02, item `[F1]`, issue 29, migration 015). Every
+    verification stamp in this system was an assertion the pipeline made about a
+    file on one worker's disk at one moment, and nothing stored beside it said
+    which file, which bytes, or where in them the quote was found. A reader could
+    not re-check a tick and neither could we without holding the corpus, which
+    makes it a claim about evidence rather than evidence. Each stamp now carries
+    the matched span, a `sha256` digest of the bytes the match ran against, and
+    the extractor version of that text; `papers` carries the digest of the file
+    as it is on disk now, written by the only code that writes the file. A stamp
+    is displayable as verified only when the two digests are equal.
+    **Three things make this a check that can fail rather than one that agrees
+    with itself.** The two digests are never copied from one another — one is
+    written by the code that just performed the match, the other by the code that
+    just wrote the file. The stored span is explicitly not treated as a second
+    confirmation of the boolean, because the same matcher put it there. And there
+    is no threshold anywhere in it: every comparison is exact equality, and the
+    two whole-run refusals use the degenerate boundary (*not one* file readable),
+    which is a state rather than a calibration.
+    **There is no honest backfill of a stamp column**, and the design says so
+    twice on purpose. Filling `quote_text_digest` from the paper's current digest
+    would turn every unproven stamp green in one statement, which is the silent
+    re-anchoring incident 10 established as dishonest. Between the migration and
+    the first re-ground every stamp renders stale, including all 287 verified
+    edges on `attention`; that window is minutes and the fix is free, because
+    re-checking was built to cost nothing (`--reground`, Stage E, Stage H
+    `--recheck`).
+    **The extractor version is provenance, not an invalidator.** Letting it make
+    a stamp stale would redden the whole corpus on every extractor commit, and it
+    would be wrong: if the bytes on disk have not changed, a stamp against them is
+    still about that text. It is digested from a curated set of the extractor's
+    own inputs rather than from the file, for the reason migration 014 curated
+    its own: a detector that fires on nearly all of its input has stopped
+    measuring its input. It is written only by the code that produced the file,
+    never by the skip path that merely read one, which is what keeps
+    `extractor_version IS DISTINCT FROM <current>` a usable re-extraction queue.
+    The design is `docs/design/recheckable-stamp.md`; three of its render sites
+    were found during implementation and are named there.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record

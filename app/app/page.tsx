@@ -57,6 +57,9 @@ export default async function Home() {
                       ? <>{g.stream_count} threads</>
                       : <>{g.edge_count} relationships</>} ·{" "}
                     <span style={{ color: "var(--verified)" }}>{g.verified_count} verified quotes</span>
+                    {g.stale_count > 0 && (
+                      <span style={{ color: "var(--ink-soft)" }}> · {g.stale_count} not re-checked</span>
+                    )}
                     {g.edit_count > 0 && <> · {g.edit_count} curatorial change(s)</>}
                   </div>
                 </div>

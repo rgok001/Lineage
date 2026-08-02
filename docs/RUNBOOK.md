@@ -35,6 +35,7 @@ resolves here.
 | `DATA_DIR` | root `.env`, Render (`/data`) | absolute paths honoured |
 | `OPENALEX_MAILTO` | root `.env`, Render | polite-pool contact |
 | `LINEAGE_NO_DB` | set per shell, never committed | any non-blank value and every Python entry point refuses to hand out `DATABASE_URL` (decision 22). Set it in any shell running pipeline code to inspect it rather than to operate on real data. Does not reach the Node side |
+| `LINEAGE_READ_URL` | set per shell, never committed | the read-only `lineage_ro` role, SELECT and nothing else. Read by `recheck_stamp.py` alone. Deliberately not named `DATABASE_URL` so no existing code path can route through it by accident |
 | `AUTH_SECRET`, `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, `OWNER_GITHUB_LOGIN` | `app/.env.local`, Vercel | Auth.js reads exactly these names |
 
 **Local development.** App: `cd app && npm run dev` (port 3000). Worker:
@@ -62,6 +63,85 @@ backups; re-export after curating. Restore with
 (refuses if the genealogy already exists). Papers, texts, and definitions are
 not covered by exports; they live in Postgres and `DATA_DIR` and are cheap to
 regenerate except for LLM spend, which the caches mostly protect.
+
+**Applying migration 015 (the re-checkable stamp).** Two steps touch live rows
+after the migration itself, they must be done **in this order**, and the alarming
+part is stated in advance so nobody reacts to it as a fault.
+
+The migration adds columns with no `DEFAULT` and no `NOT NULL`, so it rewrites no
+row and takes no table rewrite lock. Record
+`SELECT count(*) FROM definitions WHERE quote_verified` and the per-map verified
+edge counts before it and re-read them after: **any change at all falsifies it.**
+
+**Between the migration and step 2, every stamp in the database renders stale**,
+including all 287 verified edges on `attention`. That is correct and it is the
+feature working: those stamps genuinely are not re-checkable. The window is
+minutes and the fix is free. What must **not** happen is filling
+`quote_text_digest` from the paper's current digest as a "backfill" — that turns
+every unproven stamp green in one statement, which is the silent re-anchoring
+incident 10 forbids. **There is no honest backfill of a stamp column. The only
+way a stamp becomes re-checkable is by being re-checked.**
+
+Immediately after the migration and before anything else, on the Render shell:
+
+```
+python pipeline/recheck_stamp.py --concept "attention" --edges
+```
+
+Expect **every** stamp reported stale, reason "no digest recorded". A single
+stamp reporting verified means something wrote a digest it could not know.
+
+1. **Live-data step 1, the papers backfill.** `papers.extracted_text_digest` must
+   be populated for the ~300 papers already extracted. This is `extract_text.py`
+   with **no** `--force`: every paper is skipped as already extracted, and the
+   skip path hashes the file and writes that one column. `--dry-run` first.
+
+   ```
+   python pipeline/extract_text.py --dry-run
+   python pipeline/extract_text.py
+   ```
+
+   Honest and safe, because a digest computed now is a statement about the file
+   now and claims nothing about any past match. It writes **only**
+   `extracted_text_digest`; it must not touch `extracted_text_path`, the
+   extraction verdict, or any stamp. Expect the number of papers with a non-NULL
+   digest to equal the number whose text file exists on that disk, and the ~12
+   papers with no text to stay NULL. A digest on a paper with no file falsifies
+   it. `papers.extractor_version` stays NULL for every one of them, which is
+   correct: a skip did not produce those files, and that NULL is what makes them
+   selectable as the re-extraction queue later.
+
+2. **Live-data step 2, the re-ground.** Per map, and **take the snapshot first**
+   (incident 4: the exports are the de-facto backups):
+
+   ```
+   python pipeline/snapshot_map.py "attention"
+   python pipeline/stage_b_extract.py "attention" --reground --dry-run
+   python pipeline/stage_b_extract.py "attention" --reground
+   python pipeline/stage_e_ground.py "attention"
+   ```
+
+   Nothing here is new behaviour — it is the same free re-check the worker
+   performs on every trace — but it is the first time it has been run
+   deliberately across the corpus, and it is the step that visibly moves counts
+   on the published maps. Expect the verified count to return to its
+   pre-migration value **minus exactly** the definitions whose text is missing or
+   whose quote no longer matches, each named by arXiv id in the output. Any stamp
+   moving from stale to verified for a paper whose file could not be read, or a
+   count that recovers to *more* than it was, falsifies it.
+
+3. **Re-check, and then try to break it.** Re-run `recheck_stamp.py` and expect
+   zero span mismatches, with the stale set exactly equal to the set of papers
+   with no text on that disk. Any span mismatch is the matcher and the stored
+   offsets disagreeing and invalidates the feature rather than describing the
+   corpus. Then change one character in one paper's extracted text file and
+   re-run it: that paper's stamps must flip to stale and the tool must report the
+   disk/database disagreement. Restore the file. **This is the falsifying input
+   for the whole feature** — if a stamp survives a change to the text it claims
+   to have been checked against, none of this works.
+
+`recheck_stamp.py` needs `LINEAGE_READ_URL` and issues only `SELECT`, so it is
+safe to run at any point above, including from an agent's shell.
 
 **Changing the audit's calibration.** Since migration 014 this needs no clear
 and no ritual: every verdict stores a digest of the calibration that produced it,

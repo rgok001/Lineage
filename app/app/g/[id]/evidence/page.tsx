@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { deleteEdge, deleteGenealogy, reclassifyEdge } from "../../../../lib/actions";
 import { getViewer, isOwner } from "../../../../lib/authz";
 import { EDGE_MEANING, EDGE_TYPES, editActor, editOp, editWhen, getGenealogy, type Edge, type RankedPaper, type Genealogy, type UserEdit } from "../../../../lib/genealogy";
+import { STAMP_COLOR, STAMP_LABEL } from "../../../../lib/stamp";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,12 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
     g.nodes.flatMap((n) => n.members).find((m) => m.arxiv_id === p)?.title ?? p;
   const labelOf = (nid: string) => g.nodes.find((n) => n.node_id === nid)?.label ?? nid;
   const edges = [...g.edges].sort((a, b) => yearOf(a.source_paper) - yearOf(b.source_paper));
-  const verified = edges.filter((e) => e.verified).length;
+  // Three counts, disjoint, resolved at the same unit as the stamp on each row.
+  // A header that folds stale into either of the other two is the same overclaim
+  // at the level of the summary, and the summary is what most readers take away.
+  const verified = edges.filter((e) => e.stamp === "verified").length;
+  const stale = edges.filter((e) => e.stamp === "stale").length;
+  const inferred = edges.length - verified - stale;
 
   return (
     <main style={{ maxWidth: 940, margin: "0 auto", padding: "1rem 1.5rem 5rem" }}>
@@ -43,8 +49,11 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
           {g.nodes.reduce((s, n) => s + n.members.length, 0)} papers ·{" "}
           <strong>{edges.length} typed relationships</strong> (
           <span style={{ color: "var(--verified)" }}>{verified} verified</span>
-          {edges.length - verified > 0 && (
-            <span style={{ color: "var(--inferred)" }}>, {edges.length - verified} inferred</span>
+          {inferred > 0 && (
+            <span style={{ color: "var(--inferred)" }}>, {inferred} inferred</span>
+          )}
+          {stale > 0 && (
+            <span style={{ color: "var(--ink-soft)" }}>, {stale} not re-checked</span>
           )}
           )
         </p>
@@ -61,7 +70,9 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
       <p style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 1rem" }}>
         Each row is a typed relationship between two papers. ● means both quotes were verified
         verbatim against the source text; ○ means one could not be matched, so the relationship is
-        marked <em>inferred</em>. Click a row to see the evidence
+        marked <em>inferred</em>; ◌ means the quotes have not been checked against the source
+        text as it now stands, so it is marked <em>not re-checked</em>.
+        Click a row to see the evidence
         {canEdit ? ", reclassify it, or remove it." : "."}
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
@@ -193,8 +204,8 @@ function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear
           </span>
           <span style={{ fontSize: ".78rem", color: "var(--ink-soft)" }}>{EDGE_MEANING[e.edge_type]}</span>
           <span style={{ marginLeft: "auto", fontSize: ".78rem", fontFamily: "var(--font-mono)",
-            color: e.verified ? "var(--verified)" : "var(--inferred)" }}>
-            {e.verified ? "● verified" : "○ inferred"} · {e.confidence.toFixed(2)}
+            color: STAMP_COLOR[e.stamp] }}>
+            {e.stamp === "verified" ? "● verified" : STAMP_LABEL[e.stamp]} · {e.confidence.toFixed(2)}
           </span>
         </div>
         <div style={{ marginTop: ".55rem", display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap", fontSize: ".92rem" }}>
@@ -215,10 +226,26 @@ function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear
         <div style={{ textAlign: "center", color, fontSize: "1.3rem", margin: ".2rem 0" }}>↓ {e.edge_type}</div>
         <QuoteCard role="Later paper says" arxiv={e.target_paper} year={dstYear} quote={e.target_quote}
           novelty={e.target_novelty} section={e.target_section} />
-        {!e.verified && (
+        {e.stamp === "inferred" && (
           <p style={{ fontSize: ".78rem", color: "var(--inferred)", margin: ".7rem 0 0" }}>
             ○ One of these quotes could not be string-matched against the extracted source text, so
             this relationship is shown as <strong>inferred</strong>, never as verified.
+          </p>
+        )}
+        {/* The third state (migration 015). Not "we looked and it was not
+            there", which is what inferred says: either nobody has looked since
+            the text moved, or the check that ran left no record of which bytes
+            it read. The copy names both, because saying only the first would be
+            a claim about the corpus the data does not support. Dotted and quiet
+            like inferred, in no colour of its own, because it claims less than
+            either of the other two. */}
+        {e.stamp === "stale" && (
+          <p style={{ fontSize: ".78rem", color: "var(--ink-soft)", margin: ".7rem 0 0" }}>
+            ◌ These quotes have not been checked against this paper&rsquo;s extracted text as it
+            now stands, either because that text has been replaced since they were checked or
+            because the check left no record of what it read. So this relationship is shown as{" "}
+            <strong>not re-checked</strong>, never as verified. The check is free and can be
+            re-run; until it is, this says less than either verified or inferred, not more.
           </p>
         )}
 
