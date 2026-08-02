@@ -119,11 +119,12 @@ released them, and the public roadmap page was promising them meanwhile.
 | How the system actually works today | `docs/AS-BUILT.md` | derived |
 | What went wrong and what it taught | `docs/INCIDENTS.md` | history |
 | Setup and CLI usage | `README.md` | derived |
-| Open work, one item per ticket | GitHub Issues | ticket |
+| Open work, one item per ticket | GitHub Issues (https://github.com/rgok001/Lineage/issues) | ticket |
 | A lesson a role earned | `.claude/memory/<role>/` | derived |
-| One role's note to another | `.claude/memory/board.md` | ticket |
+| One role's note to another, not yet known to be work | `.claude/memory/board.md` | inbox |
 | Which lessons were actually used | `.claude/memory/verdicts.md` | history |
 | Whether the team is working | `.claude/memory/dashboard.md` | derived |
+| The team's prompts and memory, backed up | `rgok001/agent-cluster` (private) | derived |
 
 **law** — decided, not observed. Only the owner edits it. Cannot go stale,
 because it is a choice rather than a description of something that moves.
@@ -139,6 +140,11 @@ a liability wearing a document's clothes.
 
 **ticket** — born with the work and removed when it closes. Cannot age, because
 it does not outlive the thing it describes.
+
+**inbox** — a note from one role to another that is not yet known to be work.
+Cannot go stale, because the Curator ages it on a fixed rule: promoted to an
+issue or deleted, and two passes without action means deletion. An entry that
+turns out to be work stops being an inbox note the moment it becomes a ticket.
 
 Staleness is therefore possible in exactly one class, and that class names its
 owner. The whole exposure is one command:
