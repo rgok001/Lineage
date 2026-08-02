@@ -9,8 +9,10 @@ papers. See [CLAUDE.md](CLAUDE.md) for the full spec, scope, and build order.
 
 ## Layout
 
-- `pipeline/` — Python CLI scripts, one per pipeline stage (Stage A–E). Each
-  runs standalone before any UI exists.
+- `pipeline/` — Python CLI scripts, one per pipeline stage. Each runs standalone
+  before any UI exists. What each stage does, and the thirteen steps the worker
+  actually runs, is [docs/PIPELINE.md](docs/PIPELINE.md); this file is how to
+  invoke them.
 - `pipeline/db/` — migrations + tiny migration runner.
 - `app/` — Next.js front end + API (Phase 3+).
 - `docker-compose.yml` — optional local Postgres 16 + pgvector fallback.

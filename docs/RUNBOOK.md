@@ -9,7 +9,8 @@ because nothing here was decided — every line was observed, and the measured
 numbers in it (8.7 seconds for 227 papers, the 900-second `startup_task` kill,
 the expected verdict split) are readings that a change to the code invalidates.
 The reasons behind these procedures are decisions and live in
-[DECISIONS.md](DECISIONS.md); the procedures themselves live here.
+[DECISIONS.md](DECISIONS.md); what the stages and the extraction audit actually
+*are* lives in [PIPELINE.md](PIPELINE.md); the procedures themselves live here.
 
 Split out of `AS-BUILT.md` on 2026-08-02, where it was section 8. It keeps its
 original heading, so every "section 8" reference elsewhere in the record still
