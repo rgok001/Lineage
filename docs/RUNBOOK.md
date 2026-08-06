@@ -73,7 +73,10 @@ the current map until it is repaired, and repair it by renaming the `.tmp` over
 it or by re-running Stage E, which is free and writes the same result. **If the
 report names stale stamps, prefer the rename**: a re-run before `extract_text.py`
 has run after migration 015 writes the same stale stamps again, and the report
-says so where that applies. Stage E exits non-zero there, so a scripted run stops
+says so where that applies. The report checks both paths before it describes
+them, so read it rather than assuming: where it says the `.tmp` is gone there is
+nothing to rename and the re-run is the whole repair, and where it says there is
+no previous export, no file on disk describes that map at all. Stage E exits non-zero there, so a scripted run stops
 rather than continuing on a backup that is one run behind.
 
 **Applying migration 015 (the re-checkable stamp).** Two steps touch live rows

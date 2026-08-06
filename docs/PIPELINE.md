@@ -533,7 +533,14 @@ the run rather than about the branch it ended on, so both reports take them from
 one `_stamp_caveats`. The second one also changes the repair advice: where any
 edge is stale, "or just re-run this stage, it writes the same result" stops being
 offered flat, because before `extract_text.py` has run the same result is the
-same stale stamps.
+same stale stamps. **And it says what is on disk rather than what should be**
+(issue #77): both file sentences were assertions, true only of the motivating
+case. A `.tmp` swept between the write and the rename raises `FileNotFoundError`,
+which is an `OSError`, and the report described a complete and correct file that
+was not there; a first-ever export has no previous export to be untouched. Both
+paths are now tested with `.exists()` and all four combinations have their own
+sentences, including the repair, which offers the rename only when there is
+something to rename.
 **And the assembled JSON gains `stamp` per edge** (the resolved three-state
 value, computed against each paper's own stored digest, so the JSON and the page
 agree by construction). `verified` stays on every edge, so

@@ -471,16 +471,50 @@ def _report_export_stranded(r: dict, exc: OSError) -> None:
     caveat above it is (issue #76): "grounding costs nothing and writes the same
     result again" is a promise, and before extract_text.py has run after
     migration 015 the same result is the same stale stamps.
+
+    Both file sentences are now questions asked of the filesystem rather than
+    assertions (issue #77). They were written for the motivating case, a locked
+    destination, where both files do exist, and were false in the other
+    directions that reach here: a `.tmp` swept between the write and the rename
+    raises FileNotFoundError, which is an OSError, and the report then described
+    a complete and correct file that is not there; and on a first-ever export
+    there is no previous export to be untouched. A failure report that reads
+    fluently and falsely is worse than a traceback, because it is believed.
     """
     caveats = "".join(c + "\n" for c in _stamp_caveats(r))
-    if r["stale"]:
-        repair = ("  To finish the run, rename the first over the second. Re-running this\n"
-                  "  stage instead is free and writes the same result, but if the stale "
-                  "stamps\n  above are the first run after migration 015 the same result "
-                  "is the same\n  stale stamps: run extract_text.py first, as above.")
+    tmp_there, out_there = r["tmp"].exists(), r["out"].exists()
+    if tmp_there:
+        new_map = (f"  The new map is written, complete and correct, at:\n"
+                   f"    {r['tmp']}\n")
     else:
-        repair = ("  To finish the run, rename the first over the second, or just re-run this\n"
-                  "  stage: grounding costs nothing and writes the same result again.")
+        new_map = (f"  This run's export is GONE: it was written to\n"
+                   f"    {r['tmp']}\n"
+                   f"  and nothing is there now, so no file on disk describes the map "
+                   f"the\n  database now holds.\n")
+    if out_there:
+        previous = (f"  The previous export is untouched at:\n"
+                    f"    {r['out']}\n"
+                    f"  That file describes the map as it was BEFORE this run. It is no "
+                    f"longer\n  what the database holds, so do not read it as the current "
+                    f"map.\n")
+    else:
+        previous = (f"  There is no previous export to fall back on: no file exists "
+                    f"at\n    {r['out']}\n")
+
+    # The rename is only on offer if there is something to rename. Where it is
+    # not, the re-run is the whole repair rather than the easy half of it, so the
+    # #76 caveat on re-running matters more here, not less.
+    if tmp_there:
+        repair = "  To finish the run, rename the first path above over the second.\n  "
+    else:
+        repair = "  There is nothing left to rename, so a re-run is the only repair.\n  "
+    if r["stale"]:
+        repair += ("Re-running this stage is free and writes the same result, but if the "
+                   "stale\n  stamps above are the first run after migration 015 the same "
+                   "result is the\n  same stale stamps: run extract_text.py first, as "
+                   "above.")
+    else:
+        repair += "Re-running this stage costs nothing and writes the same result again."
     sys.exit(
         f"\nThe grounding run was COMMITTED and the database has moved: "
         f"{r['nodes']} concept-states, {r['edges']} edges "
@@ -488,10 +522,8 @@ def _report_export_stranded(r: dict, exc: OSError) -> None:
         f"{r['stale']} stale) are stored now, and this map is marked complete.\n"
         f"{caveats}"
         f"Publishing the export then FAILED: {exc}\n"
-        f"  The new map is written, complete and correct, at:\n    {r['tmp']}\n"
-        f"  The previous export is untouched at:\n    {r['out']}\n"
-        f"  That file describes the map as it was BEFORE this run. It is no longer\n"
-        f"  what the database holds, so do not read it as the current map.\n"
+        f"{new_map}"
+        f"{previous}"
         f"{repair}")
 
 
