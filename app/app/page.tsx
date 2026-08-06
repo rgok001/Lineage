@@ -56,7 +56,19 @@ export default async function Home() {
                     {g.stream_count != null
                       ? <>{g.stream_count} threads</>
                       : <>{g.edge_count} relationships</>} ·{" "}
-                    <span style={{ color: "var(--verified)" }}>{g.verified_count} verified quotes</span>
+                    {/* "verified relationships", not "verified quotes" (issue #73).
+                        verified_count counts EDGES whose two quotes both verified,
+                        and edges fan out over quotes because many of them cite the
+                        same passage: measured on the shipped exports, "attention"
+                        is 287 verified edges over 79 distinct quote strings and
+                        "embedding" 286 over 107, so the old noun overstated the
+                        evidence three- to fourfold on the one number the product's
+                        central promise rests on. The evidence page has always said
+                        "N typed relationships (M verified)" about this quantity;
+                        this is that vocabulary, not a new one. A quote count, if it
+                        is ever wanted here, has to be counted with DISTINCT and not
+                        renamed into existence. */}
+                    <span style={{ color: "var(--verified)" }}>{g.verified_count} verified relationships</span>
                     {g.stale_count > 0 && (
                       <span style={{ color: "var(--ink-soft)" }}> · {g.stale_count} not re-checked</span>
                     )}

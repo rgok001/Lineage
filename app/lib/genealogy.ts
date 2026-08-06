@@ -411,7 +411,8 @@ export const EDGE_MEANING: Record<string, string> = {
  *  `stampOf`'s first line; if that line ever moves it moves here and in
  *  `pipeline/common.py` too. The home page said "287 verified quotes" about
  *  stamps nobody could re-check, which is the sentence migration 015 exists to
- *  stop.
+ *  stop. The noun was wrong too, and for longer: this counts edges, and the page
+ *  now says "verified relationships" (issue #73).
  *
  *  The `<> ''` and `COALESCE(..., '') = ''` tests are not decoration (issue #60).
  *  `IS NOT NULL` alone let a pair of empty strings satisfy `'' = ''` and counted

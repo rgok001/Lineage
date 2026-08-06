@@ -412,6 +412,13 @@ was a back-link in whatever corner each page happened to use.
   on a page whose only curated map was the one this document had already
   retracted that claim about. It is now gated on `edit_count` across the listed
   maps and says the truthful thing when none has been curated (decision 18).
+  Each card counts papers, threads or relationships, **verified relationships**
+  and not-re-checked. That middle count read "N verified quotes" until issue #73,
+  where N is edges: on the shipped exports 287 verified edges of "attention" rest
+  on 79 distinct quote strings and 286 of "embedding" on 107, so the noun
+  overstated the evidence three- to fourfold on the number the product's central
+  promise rests on. The noun moved to what is counted rather than the count to
+  the noun; a quote count would have to be a `DISTINCT` count of quote strings.
 - `/trace` : requesting a map. Three steps that set expectations (name a term,
   it reads up to 150 papers in about fifteen minutes, you get the map), then
   the form, the queue and live progress. The panel (`trace-panel.tsx`, client)
