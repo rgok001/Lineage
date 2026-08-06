@@ -6,6 +6,7 @@ import os
 import socket
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import requests
@@ -413,15 +414,50 @@ def _fold_indexed(s: str) -> tuple[str, list[int]]:
     return folded, mapped
 
 
+def grounded_spans(text: str, quote: str) -> Iterator[tuple[int, int]]:
+    """Every place in `text` this quote grounds, leftmost first. See below.
+
+    Split out of `grounded_span` for issue #63, and the arithmetic lives here so
+    that there is still exactly one of it. The re-checker needs the whole set:
+    "is this stored span one the matcher would produce?" is a question about all
+    of them, and answering it by re-folding the slice — the obvious independent
+    test — holds the matcher to a stronger contract than it grants and calls the
+    difference fatal.
+
+    Occurrences may overlap, and two of them may name the same source span when a
+    character expanded under folding. Callers use this for membership, so neither
+    matters; what would matter is missing one.
+    """
+    if not text or not quote:
+        return
+    needle = _fold(quote)
+    if not needle:
+        return
+    folded, origin = _fold_indexed(text)
+    at = folded.find(needle)
+    while at >= 0:
+        yield (origin[at], origin[at + len(needle) - 1] + 1)
+        at = folded.find(needle, at + 1)
+
+
 def grounded_span(text: str, quote: str) -> tuple[int, int] | None:
     """Where in `text` this quote is, as half-open character offsets, or None.
 
-    The leftmost occurrence, and the *smallest range of whole source characters
-    that covers it*. Whole characters matter in one direction only: when a match
-    begins or ends inside a character whose lowercase is several characters
-    ("İ"), the span covers that character rather than cutting it in half, so
-    `_fold(text[start:end])` can be a character longer than `_fold(quote)`. A
-    span that named half a character would be an offset no reader could use.
+    The leftmost of `grounded_spans`: the *smallest range of whole source
+    characters that covers* the match. When a match begins or ends inside a
+    character whose lowercase is several characters ("İ"), the span covers that
+    character rather than cutting it in half; a span naming half a character
+    would be an offset no reader could use.
+
+    **A span is not checkable by re-folding the slice** (issue #63).
+    `_fold(text[start:end]) == _fold(quote)` is a stronger contract than this
+    function grants, and it fails on spans this function produced itself, two
+    ways. The widening above makes the slice fold longer. And folding depends on
+    context the slice no longer carries: `"ΑΣ".lower()` is `"ας"` while
+    `"Σ".lower()` is `"σ"`, and the final-sigma rule fires after any cased letter,
+    Latin included, so `x\\Sigma` out of inline maths is enough to reach it. The
+    contract is this function's own arithmetic and nothing beyond it, so anything
+    verifying a stored span asks `grounded_spans` rather than re-deriving a test.
 
     **A quote that folds to nothing is not grounded** (issue #57). `_fold` removes
     whitespace and citation marks, so `"<cit.>"`, `"   "` and `"<cit.><ref>"` all
@@ -436,16 +472,7 @@ def grounded_span(text: str, quote: str) -> tuple[int, int] | None:
     This is the one place where this function deliberately does NOT reproduce the
     pre-change boolean, and it is a change in the direction of claiming less.
     """
-    if not text or not quote:
-        return None
-    needle = _fold(quote)
-    if not needle:
-        return None
-    folded, origin = _fold_indexed(text)
-    at = folded.find(needle)
-    if at < 0:
-        return None
-    return (origin[at], origin[at + len(needle) - 1] + 1)
+    return next(grounded_spans(text, quote), None)
 
 
 def quote_is_grounded(text: str, quote: str) -> bool:

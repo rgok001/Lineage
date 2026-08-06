@@ -455,7 +455,10 @@ text" would eventually disagree and the disagreement would be invisible, because
 the boolean and the span would be telling different stories about the same stamp.
 The span names the smallest range of whole source characters covering the match,
 so a match that begins or ends inside a character whose lowercase is several
-characters covers that character rather than cutting it in half.
+characters covers that character rather than cutting it in half. `grounded_spans`
+holds that arithmetic and yields every occurrence leftmost first; `grounded_span`
+is its first result, and it is what anything verifying a stored span has to ask,
+because the span's contract is this arithmetic and nothing stronger (issue #63).
 **A quote that folds to nothing is not grounded** (issue #57). The fold removes
 whitespace and citation marks, so `"<cit.>"`, `"   "` and `"<cit.><ref>"` all
 fold to the empty string, and the empty string is a substring of everything: the
@@ -582,12 +585,25 @@ re-anchor a stamp, which is the failure incident 10 named as dishonest; it is
 therefore the one tool in this feature an agent may run against production. Per
 stamp it recomputes the file's digest and compares it to
 `papers.extracted_text_digest` (disagreement means the file moved under us) and
-to the stamp's own digest (disagreement means stale), slices `text[start:end]`
-and folds it against the stored quote (disagreement means the span is wrong), and
-re-runs `grounded_span` over the whole file (disagreement with the stored span
-means the match is not where we said). Those four comparisons arrive by three
-different paths — the database, the disk and the matcher — so each of them can
-return false. **The verdict is resolved against the bytes on disk, not against
+to the stamp's own digest (disagreement means stale), asks the matcher every
+place it grounds that quote in that file and looks for the stored span among them
+(absent means the span names something else), and compares the stored span with
+the leftmost of those (disagreement means the match is not where we said). Those
+four comparisons arrive by three different paths — the database, the disk and the
+matcher — so each of them can return false.
+**Checks 3 and 4 ask the matcher, not a slice** (issue #63). The first version
+tested `_fold(text[start:end]) == _fold(quote)`, which is a stricter contract than
+`grounded_span` grants and than its own docstring claimed: a span is widened to
+whole source characters, so the slice can fold longer, and folding is context
+sensitive, so a slice can fold *differently* — `"ΑΣ".lower()` is `"ας"` while
+`"Σ".lower()` is `"σ"`, and the final-sigma rule fires after any cased letter,
+Latin included, so `x\Sigma` out of inline maths reaches it. Spans `grounded_span`
+had itself produced therefore failed, and a span mismatch is the finding that
+exits non-zero "which invalidates the stamps". `grounded_spans` now holds the
+arithmetic and `grounded_span` is its first result, so there is still exactly one
+matcher and the verifier holds it to its own contract rather than one it
+re-derived. The matcher's own sigma artefact — a quote that is verbatim in the
+paper and does not ground — is untouched by this and is issue #74. **The verdict is resolved against the bytes on disk, not against
 `papers.extracted_text_digest`** (issue #56): resolving against the database's
 value is the comparison the application already makes without a disk, and it made
 the design's own falsifier 12 — corrupt one character, re-run — print the
