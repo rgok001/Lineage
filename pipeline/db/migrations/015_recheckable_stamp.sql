@@ -57,7 +57,16 @@ ALTER TABLE definitions
     ADD COLUMN quote_extractor_version TEXT;
 
 -- Half-open character offsets into the UTF-8 decoding of the file's bytes, NULL
--- when nothing matched. The span is deliberately NOT a second confirmation of
+-- when nothing matched. **The unit is Unicode code points, not UTF-16 code
+-- units, because Python is what indexes the text: JavaScript must not slice with
+-- these directly.** For any character outside the BMP the two disagree, and a
+-- JS reader slicing a Python offset gets a passage shifted by one per astral
+-- character before it -- measured, a line with one U+1D465 and one emoji is 47
+-- code points and 49 code units, and the slice lands two short (issue #61).
+-- Anything in TypeScript that consumes these converts once at the boundary
+-- rather than per caller. Same for a third party who reproduces the digest with
+-- sha256sum and then indexes the text with a UTF-16 tool.
+-- The span is deliberately NOT a second confirmation of
 -- the boolean: slicing it and finding the quote there proves nothing, because
 -- the same matcher put it there. It is stored so a human can look, and so
 -- somebody can one day measure *where* matches land -- a short quote grounding

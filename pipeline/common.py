@@ -443,6 +443,14 @@ def grounded_spans(text: str, quote: str) -> Iterator[tuple[int, int]]:
 def grounded_span(text: str, quote: str) -> tuple[int, int] | None:
     """Where in `text` this quote is, as half-open character offsets, or None.
 
+    **The unit is Unicode code points, not UTF-16 code units** (issue #61).
+    Python indexes strings by code point and JavaScript by code unit, so for any
+    character outside the BMP these offsets do not name the passage a JS reader
+    would slice: a line with one U+1D465 and one emoji measures 47 here and 49
+    there, and `text.slice(start, end)` lands two characters short. Nothing in
+    `app/` reads the stored spans today; whatever first does converts once at the
+    boundary rather than in each caller.
+
     The leftmost of `grounded_spans`: the *smallest range of whole source
     characters that covers* the match. When a match begins or ends inside a
     character whose lowercase is several characters ("İ"), the span covers that

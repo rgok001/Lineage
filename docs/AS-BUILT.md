@@ -211,7 +211,9 @@ being traced, and both are nullable (computed by a post-Stage-D job; the
 earliest paper has no earlier work to be displaced from).
 `quote_start`, `quote_end`, `quote_text_digest` and `quote_extractor_version`
 (015) are the re-checkable half of `quote_verified`: half-open character offsets
-into the UTF-8 decoding of the file, the digest of the bytes the match actually
+into the UTF-8 decoding of the file — **Unicode code points, as Python indexes
+them, not UTF-16 code units, so JavaScript must not slice with these directly**
+(issue #61) — the digest of the bytes the match actually
 read, and the extractor version of that text, copied from the paper's row rather
 than from the running extractor because this stage did not produce the file. All
 four are nullable and **NULL is meaningful: it means this stamp was never made

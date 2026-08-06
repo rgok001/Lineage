@@ -449,7 +449,11 @@ genealogy JSON export to `data/genealogy_<concept>_<pv>.json` and marks the
 genealogy complete. **These exports are the de-facto backups** (section 10,
 incident 4). Re-run Stage E after curating.
 **One matcher, and it now says where.** `grounded_span` returns the half-open
-character offsets of the leftmost match, or None; `quote_is_grounded` is that
+character offsets of the leftmost match, or None. The unit is **Unicode code
+points, as Python indexes them, not UTF-16 code units, so JavaScript must not
+slice with these directly** (issue #61): they disagree for any character outside
+the BMP, nothing in `app/` reads the span columns yet, and anything that starts
+to converts once at the boundary. `quote_is_grounded` is that
 call with the answer thrown away. Two implementations of "is this quote in this
 text" would eventually disagree and the disagreement would be invisible, because
 the boolean and the span would be telling different stories about the same stamp.
