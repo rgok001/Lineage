@@ -444,19 +444,25 @@ def _report_export_stranded(r: dict, exc: OSError) -> None:
     file describing them. Names the counts so the state is checkable, both paths
     so the repair is one command, and exits non-zero because a run that did not
     publish is not a success.
+
+    Written to stderr through `sys.exit(msg)`, which is how every other refusal
+    in this file reports (issue #75). The first version used `print`, so a
+    scripted run that logs stdout and alerts on stderr got exit 1 and not one
+    word on the stream it watches: the exact silence this report was written to
+    end, and worse than the traceback it replaced, which at least went to stderr.
     """
-    print(f"\nThe grounding run was COMMITTED and the database has moved: "
-          f"{r['nodes']} concept-states, {r['edges']} edges "
-          f"({r['verified']} solid/verified, {r['inferred']} dotted/inferred, "
-          f"{r['stale']} stale) are stored now, and this map is marked complete.")
-    print(f"Publishing the export then FAILED: {exc}")
-    print(f"  The new map is written, complete and correct, at:\n    {r['tmp']}")
-    print(f"  The previous export is untouched at:\n    {r['out']}")
-    print("  That file describes the map as it was BEFORE this run. It is no "
-          "longer\n  what the database holds, so do not read it as the current map.")
-    print("  To finish the run, rename the first over the second, or just re-run "
-          "this\n  stage: grounding costs nothing and writes the same result again.")
-    sys.exit(1)
+    sys.exit(
+        f"\nThe grounding run was COMMITTED and the database has moved: "
+        f"{r['nodes']} concept-states, {r['edges']} edges "
+        f"({r['verified']} solid/verified, {r['inferred']} dotted/inferred, "
+        f"{r['stale']} stale) are stored now, and this map is marked complete.\n"
+        f"Publishing the export then FAILED: {exc}\n"
+        f"  The new map is written, complete and correct, at:\n    {r['tmp']}\n"
+        f"  The previous export is untouched at:\n    {r['out']}\n"
+        f"  That file describes the map as it was BEFORE this run. It is no longer\n"
+        f"  what the database holds, so do not read it as the current map.\n"
+        f"  To finish the run, rename the first over the second, or just re-run this\n"
+        f"  stage: grounding costs nothing and writes the same result again.")
 
 
 if __name__ == "__main__":

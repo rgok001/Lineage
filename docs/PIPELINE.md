@@ -522,7 +522,10 @@ free re-run, and exits non-zero. The traceback it replaces had no success line i
 it, and a traceback with no success line reads as "nothing happened" — the same
 wrong inference the whole reordering was about, arriving from the other side.
 Every branch reachable after the commit now has a sentence, not just the happy
-one.
+one. **That report goes to stderr** (issue #75), through the same `sys.exit(msg)`
+every refusal in the stage uses. It went to stdout for one commit, which left a
+scripted run that logs stdout and alerts on stderr with exit 1 and nothing on the
+stream it watches; the traceback this replaced was at least on stderr.
 **And the assembled JSON gains `stamp` per edge** (the resolved three-state
 value, computed against each paper's own stored digest, so the JSON and the page
 agree by construction). `verified` stays on every edge, so

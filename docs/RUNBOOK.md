@@ -64,8 +64,9 @@ backups; re-export after curating. Restore with
 not covered by exports; they live in Postgres and `DATA_DIR` and are cheap to
 regenerate except for LLM spend, which the caches mostly protect.
 
-If Stage E ends with "Publishing the export then FAILED", the database has the
-new map and the file does not: the run committed, and only the rename of
+If Stage E ends with "Publishing the export then FAILED" (on **stderr**, like
+every other refusal the stage makes), the database has the new map and the file
+does not: the run committed, and only the rename of
 `genealogy_<concept>_<pv>.json.tmp` over `genealogy_<concept>_<pv>.json` did not
 happen (a locked path, a read-only mount, a full disk). Do not read the export as
 the current map until it is repaired, and repair it by renaming the `.tmp` over
