@@ -24,8 +24,13 @@ export type Edge = {
    *  stored verdict; `stamp` is what may be shown, and it is never more than
    *  `verified` claims. */
   stamp: StampState;
-  source_paper: string;
-  target_paper: string;
+  /** Nullable because the join that fetches them is a LEFT JOIN (issue #79):
+   *  `edges.source_paper_id` and `target_paper_id` are nullable and may name a
+   *  row that is gone, and such an edge is shown rather than dropped. Every
+   *  reader of these must be ready for null and must say "we do not have this
+   *  paper" rather than inventing one (CLAUDE.md rule 4). */
+  source_paper: string | null;
+  target_paper: string | null;
   source_quote: string;
   target_quote: string;
   rationale: string | null;
@@ -313,14 +318,23 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
   }
 
   const arxivs = [...picked.keys()];
+  // LEFT JOIN for the same reason as everywhere else (issue #79), and here it is
+  // uniformity rather than a behaviour change: measured, the result set is
+  // identical either way. The predicate below asks for two arXiv ids drawn from
+  // the papers this map selected, and a missing paper row has no arXiv id, so
+  // `NULL = ANY(...)` is NULL and the edge is excluded by the WHERE clause
+  // instead of by the join. It has to be: this canvas draws edges BETWEEN two
+  // drawn papers, and there is no node to hang a missing one from. What the
+  // LEFT JOIN buys is that removing or widening that predicate later cannot
+  // silently reintroduce the join deciding the question.
   const rawEdges = (await sql`
     SELECT sp.arxiv_id AS from, tp.arxiv_id AS to, e.edge_type AS type, e.verified,
            e.source_text_digest, e.target_text_digest,
            sp.extracted_text_digest AS source_current_digest,
            tp.extracted_text_digest AS target_current_digest,
            sp.year AS from_year, tp.year AS to_year
-    FROM edges e JOIN papers sp ON sp.id = e.source_paper_id
-                 JOIN papers tp ON tp.id = e.target_paper_id
+    FROM edges e LEFT JOIN papers sp ON sp.id = e.source_paper_id
+                 LEFT JOIN papers tp ON tp.id = e.target_paper_id
     WHERE e.genealogy_id = ${id} AND sp.arxiv_id = ANY(${arxivs}) AND tp.arxiv_id = ANY(${arxivs})
   `) as (MapEdge & {
     from_year: number; to_year: number;
@@ -513,6 +527,15 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
   // stamp digests written by the code that performed each match, and the two
   // papers' current digests written by the code that wrote each file. They are
   // read together here so the page never has to ask a second question.
+  //
+  // LEFT JOIN on both papers, for the reason listGenealogies gives at length
+  // (issue #60, then #79): the join must not decide whether an edge exists. An
+  // INNER JOIN here dropped an edge whose paper row is missing, while the home
+  // card counted it, so the card said "3 relationships" and the page it links to
+  // listed 2 — the two surfaces disagreeing about one map. Now the row arrives
+  // with NULL digests, which is exactly what `edgeStampOf` is handed for a paper
+  // with no digest, so it resolves stale on the page as it counts stale on the
+  // card. `source_paper` and `target_paper` arrive NULL with it; see the type.
   const edges = (await sql`
     SELECT e.id, e.source_node, e.target_node, e.edge_type, e.confidence, e.verified,
            sp.arxiv_id AS source_paper, tp.arxiv_id AS target_paper,
@@ -523,8 +546,8 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
            ds.novelty_claims AS source_novelty, dt.novelty_claims AS target_novelty,
            ds.section AS source_section, dt.section AS target_section
     FROM edges e
-    JOIN papers sp ON sp.id = e.source_paper_id
-    JOIN papers tp ON tp.id = e.target_paper_id
+    LEFT JOIN papers sp ON sp.id = e.source_paper_id
+    LEFT JOIN papers tp ON tp.id = e.target_paper_id
     LEFT JOIN definitions ds ON ds.paper_id = e.source_paper_id
       AND ds.concept = ${g.concept} AND ds.prompt_version = ${g.prompt_version} AND ds.defines_concept = true
     LEFT JOIN definitions dt ON dt.paper_id = e.target_paper_id

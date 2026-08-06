@@ -22,10 +22,17 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
   if (!g) notFound();
   const canEdit = isOwner(await getViewer());
 
-  const yearOf = (p: string) =>
+  // A relationship whose paper row is gone still appears here (issue #79), so
+  // both of these take null. `titleOf` used to fall back to the arXiv id, which
+  // is null in that case, and `PaperTag` then read `.length` off it: a 500 on
+  // the whole page, and there is still no error.tsx. The fallback says what is
+  // true instead of naming a paper we cannot describe (CLAUDE.md rule 4).
+  const MISSING_PAPER = "this paper is no longer in our records";
+  const yearOf = (p: string | null) =>
     g.nodes.flatMap((n) => n.members).find((m) => m.arxiv_id === p)?.year ?? 0;
-  const titleOf = (p: string) =>
-    g.nodes.flatMap((n) => n.members).find((m) => m.arxiv_id === p)?.title ?? p;
+  const titleOf = (p: string | null) =>
+    g.nodes.flatMap((n) => n.members).find((m) => m.arxiv_id === p)?.title
+    ?? p ?? MISSING_PAPER;
   const labelOf = (nid: string) => g.nodes.find((n) => n.node_id === nid)?.label ?? nid;
   const edges = [...g.edges].sort((a, b) => yearOf(a.source_paper) - yearOf(b.source_paper));
   // Three counts, disjoint, resolved at the same unit as the stamp on each row.
@@ -299,11 +306,20 @@ function AuditTrail({ edits }: { edits: UserEdit[] }) {
   );
 }
 
+/** `year` is 0 when this map holds no record of the paper, which is what
+ *  `yearOf` returns for a relationship whose paper row is missing (issue #79)
+ *  and for one naming a paper outside the map's concept-states. Printed, it
+ *  reads as the year 0, so it is omitted: an absent date shown as a date is the
+ *  small end of inventing metadata. */
 function PaperTag({ year, title, sub }: { year: number; title: string; sub: string }) {
   return (
     <span style={{ display: "inline-flex", flexDirection: "column", lineHeight: 1.2 }}>
       <span style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>{year}</span>{" "}
+        {year > 0 && (
+          <>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>{year}</span>{" "}
+          </>
+        )}
         {title.length > 46 ? title.slice(0, 46) + "…" : title}
       </span>
       <span style={{ fontSize: ".72rem", color: "var(--ink-soft)", fontStyle: "italic" }}>{sub}</span>
@@ -362,15 +378,22 @@ function BasisCard({ color, rationale, citationContext }: {
 }
 
 function QuoteCard({ role, arxiv, year, quote, novelty, section }: {
-  role: string; arxiv: string; year: number; quote: string;
+  role: string; arxiv: string | null; year: number; quote: string;
   novelty?: string[] | null; section?: string | null;
 }) {
   const claims = (novelty ?? []).filter((c) => c && c.trim());
+  // The quote is still real text this run copied out of a paper, so it is shown
+  // with the stamp it earned. What is missing is the paper's record, and the
+  // line that would name it says so rather than printing "arXiv:" with nothing
+  // after it (issue #79).
+  const provenance = arxiv
+    ? `arXiv:${arxiv}${year > 0 ? ` (${year})` : ""}`
+    : "the paper this quote came from is no longer in our records";
   return (
     <div style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 6, padding: ".8rem .9rem" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: ".5rem",
         fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)", marginBottom: ".4rem" }}>
-        <span>{role} · arXiv:{arxiv} ({year})</span>
+        <span>{role} · {provenance}</span>
         {section && <span style={{ fontStyle: "italic", opacity: 0.85 }}>from §{section.length > 28 ? section.slice(0, 28) + "…" : section}</span>}
       </div>
       <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: ".95rem",

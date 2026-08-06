@@ -573,7 +573,15 @@ corpus that skips it produces a document whose `\cite` keys do not resolve, whic
 is how the attention map's first export came out with 14 entries for 85 papers.
 `export_related_work.py`: related-work skeleton (Markdown) + BibTeX from a
 curated genealogy. Real structure, real citations, real verified quotes, no
-invented prose.
+invented prose. Its edge query `LEFT JOIN`s both papers (issue #79), so a
+relationship whose paper row is missing appears in the document and is marked
+"not re-checked" exactly as the app shows it, instead of being dropped here while
+the site counts it. Where that leaves an endpoint with no arXiv id, `edge_cite`
+writes a sentence saying so rather than a `\cite`: a citation key with no BibTeX
+entry compiles to a bare `[?]` in somebody's paper, which is rule 4 broken in the
+one output that leaves this system. The same function covers an endpoint outside
+the map's concept-states, which has an id but no key, and where `keys[None]` was
+a `KeyError` waiting for the join to change.
 `snapshot_map.py`: the whole of one map to a timestamped JSON, before anything
 rewrites it. Stage E's export is the documented backup and holds `nodes` and
 `edges`; it does not hold `streams` (threads and their claims), `user_edits` (the

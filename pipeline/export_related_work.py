@@ -74,6 +74,27 @@ def clean_quote(q: str) -> str:
     return re.sub(r"\s+", " ", q).strip()
 
 
+def edge_cite(arxiv: str | None, keys: dict) -> str:
+    r"""A `\cite` only where there is a paper this document can cite (rule 4).
+
+    Two ways an edge endpoint has no key. Its paper row can be gone, which the
+    LEFT JOIN now surfaces instead of hiding (issue #79), and then there is not
+    even an arXiv id. Or it can name a paper outside this map's concept-states,
+    which mints no key, because keys are minted from the corpus and BibTeX is
+    written from the same list.
+
+    Neither may be given one. `keys[None]` used to be a KeyError waiting for the
+    join to change, and inventing a key would be worse than the crash: a
+    `\cite{}` with no entry in the .bib compiles to a bare [?] in somebody's
+    paper, which is this product printing a citation it cannot support.
+    """
+    if arxiv and arxiv in keys:
+        return f"\\cite{{{keys[arxiv]}}}"
+    if arxiv:
+        return f"arXiv:{arxiv} *(not among this map's papers, so not cited)*"
+    return "*(this paper is no longer in our records, so it cannot be cited)*"
+
+
 def curation_note(user_edits: list) -> str:
     """One line about who curated this map, for a document going into a paper.
     Empty string when nobody curated it, and the caller writes nothing.
@@ -127,13 +148,21 @@ def main() -> None:
                 FROM definitions d JOIN papers p ON p.id=d.paper_id
                 WHERE d.concept=%s AND d.prompt_version=%s AND d.defines_concept=true
             """, (args.concept, pv)).fetchall()}
+    # LEFT JOIN on both papers (issue #79, after #60). `source_paper_id` and
+    # `target_paper_id` are nullable and may name a row that is gone; an INNER
+    # JOIN dropped such an edge from this document while the app counted it, so
+    # the export and the page disagreed about the same map, silently and in the
+    # direction of claiming fewer relationships than the site shows. The row now
+    # arrives with NULL digests, which `edge_stamp_state` resolves stale exactly
+    # as every other surface does, and with a NULL arxiv_id, which `edge_cite`
+    # below refuses to turn into a citation.
     edges = conn.execute("""
         SELECT e.source_node, e.target_node, e.edge_type, e.confidence, e.verified,
                sp.arxiv_id, tp.arxiv_id,
                e.source_text_digest, e.target_text_digest,
                sp.extracted_text_digest, tp.extracted_text_digest
-        FROM edges e JOIN papers sp ON sp.id=e.source_paper_id
-                     JOIN papers tp ON tp.id=e.target_paper_id
+        FROM edges e LEFT JOIN papers sp ON sp.id=e.source_paper_id
+                     LEFT JOIN papers tp ON tp.id=e.target_paper_id
         WHERE e.genealogy_id=%s
     """, (gen_id,)).fetchall()
     conn.close()
@@ -228,7 +257,7 @@ def main() -> None:
                          "stale": "**not re-checked against the text as it now stands "
                                   "— verify before citing**"
                          }[edge_stamp_state(ver, sd, spd, td, tpd)]
-                md.append(f"- \\cite{{{keys[sa]}}} → \\cite{{{keys[ta]}}}: "
+                md.append(f"- {edge_cite(sa, keys)} → {edge_cite(ta, keys)}: "
                           f"*{s_label}* **{et}** into *{t_label}* "
                           f"(confidence {conf:.2f}, {stamp}).")
         md.append("\n_[Your paragraph tying these transitions into a narrative.]_\n")

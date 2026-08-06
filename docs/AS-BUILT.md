@@ -281,7 +281,22 @@ verified where both languages say stale (issue #60). Its two subqueries
 such an edge from both state counts while the card still counted it a
 relationship, and a missing paper row yields a NULL digest, which is what the
 other two copies of the rule are handed and both call stale (issue #60 again).
-Every
+**The queries that fetch an edge's papers LEFT JOIN them, for the same reason**
+(issue #79): `listGenealogies` was the only one that did for one commit, so the
+home card counted an edge with a missing paper row and `getGenealogy` dropped it,
+and the card said "3 relationships" over a page listing 2. `getGenealogy`,
+`getInfluenceMap` and `pipeline/export_related_work.py` now join the same way, so
+such an edge appears on those surfaces and resolves stale on them. The paper
+dossier (`app/app/g/[id]/p/[arxiv]/page.tsx`) is the one remaining inner join and
+still drops it; that is issue #80, open, and it needs a rendering decision this
+change did not make. It arrives carrying a NULL
+arXiv id, which each consumer states rather than fills in: the evidence page says
+the paper is no longer in our records instead of reading `.length` off a null,
+and the export writes that same sentence where a `\cite` would go rather than
+minting a key with no BibTeX entry behind it (rule 4). On the influence map the
+change is uniformity only, measured: that query selects edges between two papers
+it has already drawn by arXiv id, and a missing paper has no id, so the predicate
+excludes the row either way. Every
 surface that shows a stamp resolves it this way: the evidence page and its header
 count, the influence map's solid-versus-dotted lines and its header count, the
 paper dossier, the thread page, the home page's per-map counts, both exports.
