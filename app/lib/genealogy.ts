@@ -418,7 +418,23 @@ export const EDGE_MEANING: Record<string, string> = {
  *  the edge **verified**, where both `stamp_state` and `stampOf` treat `""` as
  *  falsy and return stale. Nothing writes an empty digest today — `text_digest`
  *  only ever returns `sha256:<64 hex>` — so this was latent, and the polarity was
- *  wrong in the one copy where the answer is a number on the front page. */
+ *  wrong in the one copy where the answer is a number on the front page.
+ *
+ *  **LEFT JOIN, so all three counts range over the same edges** (issue #60, the
+ *  residue). `edge_count` joins nothing while these two INNER JOINed `papers`,
+ *  and `edges.source_paper_id` / `target_paper_id` are nullable
+ *  (`001_init.sql:61-62`), so an edge with no paper row was counted in
+ *  `edge_count` and in neither of the others: the card said "N relationships" and
+ *  then described fewer than N of them, with the difference nowhere. Excluding a
+ *  row in the JOIN rather than in the predicate also decides the question
+ *  silently, and it decided it the one way that is not available — an edge whose
+ *  paper is missing is certainly not verified, but it is also not nothing.
+ *  A LEFT JOIN gives `sp.extracted_text_digest = NULL`, which is exactly what
+ *  `stamp_state` and `stampOf` are handed for a paper with no digest, and both
+ *  return stale; so the missing row now counts as not-re-checked in all three
+ *  copies of the rule instead of vanishing from one. Latent today for the same
+ *  reason as the empty digest: Stage D writes ids it has just looked up and
+ *  `restore_genealogy.py` refuses an edge whose paper is missing. */
 export async function listGenealogies() {
   const rows = (await sql`
     SELECT g.id, g.concept, g.prompt_version, g.status, g.updated_at,
@@ -430,15 +446,15 @@ export async function listGenealogies() {
                AND d.defines_concept = true)                                             AS paper_count,
            (SELECT count(*) FROM edges e WHERE e.genealogy_id = g.id)                    AS edge_count,
            (SELECT count(*) FROM edges e
-              JOIN papers sp ON sp.id = e.source_paper_id
-              JOIN papers tp ON tp.id = e.target_paper_id
+              LEFT JOIN papers sp ON sp.id = e.source_paper_id
+              LEFT JOIN papers tp ON tp.id = e.target_paper_id
              WHERE e.genealogy_id = g.id AND e.verified
                AND e.source_text_digest <> '' AND e.target_text_digest <> ''
                AND e.source_text_digest = sp.extracted_text_digest
                AND e.target_text_digest = tp.extracted_text_digest)                      AS verified_count,
            (SELECT count(*) FROM edges e
-              JOIN papers sp ON sp.id = e.source_paper_id
-              JOIN papers tp ON tp.id = e.target_paper_id
+              LEFT JOIN papers sp ON sp.id = e.source_paper_id
+              LEFT JOIN papers tp ON tp.id = e.target_paper_id
              WHERE e.genealogy_id = g.id
                AND (COALESCE(e.source_text_digest, '') = ''
                     OR COALESCE(sp.extracted_text_digest, '') = ''

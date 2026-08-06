@@ -275,7 +275,13 @@ it to a unit carrying two stamps: either side stale makes the edge stale. A thir
 expression of the rule exists in SQL, in `listGenealogies`, and only because the
 home page needs it as an aggregate per map; the three move together, and the SQL
 one tests `<> ''` as well as NULL because `'' = ''` otherwise counted an edge
-verified where both languages say stale (issue #60). Every
+verified where both languages say stale (issue #60). Its two subqueries
+`LEFT JOIN papers` rather than joining it, so that they range over the same edges
+`edge_count` does: `edges.source_paper_id` is nullable, an inner join dropped
+such an edge from both state counts while the card still counted it a
+relationship, and a missing paper row yields a NULL digest, which is what the
+other two copies of the rule are handed and both call stale (issue #60 again).
+Every
 surface that shows a stamp resolves it this way: the evidence page and its header
 count, the influence map's solid-versus-dotted lines and its header count, the
 paper dossier, the thread page, the home page's per-map counts, both exports.
