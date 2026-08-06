@@ -639,11 +639,23 @@ question than the product asks and then reports it as though it were the site's,
 so with a NULL paper digest — the state left by running live-data step 2 before
 step 1 — it said "every stamp re-checks out" over a corpus every page renders
 stale. A disagreement is a finding and fails the run, and the message names the
-ordering mistake that usually causes it. It reports verified / inferred / stale /
-span-mismatch / unreadable / file-moved / page-differs, exits non-zero on any
-span mismatch, on any file the database describes wrongly, on any stamp a reader
-is not shown the same way, and on the global check (more than one stamp examined
-and not one file readable), and it does not re-anchor, repair or write. Ever.
+ordering mistake that usually causes it. **And a fifth check asks whether any of
+the four ran** (issue #78): checks 3 and 4 are both guarded on a stored span and
+both guarded on a quote, so a stamp resolving verified with NULL offsets, or with
+no quote, was compared to its paper by nothing at all and was then counted as
+verified. That is the tool reporting its own silence as evidence, in the one tool
+whose single job is that a check can return false. It fires only where the stamp
+resolves verified: a true boolean with no digest is the pre-015 stamp, which
+resolves stale, is displayed stale and is what the whole migration window is made
+of, and an unverified row with no span is the ordinary not-grounded state. No
+writer produces the row it does fire on, because Stage B sets `quote_verified =
+span is not None` and Stage E writes each edge's boolean and both spans in one
+statement. It reports verified / inferred / stale / span-mismatch / unchecked /
+unreadable / file-moved / page-differs, exits non-zero on any span mismatch, on
+any stamp nothing compared, on any file the database describes wrongly, on any
+stamp a reader is not shown the same way, and on the global check (more than one
+stamp examined and not one file readable), and it does not re-anchor, repair or
+write. Ever.
 
 **Stage F: magnitude** (`stage_f_magnitude.py <concept> [--prompt-version PV]`).
 Fills `definitions.attention` and `definitions.displacement` (migration 011),

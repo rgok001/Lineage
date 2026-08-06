@@ -154,8 +154,11 @@ step 1 and re-run step 2; nothing is damaged, but nothing is published either.
    count that recovers to *more* than it was, falsifies it.
 
 3. **Re-check, and then try to break it.** Re-run `recheck_stamp.py` and expect
-   zero span mismatches, with the stale set exactly equal to the set of papers
-   with no text on that disk. Any span mismatch is the matcher and the stored
+   zero span mismatches and zero unchecked, with the stale set exactly equal to
+   the set of papers with no text on that disk. An "unchecked" count above zero
+   means a stamp resolves verified with no span or no quote to compare it by, so
+   nothing here or on the site ever checked it (issue #78); it cannot come from
+   this pipeline's writers, and the repair is a re-ground of that map. Any span mismatch is the matcher and the stored
    offsets disagreeing and invalidates the feature rather than describing the
    corpus. Then change one character in one paper's extracted text file and
    re-run it: that paper's stamps must flip to stale and the tool must report the

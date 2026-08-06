@@ -15,7 +15,8 @@ stamp (`stage_b_extract.py <concept> --reground`, then `stage_e_ground.py`), not
 to write anything from here.
 
 Four comparisons per stamp, arriving by three different paths — the database, the
-disk, and the matcher — so each of them can actually return false:
+disk, and the matcher — so each of them can actually return false, and a fifth
+check that asks whether any of the four ran at all:
 
   1. the file's digest now vs papers.extracted_text_digest   (the file moved)
   2. the file's digest now vs the stamp's own digest         (the stamp is stale)
@@ -23,6 +24,8 @@ disk, and the matcher — so each of them can actually return false:
      quote at in this file                                    something else)
   4. the stored span vs the leftmost of those                (the match is not
                                                               where we said)
+  5. did anything above compare this quote to this file?     (a tick standing on
+                                                              no check at all)
 
 Usage:
   python pipeline/recheck_stamp.py --concept "attention"
@@ -79,6 +82,7 @@ class Tally:
         self.inferred = 0
         self.stale = 0
         self.span_mismatch = 0
+        self.unchecked = 0
         self.unreadable = 0
         self.file_moved = 0
         self.render_disagrees = 0
@@ -241,11 +245,51 @@ def check_one(label: str, quote: str | None, verified: object,
             print(f"  {label}: no span stored, but the quote is in the file at "
                   f"{found} — a re-ground would make this stamp re-checkable")
 
+    # 5. The question checks 3 and 4 quietly answer "no" to before they run: was
+    #    anything compared? Both are guarded on a span, and both are guarded on a
+    #    quote, so a stamp with NULL offsets, or with no quote, is compared to the
+    #    file by nothing at all and was then counted as verified (issue #78). That
+    #    is this tool reporting its own silence as evidence, in the one tool whose
+    #    single job is that a check can return false.
+    #
+    #    No current writer produces such a row: Stage B sets `quote_verified =
+    #    span is not None` on both the extract and the --reground path, and
+    #    Stage E writes each edge's boolean and both spans in one UPDATE. So this
+    #    fires on a row written by something else, by hand, or by a writer that
+    #    has since regressed, which is exactly what wants finding.
+    #
+    #    Only where the stamp RESOLVES verified. A true boolean with no digest is
+    #    the pre-015 stamp: it resolves stale, every page shows it stale, and
+    #    restore_snapshot.py recreates it from any pre-015 snapshot. The runbook's
+    #    migration window puts the whole corpus in that state on purpose, and
+    #    reddening it would have this tool refusing the state its own feature
+    #    creates. Unverified rows with NULL spans are the ordinary not-grounded
+    #    state and stay legitimate for the same reason.
+    unchecked = (state == STAMP_VERIFIED
+                 and not (quote and start is not None and end is not None))
+    if unchecked:
+        findings.append("verified but nothing was checked")
+        print(f"  {label}: VERIFIED, AND NO CHECK ON THIS ROW COMPARED IT TO THE "
+              f"PAPER")
+        print(f"      {'the quote is empty or absent' if not quote else 'no span is stored'}, "
+              f"so checks 3 and 4 did not run; the stamp's digest matches the file,")
+        print(f"      so this row is displayed verified on every surface with "
+              f"nothing behind it.")
+        print(f"      quote {(quote or '')[:60]!r}, span [{start}, {end}), stamp "
+              f"digest {stamp_digest}")
+        print(f"      Re-ground it (`stage_b_extract.py <concept> --reground`, then "
+              f"`stage_e_ground.py`):")
+        print(f"      that writes the stamp and the span together, which is the "
+              f"only way this row is honest.")
+
     # One row, one tally, after every check. A stamp whose span is broken is not
-    # also a verified stamp, whatever its digests say.
+    # also a verified stamp, whatever its digests say, and neither is one nothing
+    # compared.
     span_broken = any(f.startswith("span") for f in findings)
     if span_broken:
         tally.span_mismatch += 1
+    elif unchecked:
+        tally.unchecked += 1
     elif state == STAMP_STALE:
         tally.stale += 1
         print(f"  {label}: STALE — {why}")
@@ -322,6 +366,8 @@ def main() -> None:
     print(f"  file moved    {tally.file_moved}   (disk and database disagree about "
           f"the bytes)")
     print(f"  span mismatch {tally.span_mismatch}")
+    print(f"  unchecked     {tally.unchecked}   (says verified, and no check here "
+          f"could compare it to the paper)")
     print(f"  page differs  {tally.render_disagrees}   (this tool's verdict against "
           f"the file is not what a reader is shown)")
     print("\nThe verdicts above are resolved against the bytes on this disk. A "
@@ -336,6 +382,22 @@ def main() -> None:
                  "  That is an unmounted or empty DATA_DIR, not a corpus of stale "
                  "stamps.\n"
                  f"  Expected the papers under {data_dir()}.")
+    # The stamp that no check could reach (issue #78). Its own exit rather than
+    # falling through to "Findings above", because the sentence an operator needs
+    # is that these rows are green on the site and rest on nothing, which is not
+    # what any other finding here means.
+    if tally.unchecked:
+        sys.exit(
+            f"\n{tally.unchecked} stamp(s) say verified and were compared to their "
+            f"paper by nothing at all: the stamp's\n"
+            f"digest matches the file, so every page shows them verified, and the "
+            f"span or the quote a check would\n"
+            f"need is missing, so all four checks above skipped them. No writer in "
+            f"this pipeline produces that\n"
+            f"row: the stamp and the span are written together, and a stamp is only "
+            f"true when the matcher found\n"
+            f"the quote. Re-ground the affected maps to make them re-checkable. "
+            f"Nothing was written; this tool\ndoes not repair.")
     if tally.span_mismatch:
         sys.exit(f"\n{tally.span_mismatch} span mismatch(es). The stored offsets and "
                  f"the matcher disagree about the same file, which invalidates the "
