@@ -525,7 +525,15 @@ Every branch reachable after the commit now has a sentence, not just the happy
 one. **That report goes to stderr** (issue #75), through the same `sys.exit(msg)`
 every refusal in the stage uses. It went to stdout for one commit, which left a
 scripted run that logs stdout and alerts on stderr with exit 1 and nothing on the
-stream it watches; the traceback this replaced was at least on stderr.
+stream it watches; the traceback this replaced was at least on stderr. **And it
+carries the same two conditionals the success report carries** (issue #76): the
+matched-but-not-verified reconciliation line, and the "first run after migration
+015, run `extract_text.py` (no `--force`) first" advisory. Both are facts about
+the run rather than about the branch it ended on, so both reports take them from
+one `_stamp_caveats`. The second one also changes the repair advice: where any
+edge is stale, "or just re-run this stage, it writes the same result" stops being
+offered flat, because before `extract_text.py` has run the same result is the
+same stale stamps.
 **And the assembled JSON gains `stamp` per edge** (the resolved three-state
 value, computed against each paper's own stored digest, so the JSON and the page
 agree by construction). `verified` stays on every edge, so

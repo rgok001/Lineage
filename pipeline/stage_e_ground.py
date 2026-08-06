@@ -412,6 +412,33 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
             "stale": stale_count, "matched": verified_count}
 
 
+def _stamp_caveats(r: dict) -> list:
+    """What the counts do not say on their own, for whichever report is talking.
+
+    These qualify the run, not the branch it ended on, so both post-commit
+    reports owe them (issue #76). Only the success report printed them, which
+    left the more alarming outcome carrying the less complete account of the same
+    numbers: identical data, and the stranded report said neither that some
+    matched quotes cannot be shown as verified nor that a first run after
+    migration 015 needs extract_text.py before anything will improve.
+    """
+    out = []
+    if r["matched"] != r["verified"]:
+        out.append(f"  ({r['matched']} edges have both quotes matching the text this run "
+                   f"read; {r['matched'] - r['verified']} of them cannot be shown as "
+                   f"verified because that text is not what papers.extracted_text_digest "
+                   f"describes.)")
+    if r["stale"]:
+        out.append(f"  {r['stale']} of them render STALE rather than as either: their stamp "
+                   f"names bytes\n  that are not the bytes papers.extracted_text_digest now "
+                   f"describes, or no digest\n  was recorded at all. A stale stamp is not a "
+                   f"failed check, it is an unrepeated one.")
+        out.append("  If this is the first run after migration 015, run "
+                   "extract_text.py (no --force) first:\n"
+                   "  the papers have no current digest to compare against yet.")
+    return out
+
+
 def _report(r: dict) -> None:
     """The success narrative, after the commit has landed and the export is in
     place. Every sentence here is in the past tense about something that is now
@@ -420,19 +447,8 @@ def _report(r: dict) -> None:
     print(f"\nGenealogy complete: {r['nodes']} concept-states, {r['edges']} edges "
           f"({r['verified']} solid/verified, {r['inferred']} dotted/inferred, "
           f"{r['stale']} stale).")
-    if r["matched"] != r["verified"]:
-        print(f"  ({r['matched']} edges have both quotes matching the text this run "
-              f"read; {r['matched'] - r['verified']} of them cannot be shown as "
-              f"verified because that text is not what papers.extracted_text_digest "
-              f"describes.)")
-    if r["stale"]:
-        print(f"  {r['stale']} of them render STALE rather than as either: their stamp "
-              f"names bytes\n  that are not the bytes papers.extracted_text_digest now "
-              f"describes, or no digest\n  was recorded at all. A stale stamp is not a "
-              f"failed check, it is an unrepeated one.")
-        print("  If this is the first run after migration 015, run "
-              "extract_text.py (no --force) first:\n"
-              "  the papers have no current digest to compare against yet.")
+    for caveat in _stamp_caveats(r):
+        print(caveat)
     print(f"Assembled JSON -> {r['out']}")
 
 
@@ -450,19 +466,33 @@ def _report_export_stranded(r: dict, exc: OSError) -> None:
     scripted run that logs stdout and alerts on stderr got exit 1 and not one
     word on the stream it watches: the exact silence this report was written to
     end, and worse than the traceback it replaced, which at least went to stderr.
+
+    The re-run half of the repair advice is conditional for the same reason the
+    caveat above it is (issue #76): "grounding costs nothing and writes the same
+    result again" is a promise, and before extract_text.py has run after
+    migration 015 the same result is the same stale stamps.
     """
+    caveats = "".join(c + "\n" for c in _stamp_caveats(r))
+    if r["stale"]:
+        repair = ("  To finish the run, rename the first over the second. Re-running this\n"
+                  "  stage instead is free and writes the same result, but if the stale "
+                  "stamps\n  above are the first run after migration 015 the same result "
+                  "is the same\n  stale stamps: run extract_text.py first, as above.")
+    else:
+        repair = ("  To finish the run, rename the first over the second, or just re-run this\n"
+                  "  stage: grounding costs nothing and writes the same result again.")
     sys.exit(
         f"\nThe grounding run was COMMITTED and the database has moved: "
         f"{r['nodes']} concept-states, {r['edges']} edges "
         f"({r['verified']} solid/verified, {r['inferred']} dotted/inferred, "
         f"{r['stale']} stale) are stored now, and this map is marked complete.\n"
+        f"{caveats}"
         f"Publishing the export then FAILED: {exc}\n"
         f"  The new map is written, complete and correct, at:\n    {r['tmp']}\n"
         f"  The previous export is untouched at:\n    {r['out']}\n"
         f"  That file describes the map as it was BEFORE this run. It is no longer\n"
         f"  what the database holds, so do not read it as the current map.\n"
-        f"  To finish the run, rename the first over the second, or just re-run this\n"
-        f"  stage: grounding costs nothing and writes the same result again.")
+        f"{repair}")
 
 
 if __name__ == "__main__":

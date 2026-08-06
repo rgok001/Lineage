@@ -70,9 +70,11 @@ does not: the run committed, and only the rename of
 `genealogy_<concept>_<pv>.json.tmp` over `genealogy_<concept>_<pv>.json` did not
 happen (a locked path, a read-only mount, a full disk). Do not read the export as
 the current map until it is repaired, and repair it by renaming the `.tmp` over
-it or by re-running Stage E, which is free and writes the same result. Stage E
-exits non-zero there, so a scripted run stops rather than continuing on a backup
-that is one run behind.
+it or by re-running Stage E, which is free and writes the same result. **If the
+report names stale stamps, prefer the rename**: a re-run before `extract_text.py`
+has run after migration 015 writes the same stale stamps again, and the report
+says so where that applies. Stage E exits non-zero there, so a scripted run stops
+rather than continuing on a backup that is one run behind.
 
 **Applying migration 015 (the re-checkable stamp).** Two steps touch live rows
 after the migration itself, they must be done **in this order**, and the alarming
