@@ -507,6 +507,15 @@ a full success report for a run that wrote nothing. **A backup must never
 describe a state the database did not reach.** A crash between commit and rename
 leaves a committed map, the previous backup and a `.tmp` file, which is the one
 residue worth having.
+**That residue is now said out loud** (issue #67). The rename is wrapped, and a
+failing `os.replace` reports that the run was committed, with the same counts the
+success report gives, names the `.tmp` holding the new map and the previous
+export that no longer describes the database, says the repair is a rename or a
+free re-run, and exits non-zero. The traceback it replaces had no success line in
+it, and a traceback with no success line reads as "nothing happened" — the same
+wrong inference the whole reordering was about, arriving from the other side.
+Every branch reachable after the commit now has a sentence, not just the happy
+one.
 **And the assembled JSON gains `stamp` per edge** (the resolved three-state
 value, computed against each paper's own stored digest, so the JSON and the page
 agree by construction). `verified` stays on every edge, so

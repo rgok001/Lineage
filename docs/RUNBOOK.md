@@ -64,6 +64,15 @@ backups; re-export after curating. Restore with
 not covered by exports; they live in Postgres and `DATA_DIR` and are cheap to
 regenerate except for LLM spend, which the caches mostly protect.
 
+If Stage E ends with "Publishing the export then FAILED", the database has the
+new map and the file does not: the run committed, and only the rename of
+`genealogy_<concept>_<pv>.json.tmp` over `genealogy_<concept>_<pv>.json` did not
+happen (a locked path, a read-only mount, a full disk). Do not read the export as
+the current map until it is repaired, and repair it by renaming the `.tmp` over
+it or by re-running Stage E, which is free and writes the same result. Stage E
+exits non-zero there, so a scripted run stops rather than continuing on a backup
+that is one run behind.
+
 **Applying migration 015 (the re-checkable stamp).** Two steps touch live rows
 after the migration itself, they must be done **in this order**, and the alarming
 part is stated in advance so nobody reacts to it as a fault.

@@ -161,7 +161,18 @@ def main() -> None:
     finally:
         conn.close()
 
-    os.replace(result["tmp"], result["out"])
+    # Issue #67. The residue the ordering above cannot remove, only move: between
+    # the COMMIT returning and this rename, the database has advanced and the
+    # published export has not. The rename stays out here — putting it back inside
+    # the transaction would recreate exactly the fault #65 fixed — so the window is
+    # real, and all that was missing was a sentence. An uncaught OSError prints a
+    # traceback with no success line, and the only reasonable reading of that is
+    # "it failed, nothing happened", which is wrong in the direction that decides
+    # whether to re-run and whether to trust the file on disk.
+    try:
+        os.replace(result["tmp"], result["out"])
+    except OSError as exc:
+        _report_export_stranded(result, exc)
     _report(result)
 
 
@@ -423,6 +434,29 @@ def _report(r: dict) -> None:
               "extract_text.py (no --force) first:\n"
               "  the papers have no current digest to compare against yet.")
     print(f"Assembled JSON -> {r['out']}")
+
+
+def _report_export_stranded(r: dict, exc: OSError) -> None:
+    """The other branch that can be reached after the commit (issue #67).
+
+    Both halves have to be said, and they point opposite ways: the run's writes
+    are durable, and the file an operator would look at to see them is not the
+    file describing them. Names the counts so the state is checkable, both paths
+    so the repair is one command, and exits non-zero because a run that did not
+    publish is not a success.
+    """
+    print(f"\nThe grounding run was COMMITTED and the database has moved: "
+          f"{r['nodes']} concept-states, {r['edges']} edges "
+          f"({r['verified']} solid/verified, {r['inferred']} dotted/inferred, "
+          f"{r['stale']} stale) are stored now, and this map is marked complete.")
+    print(f"Publishing the export then FAILED: {exc}")
+    print(f"  The new map is written, complete and correct, at:\n    {r['tmp']}")
+    print(f"  The previous export is untouched at:\n    {r['out']}")
+    print("  That file describes the map as it was BEFORE this run. It is no "
+          "longer\n  what the database holds, so do not read it as the current map.")
+    print("  To finish the run, rename the first over the second, or just re-run "
+          "this\n  stage: grounding costs nothing and writes the same result again.")
+    sys.exit(1)
 
 
 if __name__ == "__main__":
