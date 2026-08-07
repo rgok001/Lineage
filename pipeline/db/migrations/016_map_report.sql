@@ -17,14 +17,37 @@
 -- no row, takes no rewrite lock and is reversed by
 --   DROP VIEW map_report; DROP VIEW map_report_by_source;
 --
--- **No threshold.** The only numeric literals in this file are 0.25, 0.5 and
--- 0.75 — the quantiles that define the quartiles and the median — and 2, the
--- number of quote slots an edge has. Each of those defines a statistic; none of
+-- **No threshold.** Counted with comments and string literals removed, the
+-- numeric literals in this file are exactly {0, 0.25, 0.5, 0.75, 1}: the three
+-- quantiles that define the quartiles and the median, the 0 of every
+-- COALESCE-a-count and NULLIF-a-denominator, and the 1 of `members = 1` and
+-- `SELECT 1 FROM edges`. Each of those defines or guards a statistic; none of
 -- them decides anything. With two maps there is no distribution to take a
 -- quantile from, and this project has paid four times for a threshold moved
 -- because a rate looked wrong (decisions 24, 25, 29). A severity colour, a
 -- grade, a badge or a composite score is a threshold with the evidence removed,
 -- and none of them belongs here either.
+--
+-- **How to run that check, and the MATERIALIZED one above it** (issue #94; they
+-- are falsifiers 6 and 5 of the design, and neither was runnable as written).
+-- Both have to read the file with its comments gone, because this header is
+-- where the promises are made and a grep for a promise matches the promise:
+-- `MATERIALIZED` appears once in the plain file, in the sentence above swearing
+-- not to use it, so `grep MATERIALIZED` is red on a correct file and says
+-- nothing. The design's census was `{0.25, 0.5, 0.75, 2}`, and the 2 has not
+-- been in the executable text since the quote-slot count became `count(*)` over
+-- a LATERAL; 0 and 1 always were.
+--
+--   sed -E 's,--.*,,' 016_map_report.sql | grep -c -i '\bMATERIALIZED\b'   # 0
+--   sed -E 's,--.*,,' 016_map_report.sql \
+--     | grep -o -E '(^|[^A-Za-z0-9_.])[0-9]+(\.[0-9]+)?([^A-Za-z0-9_]|$)' \
+--     | grep -o -E '[0-9]+(\.[0-9]+)?' | sort -u          # 0 0.25 0.5 0.75 1
+--
+-- `sed` is enough here because this file has no `--` inside a string literal and
+-- no `/* */` block; if either ever appears, strip properly instead. The same two
+-- checks belong on `INSERT`, `UPDATE`, `DELETE` and `CREATE TABLE`, which are
+-- also 0 comment-stripped — `\b` on both sides of `UPDATE`, or `g.updated_at`
+-- counts as one, which is what the first run of this reported.
 --
 -- Two views, because a per-source total and a map total computed by two separate
 -- expressions are two homes for one fact, and this record has already paid for
@@ -258,9 +281,12 @@ coverage AS (
 quote_slot_rows AS (
     SELECT e.genealogy_id, q.quote
     FROM edges e
-    -- 2: the number of quote slots an edge has. `quote_slots` is then count(*)
-    -- over these rows rather than a multiplication, so it cannot disagree with
-    -- what is actually counted below it.
+    -- One row per quote slot, so `quote_slots` below is `count(*)` over these
+    -- rows and not `2 * edges`: it cannot disagree with what is actually
+    -- counted. There is deliberately no 2 here, and the slots are listed rather
+    -- than multiplied, so adding a third quote slot changes this VALUES list and
+    -- every figure downstream follows. (The header's literal census used to name
+    -- a 2 that this line no longer contains; issue #94.)
     CROSS JOIN LATERAL (VALUES (e.source_quote), (e.target_quote)) AS q(quote)
 ),
 quote_uses AS (

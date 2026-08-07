@@ -388,10 +388,19 @@ directly from `edges`, `definitions`, `papers`, `genealogies.nodes` and
 about a population, and there is no population.
 
 **There is no threshold anywhere in these views and there must never be one.**
-The only numeric literals are `0.25`, `0.5`, `0.75` (the quantiles that define
-the quartiles and the median) and `2` (quote slots per edge); each defines a
-statistic and none decides anything. A colour scale, a grade, a badge or a
-composite score would be a threshold with the evidence removed.
+Counted with comments and string literals removed, the numeric literals in
+`016_map_report.sql` are exactly `{0, 0.25, 0.5, 0.75, 1}`: the three quantiles
+that define the quartiles and the median, the `0` of every coalesced count and
+`NULLIF` denominator, and the `1` of `members = 1` and `SELECT 1 FROM edges`.
+Each defines or guards a statistic and none decides anything. A colour scale, a
+grade, a badge or a composite score would be a threshold with the evidence
+removed. This file and the design used to name `2` (quote slots per edge)
+instead of the `0` and the `1`; that `2` left the executable text when the quote
+slot count became `count(*)` over a `LATERAL` and the census was not recounted
+(issue #94). The migration's own header now carries both this check and the
+`MATERIALIZED` one as shell commands that run, both reading the file with its
+comments stripped — a plain `grep MATERIALIZED` matches the header's promise not
+to use it and is red on a correct file.
 
 The per-source grain is built in from the first row because F7 (non-arXiv
 sources) needs a before-and-after comparison against a number of the same shape.
