@@ -261,6 +261,38 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const selfEdgeSentence =
     `${maps(selfEdgeMaps)} ${selfEdgeMaps === 1 ? "has" : "have"} at least one.`;
 
+  /**
+   * What the map's relationships actually rest on, as two sentences at the foot
+   * of Evidence rather than a section of its own (issue #132).
+   *
+   * The section this replaces failed the owner four times ("this is still not
+   * obvious any of this means"), and three rewrites did not move it. Two of its
+   * three figures served nobody's task: "different papers on relationships"
+   * existed only to be read against the line above it, which is a self-check the
+   * team would run and not a question a researcher asks, and "different quotes
+   * the map stands on" meant nothing until it was divided by the relationship
+   * count, which the page never did. The division is done here, in words. All
+   * three figures still print in `pipeline/map_report.py`, which is the same
+   * page/command subset the "quote slots" rows left under #108.
+   *
+   * **It renders only when all three numbers are positive.** A null is the view
+   * saying nothing recorded it, and a zero would make the sentence claim a map
+   * rests on no evidence; either way the reader is better served by no sentence
+   * than by a number that is not a count. Grammar at n=1 ("1 relationships rest
+   * on 1 different quoted passages") is #99's, with the rest of the pluralising.
+   *
+   * No score, no threshold, no colour: three counted facts and one consequence.
+   */
+  const reuseSentence =
+    r.most_repeated_quote_uses !== null && r.most_repeated_quote_uses > 0 &&
+    r.edges_total > 0 && r.distinct_quote_strings > 0
+      ? `These ${count(r.edges_total)} relationships rest on ` +
+        `${count(r.distinct_quote_strings)} different quoted passages, because each ` +
+        `paper shows the same key quote wherever it appears. One passage is behind ` +
+        `${count(r.most_repeated_quote_uses)} of them, so the number of relationships ` +
+        `is not a count of separate pieces of evidence.`
+      : null;
+
   const noRunMaps = all.filter((m) => m.runs_recorded === 0).length;
   const runRecordSentence =
     noRunMaps === 0
@@ -446,6 +478,16 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         {!splitBySource && (
           <p style={{ ...prose, fontSize: ".9rem", margin: "1rem 0 0" }}>
             {sourceSentence}
+          </p>
+        )}
+        {/* Same position and shape as the by-source sentence above, and for the
+            same reason (issue #132): it inherits "Evidence", where the reader is
+            already asking how much of the map is checked, and what it changes is
+            that they stop reading the relationship count as that many separate
+            pieces of evidence. */}
+        {reuseSentence && (
+          <p style={{ ...prose, fontSize: ".9rem", margin: "1rem 0 0" }}>
+            {reuseSentence}
           </p>
         )}
       </Section>
@@ -663,50 +705,13 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         </div>
       </Section>
 
-      {/* Below Shape and the years, which is where a reader was heading when
-          this stood in the way (issue #108). "Quote slots" was the team's word
-          for a storage position and it was the fourth thing on the page; the two
-          rows that used it are gone and what they established is in the lede,
-          because a researcher does not arrive asking whether quote duplication
-          is a fault. The counting defects in those two figures are #88 and are
-          untouched here; the command still prints both.
-
-          The section was called "Quote reuse" until the owner read it twice and
-          said it "does not make sense, or it is not intuitive as to what the
-          measure is alluding to" (issue #124). The title named the mechanism.
-          The reader's question is how much genuinely different evidence stands
-          behind the map, so that is what the title, the lede and the labels now
-          say; the mechanism follows as the explanation rather than leading. No
-          figure and no claim changed. */}
-      <Section
-        title="The evidence behind the map"
-        lede="The relationships in this map are backed by quotes from the papers. Each
-              paper shows the same key quote everywhere it appears, so the map stands
-              on fewer different quotes than it has relationships. These figures say
-              how much genuinely different evidence is behind it."
-      >
-        <Figure
-          label="different quotes the map stands on"
-          value={count(r.distinct_quote_strings)} absent="no quotes"
-          counts="How many different passages the relationships actually rest on."
-          moves="More papers being read, or the system starting to pick a different sentence as a paper's key quote."
-          others={others((m) => m.distinct_quote_strings, count)}
-        />
-        <Figure
-          label="different papers on relationships"
-          value={count(r.distinct_papers_on_edges)} absent="no relationships"
-          counts="How many different papers appear at either end of a relationship. Read it beside the line above: the two should be close."
-          moves="The same things. If there are clearly fewer different quotes than papers here, one quote is standing in for two different papers, which is worth knowing."
-          others={others((m) => m.distinct_papers_on_edges, count)}
-        />
-        <Figure
-          label="times the most reused quote appears"
-          value={count(r.most_repeated_quote_uses)} absent="no quotes"
-          counts="How many times the single most repeated passage is used across the relationships."
-          moves="One paper sitting at the end of many relationships. Nothing else moves it."
-          others={others((m) => m.most_repeated_quote_uses, count)}
-        />
-      </Section>
+      {/* Where "Quote reuse", later "The evidence behind the map", stood until
+          issue #132 cut it. It was moved below the years (#108), had its lede
+          halved, and was retitled on the owner's own suggestion (#124), and on
+          the fourth reading the owner still said "this is still not obvious any
+          of this means". The argument for the cut and for the two sentences that
+          replace it, at the foot of Evidence, is on `reuseSentence` above. All
+          three figures still print in `pipeline/map_report.py`. */}
 
       <Section
         title="The run"

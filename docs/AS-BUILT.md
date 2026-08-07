@@ -762,16 +762,8 @@ was a back-link in whatever corner each page happened to use.
   is no longer every figure: see the subset invariant below). Sections: how much
   was read, evidence (the three stamp states for definitions and for
   relationships), the same counts split by source, shape, when the papers were
-  written with a per-year histogram, the evidence behind the map, the run, and a
-  closing list of the three
-  things the page cannot tell you. **The evidence behind the map sits below the
-  years section, not
-  fourth from the top** (issue #108): it stood between the reader and the
-  sections they came for, and it answered a question nobody asked in a word only
-  the team knows. The two rows built on that word ("quote slots", "quote slots
-  holding no text") are gone from the page and what they established is prose in
-  the section's lede; the command still prints both, and their counting defects
-  are #88 and are untouched by this.
+  written with a per-year histogram, the run, and a closing list of the three
+  things the page cannot tell you.
   **The By source table renders only when the rows carry more than one label**
   (issue #109). While there is one source, the six-column table restated the
   Evidence totals split by nothing a reader can see, under a lede explaining
@@ -828,15 +820,28 @@ was a back-link in whatever corner each page happened to use.
   workbench" to every reader**, which is the promise #118 scoped on the
   front-door card and the evidence banner and missed here; it is now viewer-
   scoped like the other two.
-  **"Quote reuse" was retitled "The evidence behind the map"** (owner, 2026-08-07,
-  on #124: the title "does not make sense, or it is not intuitive as to what the
-  measure is alluding to"). The title named the mechanism; the reader's question
-  is how much genuinely different evidence stands behind the map, so the title,
-  the lede and the figure labels lead with that and the mechanism follows as the
-  explanation. No figure and no claim changed. It sits beside the "Evidence"
-  section, which counts verification rather than distinctness, and the two ledes
-  are what tell them apart.
-  Together the page went from 39 figure rows to 29, measured on the harness.
+  **The quote-reuse section is off the page entirely, and its point is two
+  sentences at the foot of Evidence** (issue #132, UX ruling implemented as
+  given). It was moved below the years (#108), had its lede cut to two sentences,
+  and was retitled from "Quote reuse" to "The evidence behind the map" on the
+  owner's own suggestion (#124); on the fourth reading the owner still said "this
+  is still not obvious any of this means". Two of its three figures served
+  nobody's task: "different papers on relationships" existed only to be read
+  against the line above it, which is a self-check the team would run and not a
+  question a researcher asks, and "different quotes the map stands on" meant
+  nothing until it was divided by the relationship count, which the page never
+  did. The comparison the copy taught also had no live case: on "embedding" the
+  two figures are 125 and 125, on "attention" 82 and 79. What replaces it does
+  the division in words, in the same position and shape as the by-source sentence
+  #109 put there: "These 287 relationships rest on 82 different quoted passages,
+  because each paper shows the same key quote wherever it appears. One passage is
+  behind 43 of them, so the number of relationships is not a count of separate
+  pieces of evidence." All three numbers come off the same view row the cut
+  figures read, and the sentence renders only when all three are positive, so a
+  map with nothing to say it about says nothing rather than printing a zero.
+  All three figures still print in `pipeline/map_report.py`, which is the same
+  page/command subset "quote slots" left under #108. Grammar at n=1 is #99's.
+  Together the page went from 39 figure rows to 26, measured on the harness.
   **The page opens with one paragraph, not three**
   (issue #106, the UX review of #104): roughly 170 words of what the page is not
   stood between the reader and the first number. The lede now carries the story
