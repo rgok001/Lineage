@@ -87,7 +87,13 @@ export default async function Home() {
                         )}
                       </>
                     )}
-                    {g.edit_count > 0 && <> · {g.edit_count} curatorial change(s)</>}
+                    {/* "(s)" is the machine talking and "curatorial" is the
+                        team's word, met here long before the about page
+                        explains it (issue #120). The count is still the count
+                        of curatorial operations; only the words changed. */}
+                    {g.edit_count > 0 && (
+                      <> · {g.edit_count} change{g.edit_count === 1 ? "" : "s"} by hand</>
+                    )}
                   </div>
                 </div>
                 <div style={{ textAlign: "right", fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>

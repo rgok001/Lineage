@@ -627,7 +627,14 @@ was a back-link in whatever corner each page happened to use.
   labelled extracted rather than verbatim), how it defines the term with the
   verified-or-inferred stamp, a note where we know our reading of that paper lost text (migration 013; shown only when something was found, since a clean scan is not a certificate), and its typed links in both directions ("what it
   drew from", "what drew from it") each carrying the edge rationale labelled as
-  the tool's reading.
+  the tool's reading. A paper with no links says so without dialect (issue
+  #120): it read "no typed links recorded for this paper among the corpus ...
+  links only exist where one corpus paper cites another across meanings", and
+  now says a link exists only where one paper in this map cites another that
+  carries a different meaning of the term. The review's rewrite said "a
+  different thread of meaning"; "thread" already names a stream on the front
+  door, and lending it to a meaning would imply links only ever cross threads,
+  which is false, so that one word is the deviation from the ticket.
 - `/g/[id]/evidence` : the former genealogy page, now the evidence and
   workbench layer. Timeline of concept-state cards, typed relationship rows
   with evidence panels (both quotes, verification stamp, confidence), workbench
@@ -657,6 +664,10 @@ was a back-link in whatever corner each page happened to use.
   the link type is right. The stamp now stands alone in its state colour, and
   beneath it, smaller and in `--ink-faint`, "the tool's confidence in the link
   type: 0.87". How many digits that number deserves is #41 `[Q4]`, still open.
+  The intro under the banner lost its dialect and its riddle with the same pass
+  (issue #120): "the raw ranked papers ... the readable account is the map" is
+  now "Every paper and every typed relationship, with the evidence behind each.
+  For the readable account, go back to the map."
 - `/g/[id]/report` : what this map is made of (issue #30, `[F2]`). One screen,
   one column, no interactivity, every figure selected from migration 016's two
   views by `lib/report.ts` and computed nowhere else, so this page and
@@ -855,7 +866,15 @@ while surviving reconnects and redeploys for free.
 **Copy rules.** No internal jargon in public view (worker, polls, prompt
 versions, databases), no cost talk aimed at visitors, "curator" language
 throughout, raw failure output visible to the owner only, and **no em dashes
-anywhere in user-facing content**. "Genealogy" and "trace" were internal words a
+anywhere in user-facing content**. **A count of edits is stated in plain words
+and pluralised properly** (issue #120): the home card and the evidence page's
+audit trail both read "N curatorial change(s)", where "(s)" is the machine
+talking and "curatorial" is a word the reader meets long before the about page
+explains it. They now read "N change(s) by hand" / "N change(s) made by hand"
+with the plural resolved. The counts are unchanged, and they are still counts of
+`CURATORIAL_OPS`. The narrative sentences that use "curated" and "curatorial"
+are left alone, because the "curator language throughout" rule above is the
+owner's and #120 named the counters only. "Genealogy" and "trace" were internal words a
 first visitor cannot be expected to know: maps are maps, runs are runs, and
 buttons say what happens. The schema and `lib/` still use the old names, which
 is fine, and is why the mapping is recorded here.

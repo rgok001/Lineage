@@ -76,9 +76,13 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
           )}
           )
         </p>
+        {/* "Raw ranked papers" is pipeline dialect and "the readable account is
+            the map" is a riddle on first meeting (issue #120): it is the best
+            thing this page has to say and it was saying it in a form that only
+            makes sense once you already know. */}
         <p style={{ color: "var(--ink-soft)", margin: ".5rem 0 0", fontSize: ".82rem", fontStyle: "italic" }}>
-          The raw ranked papers and every typed relationship, with the evidence and the workbench.
-          The readable account is the map.
+          Every paper and every typed relationship, with the evidence behind each.
+          For the readable account, go back to the map.
         </p>
       </header>
 
@@ -319,7 +323,7 @@ function AuditTrail({ edits }: { edits: UserEdit[] }) {
   return (
     <details style={{ marginTop: "2.5rem", paddingTop: "1.2rem", borderTop: "1px solid var(--line)" }}>
       <summary style={{ cursor: "pointer", fontSize: ".85rem", color: "var(--ink)" }}>
-        Audit trail: {edits.length} curatorial change(s)
+        Audit trail: {edits.length} change{edits.length === 1 ? "" : "s"} made by hand
       </summary>
       <ul style={{ margin: ".7rem 0 0", paddingLeft: "1.1rem", fontSize: ".78rem", color: "var(--ink-soft)" }}>
         {edits.map((e, i) => {

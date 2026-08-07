@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "../../../../../lib/db";
-import { getRiver, EDGE_MEANING, readableQuote, TURNING_QUANTILE } from "../../../../../lib/genealogy";
+import { getRiver, readableQuote, TURNING_QUANTILE } from "../../../../../lib/genealogy";
 import { STAMP_COLOR, STAMP_LABEL, edgeStampOf, stampOf } from "../../../../../lib/stamp";
 
 export const dynamic = "force-dynamic";
@@ -222,10 +222,16 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
           </section>
         )}
 
+        {/* "Among the corpus" and "across meanings" are the team's words (issue
+            #120). The ticket's rewrite said "a different thread of meaning";
+            "thread" already names a stream on the front door, and lending it to
+            a meaning would suggest links only ever cross threads, which is not
+            true. Same sentence, with the one word left as "meaning". */}
         {drew.length === 0 && fed.length === 0 && (
           <p style={{ fontSize: ".85rem", color: "var(--ink-soft)" }}>
-            No typed links recorded for this paper among the corpus. ({Object.keys(EDGE_MEANING).length} link
-            types are traced; links only exist where one corpus paper cites another across meanings.)
+            No typed links are recorded for this paper. A link exists only where one paper in
+            this map cites another that carries a different meaning of the term, and none was
+            found here.
           </p>
         )}
 
