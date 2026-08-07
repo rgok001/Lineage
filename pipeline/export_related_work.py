@@ -25,7 +25,7 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (actor_tally, curatorial_edits, data_dir,  # noqa: E402
-                    edge_stamp_state, edit_op, env, stamp_state)
+                    edge_stamp_state, env, stamp_state)
 
 STOP = {"a", "an", "the", "on", "of", "in", "for", "and", "with", "is", "are", "to", "by"}
 
@@ -121,11 +121,23 @@ def curation_note(user_edits: list) -> str:
     edits = curatorial_edits(user_edits)
     if not edits:
         return ""
-    ops = ", ".join(sorted({edit_op(e) for e in edits}))
     # "Workbench" is a word the reader meets only if they are the owner, and this
     # line travels into somebody else's manuscript. #120 settled on "changes by
     # hand" for this same count on the home card (issue #130).
-    head = f"> {plural(len(edits), 'change')} by hand applied ({ops})"
+    #
+    # The stored operation names went with it (issue #138). This line used to
+    # read "3 changes by hand applied (delete-edge, merge, rename)", and "edge"
+    # is not a word this product says to readers: every reader-facing surface
+    # calls it a relationship, including this same document three lines above.
+    # A reader who meets "delete-edge" in a footnote in a literature review has
+    # met the machinery and can look nothing up to resolve it. The list is
+    # dropped rather than translated, because knowing that some of the changes
+    # were renames does not change how anyone reads the map, and the count and
+    # the actors carry the honesty claim already. Its twin, `curationNote` in
+    # `app/lib/export.ts`, never printed the ops: #130 established that these two
+    # move together or not at all, and on this line they had diverged, so the
+    # same map exported two ways said two different things about the same edits.
+    head = f"> {plural(len(edits), 'change')} by hand applied"
     parts, any_known = actor_tally(edits)
     if not any_known:
         return head + ". No actor is recorded for any of them.\n"

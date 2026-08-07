@@ -782,6 +782,21 @@ was a back-link in whatever corner each page happened to use.
   edit(s) applied": "workbench" is a word the reader meets only if they are the
   owner, and this line travels into somebody else's manuscript. The two
   implementations are twins by design, so they moved together.
+  **The CLI note's list of stored operation names went with it** (issue #138,
+  found closing #130 and outside its list). It read "3 changes by hand applied
+  (delete-edge, merge, rename)", straight from `CURATORIAL_OPS`, in the sentence
+  whose whole job is to tell somebody else's reader how much human judgement a
+  map has had. "Edge" is not a word this product says to readers -- the report
+  page, the evidence page, the dossier, the app export and this same document
+  three lines above all say relationship -- and a reader who meets "delete-edge"
+  in a footnote in a literature review can look nothing up to resolve it. The
+  list is dropped rather than translated, on the argument that knowing some of
+  the changes were renames does not change how the map is read, while the count
+  and the actors carry the honesty claim already. This is also where the twins
+  had diverged: `curationNote` in `lib/export.ts` never printed the ops, so one
+  map exported two ways said two different things about the same edits. Verified
+  by rendering both exports over the same two edits: the line is now
+  character-identical in each.
   Two words beyond the ticket's list, in the "Unconnected senses" paragraph it
   did not quote: it said the senses "appear in the corpus but no citation link to
   the rest of the genealogy was traced", and house style bans "genealogy" from

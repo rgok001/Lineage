@@ -588,7 +588,10 @@ relationships between them" rather than naming concept-states and calling itself
 a skeleton, the verification sentence is #129's for the whole product, "(s)" is
 gone from the document and from stdout in favour of pluralising from the count,
 and the curation line says "N changes by hand applied", which is what the home
-card has said since #120. This document goes into somebody's paper, so the
+card has said since #120 and, since #138, without the stored operation names it
+used to print in brackets: "delete-edge" is the machine's word for what this
+document calls a relationship three lines above, and its twin in
+`app/lib/export.ts` had never printed the list at all. This document goes into somebody's paper, so the
 machine's voice costs more here than on a page a reader can leave.
 Its per-quote not-re-checked mark was outside that sweep, because it is outside
 `app/` and so outside both #129's grep and #130's list; it said "not matched
