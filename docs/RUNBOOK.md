@@ -35,7 +35,7 @@ resolves here.
 | `DATA_DIR` | root `.env`, Render (`/data`) | absolute paths honoured |
 | `OPENALEX_MAILTO` | root `.env`, Render | polite-pool contact |
 | `LINEAGE_NO_DB` | set per shell, never committed | any non-blank value and every Python entry point refuses to hand out `DATABASE_URL` (decision 22). Set it in any shell running pipeline code to inspect it rather than to operate on real data. Does not reach the Node side |
-| `LINEAGE_READ_URL` | set per shell, never committed | the read-only `lineage_ro` role, SELECT and nothing else. Read by `recheck_stamp.py` alone. Deliberately not named `DATABASE_URL` so no existing code path can route through it by accident |
+| `LINEAGE_READ_URL` | set per shell, never committed | the read-only `lineage_ro` role, SELECT and nothing else. Read by `recheck_stamp.py` and `map_report.py`, and by nothing else. Deliberately not named `DATABASE_URL` so no existing code path can route through it by accident |
 | `AUTH_SECRET`, `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, `OWNER_GITHUB_LOGIN` | `app/.env.local`, Vercel | Auth.js reads exactly these names |
 
 **Local development.** App: `cd app && npm run dev` (port 3000). Worker:
@@ -168,6 +168,64 @@ step 1 and re-run step 2; nothing is damaged, but nothing is published either.
 
 `recheck_stamp.py` needs `LINEAGE_READ_URL` and issues only `SELECT`, so it is
 safe to run at any point above, including from an agent's shell.
+
+**Applying migration 016 (the map report).** Two `CREATE VIEW`s and one guarded
+`GRANT`. No table, no column, no data touched, no backfill, no rewrite lock, and
+nothing to schedule afterwards: a view holds no data and is computed on read.
+
+```
+python pipeline/db/migrate.py
+```
+
+It is reversed by `DROP VIEW map_report; DROP VIEW map_report_by_source;` and
+there is nothing to restore, because nothing was stored.
+
+**The `GRANT` is in the migration and has to be.** `lineage_ro` holds `SELECT` on
+the tables that existed when it was created and does **not** automatically hold it
+on a new view, so without this `map_report.py` fails with a permission error
+against production while working perfectly for the owner, who connects as the
+writable role and would never see it. The statement is wrapped in a `DO` block
+that checks `pg_roles` first, so a local database with no such role still
+migrates. Confirm it after the migration, from a shell holding
+`LINEAGE_READ_URL`:
+
+```
+python pipeline/map_report.py --all
+```
+
+A permission error there means the role existed under another name when the guard
+ran; the repair is one `GRANT SELECT ON map_report_by_source, map_report TO
+<role>;` as the owner, and it is worth correcting the migration too.
+
+**Expect the first report to look bad, and expect it to be right.** The report is
+the first surface that states a map's verification counts in full, and migration
+015 left every stamp made before it not re-checkable. **If the post-015 re-ground
+has not been run, `attention` correctly reports 0 relationships verified and 287
+not re-checked**, and `embedding` the same shape. That is not a fault in the
+report and it is not a regression in the map: those stamps genuinely are not
+re-checkable, which is what 015 says. The remedy is free and is the two live-data
+steps of the 015 procedure above, **in that order** — `extract_text.py` with no
+`--force` first, then per map `snapshot_map.py`, `stage_b_extract.py --reground`
+and `stage_e_ground.py`. Settle which state the database is in **before**
+deploying the page rather than discovering it on the page:
+
+```
+python pipeline/map_report.py "attention"
+python pipeline/recheck_stamp.py --concept "attention" --edges
+```
+
+Read the report's "relationships not re-checked" against `recheck_stamp.py`'s
+`stale` count; if they agree and both are the whole map, the re-ground has not
+run. Record the numbers before and after, because the re-ground is the step that
+visibly moves counts on a published map.
+
+Two figures on the report will read "not recorded" on both live maps whatever you
+do, and that is also correct: `attention` and `embedding` were built from the
+command line and have no run record at all, so run cost and wall clock have
+nothing behind them. **`genealogies.spend_usd` reads `0.0000` on every map and is
+written by nothing** (issue #85); it is not a fallback and nothing in the view,
+the page or the command reads it. If a cost cell ever shows `US$0.00`, something
+has started coalescing it and that is a defect, not a cheap run.
 
 **Changing the audit's calibration.** Since migration 014 this needs no clear
 and no ritual: every verdict stores a digest of the calibration that produced it,
