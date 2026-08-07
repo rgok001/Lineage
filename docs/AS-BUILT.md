@@ -702,6 +702,18 @@ was a back-link in whatever corner each page happened to use.
   than its share: on a map with no relationships "relationships verified" renders
   `0 (no relationships)`, a real zero beside an absent share.
   Every figure carries two sentences: what it counts and what would move it.
+  **Five sentences a reader could not parse were rewritten, and the record's
+  dialect is off the page** (issue #111, the Product Owner: "some of the
+  language used to describe the measures feels convoluted and not very clear").
+  The claims are identical and the words are not: the Coverage lede's "a floor
+  under what the run set out to read" is now "a paper the run tried and failed
+  to read is not counted anywhere on this page"; the Evidence lede's three
+  states are three named sentences instead of one parenthetical chain; "no
+  record of which bytes they were checked against" is "whose last check ran
+  against an older copy of the paper's text". Rendered and grepped, the page
+  now contains no "bytes", no "corpus", no "quote slots" and no "queued work",
+  and "rows" only inside the By source table's description of its own rows,
+  which #98 owns.
   **No sentence on the page states a count of the world that the page cannot
   recompute** (issue #89). Three did: "Both maps that exist today were built
   from the command line", "Today the classification never proposes one, so this

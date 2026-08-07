@@ -326,10 +326,10 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       <Section
         title="Coverage of the reading"
         lede="How many papers this map holds a reading of, and how many of those said
-              they define the term. A paper that was selected but never fetched, or
-              fetched but never read, leaves no row at all, so these count what was
-              read and are a floor under what the run set out to read rather than the
-              size of the corpus."
+              they define the term. These figures count only the papers that were
+              actually read. A paper the run tried and failed to read is not counted
+              anywhere on this page, so the number of papers the run set out to read
+              may be higher than any figure here."
       >
         <Figure
           label="papers with a reading" lead
@@ -349,18 +349,19 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           label="papers that do not define the term"
           value={count(r.papers_not_defining)} absent="not recorded"
           counts="Papers read and found not to define the term. That is a finding, not a gap, and it is reported here rather than folded away."
-          moves="The same re-read. A verified fraction that quietly excluded these would read as a fraction of the corpus while being a fraction of the definers."
+          moves="Shown so the percentages below can be read honestly: they are percentages of the papers that define the term, not of every paper read."
           others={others((m) => m.papers_not_defining, count)}
         />
       </Section>
 
       <Section
         title="Evidence"
-        lede="How much of this map's evidence is currently string-matched against the
-              papers' own extracted text. Three states, one per item, and they add up
-              to the total by construction: verified, inferred (the check ran and did
-              not match), and not re-checked (nothing has compared this quote to the
-              text as it now stands)."
+        lede="How much of this map's evidence is currently matched against the papers'
+              own extracted text. Every quote is in exactly one of three states.
+              Verified: found word for word in the text extracted from the paper.
+              Inferred: the check ran and could not find it. Not re-checked: the check
+              has not yet run against the paper's current text. The three always add
+              up to the total."
       >
         <Figure
           label="definitions verified" lead
@@ -380,7 +381,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <Figure
           label="definitions not re-checked"
           value={count(r.definitions_stale)} absent="not recorded"
-          counts="Definition quotes carrying no record of which bytes they were checked against, or a record that no longer matches the paper's text."
+          counts="Quotes whose last check ran against an older copy of the paper's text, or that have no record of a check at all. They are not claimed as verified until the check runs again."
           moves="Re-running the free check moves them out of this state. Every stamp made before that record existed sits here until it is re-made."
           others={others((m) => m.definitions_stale, count)}
         />
@@ -409,7 +410,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <Figure
           label="relationships not re-checked"
           value={count(r.edges_stale)} absent="not recorded"
-          counts="Relationships with no record of the bytes they were checked against, or a record that no longer matches. A relationship whose paper is missing from our records sits here too, because a missing paper cannot support a check."
+          counts="Relationships whose last check ran against an older copy of a paper's text, or that have no record of a check at all. A relationship whose paper is missing from our records sits here too, because a missing paper cannot support a check."
           moves="Re-running the free check. This can read as the whole map immediately after the records were introduced, which is honest rather than broken."
           others={others((m) => m.edges_stale, count)}
         />
@@ -695,7 +696,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           value={r.run_wall_clock === null ? null : duration(r.run_wall_clock)}
           absent="not recorded"
           counts="From the run starting to the run finishing, for the most recent completed run."
-          moves="The size of the corpus, and how much of it was already read and cached."
+          moves="How many papers the run had to read, and how many of them this system had already read for an earlier map."
           others={rest.map((m) => ({
             concept: m.concept,
             value: m.run_wall_clock === null ? null : duration(m.run_wall_clock),
@@ -717,7 +718,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             label="what the run cost"
             value={money(r.run_cost_usd)} absent="not recorded"
             counts={`Model spend on the most recent completed run, ${r.run_cost_basis}. It is read from what the run's own stages printed as they went, it covers only the stages that print a spend line, and it is one run rather than everything this map has cost.`}
-            moves="The size of the corpus and how much of it was already read. A repair or a second run does not add to it."
+            moves="How many papers the run had to read, and how many of them had already been read. A repair or a second run does not add to it."
             others={rest.map((m) => ({ concept: m.concept, value: money(m.run_cost_usd) }))}
           />
         )}
@@ -744,7 +745,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </li>
           <li style={{ margin: ".4rem 0" }}>
             <strong>Whether the map is right.</strong>{" "}
-            Every number here comes from the map’s own rows. Deciding whether the
+            Every number here is counted from the map itself. Deciding whether the
             account it gives is correct needs the papers and a reader, which is what
             the quotes on the evidence page are for.
           </li>
@@ -753,7 +754,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
 
       <p style={{ ...mono, fontSize: ".68rem", color: "var(--ink-faint)", lineHeight: 1.8,
         marginTop: "2.4rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>
-        Counted from this map’s own rows when you loaded the page. Nothing on it is
+        Counted from the map itself when you loaded the page. Nothing on it is
         stored, so a change to the map changes these figures immediately and no figure
         here can outlive what it describes.
       </p>
