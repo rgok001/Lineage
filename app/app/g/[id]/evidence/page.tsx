@@ -172,10 +172,15 @@ function PaperSpine({ g }: { g: Genealogy }) {
   return (
     <section style={{ marginBottom: "2.5rem" }}>
       <SectionTitle n="1">Which papers shaped “{g.concept}”</SectionTitle>
+      {/* The second sentence carried a genuinely interesting idea inside a
+          subordinate clause hanging off a relative pronoun three commas from its
+          subject (issue #127). Three sentences now, same claim, and the reason
+          the two lists differ is stated rather than implied. */}
       <p style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 1.2rem", lineHeight: 1.5 }}>
-        Drawn from how later work actually cites each paper for this term, not raw citation counts.
-        The first list is what the field built on; the second is where the meaning turned, which the
-        first list misses because a paper that moves a term is cited by the field it moved into.
+        Ranked by how often later work cites each paper <em>for this term</em>, not by how often
+        it is cited overall. The first list is what the field built on. The second is where the
+        meaning changed, and those papers are usually missing from the first list, because a
+        paper that moves a term gets cited by the field it moved into, not by the one it left.
       </p>
 
       <GroupHeading label="Most built on" sub={`what later work leaned on for “${g.concept}”`} />
@@ -185,7 +190,9 @@ function PaperSpine({ g }: { g: Genealogy }) {
 
       {movers.length > 0 && (
         <>
-          <GroupHeading label="Turning points" sub="moved the term’s meaning, even if lightly cited here" />
+          {/* "here" was doing quiet work: it meant "within this map's papers",
+              which is the whole point of the list (issue #127). Same length. */}
+          <GroupHeading label="Turning points" sub="moved the term’s meaning, even if few papers in this map cite them" />
           <div style={{ display: "flex", flexDirection: "column", gap: ".5rem" }}>
             {movers.map((p) => <PaperRow key={p.arxiv} p={p} turning />)}
           </div>
@@ -397,8 +404,16 @@ function BasisCard({ color, rationale, citationContext }: {
         return (
           <div style={{ marginTop: rationale ? ".7rem" : 0, paddingTop: rationale ? ".7rem" : 0,
             borderTop: rationale ? "1px dashed var(--line)" : "none" }}>
+            {/* The hardest label on the page (issue #127): it must say "these
+                are real words from a real paper, and we still cannot vouch for
+                them the way we vouch for the quotes below". "String-verified"
+                was the machine's name for the vouching, so the sentence that
+                withholds the claim was the one written in the machine's terms.
+                Nothing is upgraded here and nothing is downgraded. */}
             <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", color: "var(--ink-soft)", marginBottom: ".35rem" }}>
-              Verbatim · where the later paper cites the earlier · per Semantic Scholar, not string-verified
+              The later paper’s own words, from the sentence where it cites the earlier one.
+              Supplied by Semantic Scholar, so we could not check it against our own copy of
+              the paper.
             </div>
             {passages.slice(0, 3).map((p, i) => (
               <blockquote key={i} style={{ margin: i === 0 ? 0 : ".45rem 0 0", fontFamily: "var(--font-display)",
@@ -445,7 +460,7 @@ function QuoteCard({ role, arxiv, year, quote, novelty, section }: {
         <div style={{ marginTop: ".65rem", paddingTop: ".6rem", borderTop: "1px dashed var(--line)" }}>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", color: "var(--ink-soft)",
             textTransform: "uppercase", letterSpacing: ".05em", marginBottom: ".3rem" }}>
-            What it contributed · extracted, not verbatim
+            What it contributed · in the tool’s words, not the paper’s
           </div>
           <ul style={{ margin: 0, paddingLeft: "1.05rem", fontSize: ".84rem", lineHeight: 1.5, color: "var(--ink-soft)" }}>
             {claims.slice(0, 3).map((c, i) => <li key={i} style={{ marginBottom: ".2rem" }}>{c}</li>)}

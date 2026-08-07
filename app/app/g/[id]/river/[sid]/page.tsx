@@ -56,7 +56,15 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
         )}
         <p style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)",
           margin: "1.3rem 0 0", paddingTop: ".9rem", borderTop: "1px solid var(--line)" }}>
-          {s.papers.length} papers, in the order the idea moved · each quote is the paper’s own definition, marked verified, inferred, or not re-checked
+          {/* The three state words are defined on the evidence page, and a
+              reader can reach a thread straight from the front door without ever
+              going there (issue #127). They then meet "✓ the paper's own words"
+              and "the tool's reading" with no key. Spelled out here rather than
+              linked, because the key is three clauses long. */}
+          {s.papers.length} papers, in the order the idea moved · each quote is the paper’s own
+          definition, and each is marked to say whether we found it word for word in the paper
+          (verified), could not find it (inferred), or have not re-checked it against the
+          paper’s text as it now stands
         </p>
 
         <div style={{ position: "relative", marginTop: "2.4rem" }}>

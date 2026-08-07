@@ -151,7 +151,7 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
           <section style={{ marginBottom: "1.5rem" }}>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", letterSpacing: ".12em",
               textTransform: "uppercase", color: "var(--ink-faint)", marginBottom: ".4rem" }}>
-              What it contributed · extracted, not verbatim
+              What it contributed · in the tool’s words, not the paper’s
             </div>
             <div style={{ fontFamily: "var(--font-display)", fontSize: "1.05rem", lineHeight: 1.55 }}>{claims[0]}</div>
             {claims.length > 1 && (
@@ -237,8 +237,14 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
 
         <p style={{ fontFamily: "var(--font-mono)", fontSize: ".66rem", color: "var(--ink-faint)",
           lineHeight: 1.8, marginTop: "2rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>
-          Verbatim quotes are string-matched against our own extraction of the source; the tool’s
-          readings are labelled as such and never wear the verified stamp.
+          {/* Three machine terms and a metaphor in one sentence (issue #127),
+              on the page where a reader has just read a dozen model-written link
+              rationales and most needs to know which parts are checked. The two
+              claims are unchanged: the check is still word for word against our
+              own copy, and a reading still never carries the mark. */}
+          Every quote on this page was checked word for word against our own copy of the
+          paper’s text. Anything labelled the tool’s reading is the tool’s judgement, and
+          never carries the verified mark.
         </p>
       </div>
     </main>

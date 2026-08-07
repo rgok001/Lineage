@@ -632,7 +632,15 @@ was a back-link in whatever corner each page happened to use.
   already writes for a citation dropped from a quotation. Display only: about one
   quote in five carries a marker, the stored span stays byte-identical to the one
   Stage E matched, and the same helper is used by the dossier and the export so a
-  reader meets one rendering everywhere. (`/g/[id]/river` redirects to the map; the path is kept working
+  reader meets one rendering everywhere.
+  **Its subtitle spells the three states out rather than naming them** (issue
+  #127). It said "each quote is the paper's own definition, marked verified,
+  inferred, or not re-checked", and those three words are defined on the evidence
+  page, which a reader arriving from the front door has never seen. It now says
+  what each of the three means in a clause each; nothing else on the page
+  changed, because everything else on it is model-written content about
+  machine-learning papers and rewriting that by hand would be inventing it.
+  (`/g/[id]/river` redirects to the map; the path is kept working
   because it was the front door for a day.)
 - `/g/[id]/export` : the writing scaffold, built by `lib/export.ts`.
   `?thread=<id>` scopes it to one thread, `?format=bib` returns the BibTeX
@@ -651,7 +659,10 @@ was a back-link in whatever corner each page happened to use.
   The CLI export (`export_related_work.py`) still writes the older sense-shaped
   document, and is kept because the pipeline is CLI-first.
 - `/g/[id]/p/[arxiv]` : a paper's dossier. What it contributed (novelty claims,
-  labelled extracted rather than verbatim), how it defines the term with the
+  labelled **"in the tool's words, not the paper's"**; they read "extracted, not
+  verbatim", from which a reader could not tell whether extracted meant taken
+  from the paper, which is trustworthy, or produced by the tool, which is a
+  judgement, and it means the second: issue #127), how it defines the term with the
   verified-or-inferred stamp, a note where we know our reading of that paper lost text (migration 013; shown only when something was found, since a clean scan is not a certificate), and its typed links in both directions ("what it
   drew from", "what drew from it") each carrying the edge rationale labelled as
   the tool's reading. A paper with no links says so without dialect (issue
@@ -662,6 +673,14 @@ was a back-link in whatever corner each page happened to use.
   different thread of meaning"; "thread" already names a stream on the front
   door, and lending it to a meaning would imply links only ever cross threads,
   which is false, so that one word is the deviation from the ticket.
+  **Its footer says which parts are checked, in three machine terms fewer**
+  (issue #127): "Verbatim quotes are string-matched against our own extraction of
+  the source; the tool's readings are labelled as such and never wear the
+  verified stamp" is now "Every quote on this page was checked word for word
+  against our own copy of the paper's text. Anything labelled the tool's reading
+  is the tool's judgement, and never carries the verified mark." Both claims are
+  the same claim. It matters here more than elsewhere because a reader reaches
+  this footer having just read a dozen model-written link rationales.
 - `/g/[id]/evidence` : the former genealogy page, now the evidence and
   workbench layer. Timeline of concept-state cards, typed relationship rows
   with evidence panels (both quotes, verification stamp, confidence), workbench
@@ -699,6 +718,18 @@ was a back-link in whatever corner each page happened to use.
   (issue #123): it sums the membership of `genealogies.nodes`, which is a
   different population from the three other "papers" counts in the app. All four
   are set out under `/g/[id]/report` below.
+  **Three more labels say what kind of thing the reader is looking at** (issue
+  #127). The citing-sentence label has the hardest job on the page, because it
+  must say "these are real words from a real paper, and we still cannot vouch for
+  them the way we vouch for the quotes below", and it was written as "per
+  Semantic Scholar, not string-verified" — the withholding of the claim, in the
+  machine's name for the claim. It now says the later paper's own words, from the
+  sentence where it cites the earlier one, supplied by Semantic Scholar, so we
+  could not check it against our own copy of the paper. The novelty-claims label
+  matches the dossier's. And the ranked-papers lede carried a real idea inside a
+  subordinate clause three commas from its subject; it is three sentences now,
+  and "even if lightly cited here" says what "here" meant, which is "within this
+  map's papers".
 - `/g/[id]/report` : what this map is made of (issue #30, `[F2]`). One screen,
   one column, no interactivity, every figure selected from migration 016's two
   views by `lib/report.ts` and computed nowhere else, so this page and
