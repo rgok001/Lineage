@@ -645,14 +645,10 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           untouched here; the command still prints both. */}
       <Section
         title="Quote reuse"
-        lede="Every relationship shows a quote from each of its two papers, and a
-              paper repeats its one defining quote on every relationship it appears
-              in. So a map always has far fewer different quotes than relationships;
-              that is normal. What matters is the comparison below between different
-              quotes and different papers: those two numbers should be close, and if
-              there are clearly fewer quotes than papers, somewhere one quote is
-              standing in for two different papers. A quote that turns out to contain
-              no words from its paper is not counted as evidence anywhere here."
+        lede="Each paper has one key quote, and shows that same quote everywhere it
+              appears on the map. So the map rests on far fewer different quotes
+              than it has relationships, and these figures say how many different
+              quotes the whole map really stands on."
       >
         <Figure
           label="distinct quote strings"
