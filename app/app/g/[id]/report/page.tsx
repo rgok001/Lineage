@@ -473,7 +473,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           label="meanings" lead
           value={count(r.nodes_total)} absent="not recorded"
           counts="Groups of papers this map treats as holding one meaning of the term."
-          moves="Re-running the grouping, and every split, merge or delete in the workbench."
+          moves="This changes if the map is rebuilt, or if someone editing the map splits, merges or deletes a group."
           others={others((m) => m.nodes_total, count)}
         />
         {/* A diagnostic row, shown when it has something to report (issue #110).
@@ -497,21 +497,21 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           value={count(r.nodes_with_one_member)} absent="not recorded"
           share={{ value: share(r.nodes_with_one_member_share), absent: "no meanings" }}
           counts="Meanings with a single paper in them, with the share of every meaning in the map beside it."
-          moves="Re-running the grouping, and merging two meanings by hand. The share reads absent rather than 0% on a map with no meanings."
+          moves="Rebuilding the map, or someone editing it merging two meanings into one. The share reads absent rather than 0% on a map with no meanings."
           others={othersPair((m) => m.nodes_with_one_member, (m) => m.nodes_with_one_member_share)}
         />
         <Figure
           label="meanings with no link to another meaning"
           value={count(r.nodes_with_no_edge_to_another_node)} absent="not recorded"
           counts="Meanings that no relationship connects to a different meaning. These are what the evidence page lists as unconnected."
-          moves="A new relationship reaching one of them, and any regrouping."
+          moves="A new relationship reaching one of them, or the map being rebuilt."
           others={others((m) => m.nodes_with_no_edge_to_another_node, count)}
         />
         <Figure
           label="largest meaning, papers in it"
           value={count(r.largest_node_members)} absent="no meanings"
           counts={`The biggest single group${r.largest_node_id ? ` (${r.largest_node_id})` : ""}, by how many papers it holds.`}
-          moves="Re-running the grouping, and splitting it by hand."
+          moves="Rebuilding the map, or someone editing it splitting this group in two."
           others={others((m) => m.largest_node_members, count)}
         />
         <Figure
@@ -533,7 +533,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           label="pairs carrying more than one kind of link"
           value={count(r.node_pairs_disagreeing)} absent="not recorded"
           counts="Pairs where the relationships between the same two meanings do not all say the same thing."
-          moves="Reclassifying a relationship in the workbench, and re-running the classification."
+          moves="Someone editing the map changing what kind of link a relationship is, or the map being rebuilt."
           others={others((m) => m.node_pairs_disagreeing, count)}
         />
         <Figure
@@ -626,7 +626,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             others={others((m) => m.year_min, year)} />
           <Figure label="latest year" value={year(r.year_max)} absent="no years recorded"
             counts="The newest defining paper in the map, which is the right end of the chart above."
-            moves="Re-running the search, which is the only thing that brings in newer work."
+            moves="Only mapping the term again brings in newer work."
             others={others((m) => m.year_max, year)} />
           <Figure label="papers with no year" value={count(r.papers_with_no_year)}
             absent="not recorded"
@@ -645,15 +645,14 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           untouched here; the command still prints both. */}
       <Section
         title="Quote reuse"
-        lede="A relationship carries each paper's own definition quote, so a paper on
-              forty relationships contributes its one quote forty times. Each
-              relationship holds a quote from each of its two ends, and one that turns
-              out to hold no text is not evidence, so it is left out of the counts
-              below. So it is normal to see far fewer distinct quotes than
-              relationships. The comparison that matters is with the number of papers:
-              if there are noticeably fewer distinct quotes than papers on
-              relationships, two different papers are being represented by the same
-              quote, and that is worth knowing."
+        lede="Every relationship shows a quote from each of its two papers, and a
+              paper repeats its one defining quote on every relationship it appears
+              in. So a map always has far fewer different quotes than relationships;
+              that is normal. What matters is the comparison below between different
+              quotes and different papers: those two numbers should be close, and if
+              there are clearly fewer quotes than papers, somewhere one quote is
+              standing in for two different papers. A quote that turns out to contain
+              no words from its paper is not counted as evidence anywhere here."
       >
         <Figure
           label="distinct quote strings"
