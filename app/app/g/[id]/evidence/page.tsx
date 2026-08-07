@@ -97,11 +97,19 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
 
       {/* ── relationships ──────────────────────────────── */}
       <SectionTitle n="2">The {edges.length} relationships between them</SectionTitle>
+      {/* #127 protects this paragraph's structure -- three symbols, one clause
+          each, in order -- not its vocabulary, and the vocabulary was the last
+          of #129's two rules to reach it (issue #135). "Verbatim" described the
+          check rather than the passage, and "the source text" named the
+          published paper when what was searched is this system's own copy.
+          Also "so it is marked" to "so the relationship is marked": the "it" had
+          drifted from the relationship to the quote between clauses. */}
       <p style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 1rem" }}>
-        Each row is a typed relationship between two papers. ● means both quotes were verified
-        verbatim against the source text; ○ means one could not be matched, so the relationship is
-        marked <em>inferred</em>; ◌ means the quotes have not been checked against the source
-        text as it now stands, so it is marked <em>not re-checked</em>.
+        Each row is a typed relationship between two papers. ● means both quotes were found word
+        for word in the text this system pulled out of those papers; ○ means one of them could not
+        be found, so the relationship is marked <em>inferred</em>; ◌ means the quotes have not been
+        checked against those papers’ text as it now stands, so the relationship is
+        marked <em>not re-checked</em>.
         Click a row to see the evidence
         {canEdit ? ", reclassify it, or remove it." : "."}
       </p>

@@ -270,8 +270,14 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
         // contains, and omitting it would quietly narrow the account, which is
         // the mistake Stage H already refuses to make. It goes out under its own
         // caveat and never under the verified wording.
+        // The verified stamp matches the document it sits in rather than the
+        // pages (issue #135): the preamble and the other two stamps say "the
+        // paper's own text", and a document read away from every page needs one
+        // vocabulary inside itself above all. It said "verbatim against the
+        // paper's own source text", which put the word on the check and named
+        // the published paper as what was searched.
         const stamp = {
-          verified: "\u2713 verified verbatim against the paper's own source text",
+          verified: "\u2713 verified: found word for word in the paper's own text",
           inferred: "*(inferred: the check ran against the paper's text and could not find "
                   + "this passage, so re-check it before citing)*",
           stale: "*(not re-checked: this quote has not been matched against the "

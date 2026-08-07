@@ -255,10 +255,17 @@ def main() -> None:
             # A stale quote is exported with its caveat rather than dropped: it is
             # real text a real paper contains, and omitting it would narrow the
             # account in silence. It never goes out under the verified wording.
+            # The not-re-checked mark sat outside #129's grep and #130's list
+            # because it is neither in app/ nor in that ticket's surfaces, and it
+            # said "the paper's extracted text", which is the wording #129 banned
+            # (issue #135). It now matches the sentence #129 settled for the app
+            # export's preamble, and drops the em dash with it. The inferred mark
+            # below still carries one; it was outside #135's seven surfaces and
+            # is left rather than swept.
             mark = {"verified": "",
                     "inferred": "  *(inferred — quote could not be verified)*",
-                    "stale": "  *(not re-checked — not matched against the paper's "
-                             "extracted text as it now stands)*"}[d["stamp"]]
+                    "stale": "  *(not re-checked: not matched against the paper's "
+                             "text as it now stands)*"}[d["stamp"]]
             md.append(f"\n> “{clean_quote(d['quote'])}”{mark}\n")
         md.append(f"\n_[Your synthesis of this sense: what it enabled, what it left unsolved.]_\n")
 

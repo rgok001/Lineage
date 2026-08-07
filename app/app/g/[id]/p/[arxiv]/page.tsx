@@ -176,7 +176,12 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
             </blockquote>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", marginTop: ".35rem",
               color: STAMP_COLOR[quoteStamp], lineHeight: 1.5 }}>
-              {quoteStamp === "verified" && "✓ verified verbatim against the source text"}
+              {/* This caption was left behind by #129 and swept by #135: it put
+                  "verbatim" on the check rather than on the passage, said "the
+                  source text" where the check runs against this system's own
+                  copy, and carried no `shown as` tail while both its neighbours
+                  did. */}
+              {quoteStamp === "verified" && "✓ found word for word in the text this system pulled out of this paper · shown as verified"}
               {/* One phrase for this claim across the product (issue #129): the
                   check is named by what it does, not by its technique, and the
                   text it runs against says who pulled it out. lib/stamp.ts holds
@@ -245,10 +250,15 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
               on the page where a reader has just read a dozen model-written link
               rationales and most needs to know which parts are checked. The two
               claims are unchanged: the check is still word for word against our
-              own copy, and a reading still never carries the mark. */}
-          Every quote on this page was checked word for word against our own copy of the
-          paper’s text. Anything labelled the tool’s reading is the tool’s judgement, and
-          never carries the verified mark.
+              own copy, and a reading still never carries the mark.
+              "Our own copy of the paper's text" was a third phrasing of one
+              promise, four lines below stamp captions that say it the settled
+              way, and "copy" can be read as a copy of the PDF rather than of the
+              text pulled out of it, which is the distinction the rule exists to
+              hold (issue #135). */}
+          Every quote on this page was checked word for word against the text this system
+          pulled out of the paper. Anything labelled the tool’s reading is the tool’s
+          judgement, and never carries the verified mark.
         </p>
       </div>
     </main>

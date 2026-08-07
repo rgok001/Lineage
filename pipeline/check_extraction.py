@@ -315,7 +315,9 @@ def fold_ellipsis(s: str) -> str:
 #
 # This also retires the --clear-verdicts-then-restart ritual for a calibration
 # change. Clearing NULLs the verdict, and on the dossier the note is the only
-# qualifier on "verified verbatim against the source text", so a cleared row
+# qualifier on "found word for word in the text this system pulled out of this
+# paper" (issue #135 rewrote that caption; the argument is unchanged), so a
+# cleared row
 # leaves the tick standing alone and the page claiming MORE than it did
 # (decision 21). A version mismatch leaves the old verdict in place until the new
 # one replaces it: replace before destroying, applied to the verdict itself.
@@ -1038,8 +1040,9 @@ def clear_verdicts(conn, concept: str | None, only: list[str] | None,
 
     A cleared verdict is not "clean", it is "unchecked", which is what these rows
     honestly are. But it is not therefore the safe direction, and decision 21
-    says why: on the dossier the note sits directly under "verified verbatim
-    against the source text" and is the only qualifier on that tick, so clearing
+    says why: on the dossier the note sits directly under "found word for word in
+    the text this system pulled out of this paper" and is the only qualifier on
+    that tick, so clearing
     it leaves the tick standing alone and the page claiming MORE than it did.
     That is the argument for treating the restart as part of this operation
     rather than as the next line of a runbook.
@@ -1118,7 +1121,8 @@ def clear_verdicts(conn, concept: str | None, only: list[str] | None,
           "start\n  (--only-unchecked --write) will re-measure them against the text "
           "as it is now.")
     # Not "the safe direction". On the dossier this note is the only qualifier on
-    # "verified verbatim against the source text", so removing it leaves the tick
+    # "found word for word in the text this system pulled out of this paper", so
+    # removing it leaves the tick
     # unqualified and the page claiming more than it did a moment ago.
     print("\n  RESTART THE WORKER NOW. Until it boots, those papers show no note "
           "about\n  their text at all, which leaves the verified stamp on each of "

@@ -314,8 +314,9 @@ stands". They were applied to `STAMP_MEANING`, both per-row explainers on
 "Verified quotes throughout" item, and the export's preamble clause and two of
 its three per-quote footnotes. No claim moved in any of them.
 **Two deliberate exceptions.** `/about` keeps "string-matched against our own
-extraction" in step 6 and the Verified tier: it is the page *about* the
-machinery, the reader has been walked through extraction in step 2 before step 6
+extraction" in step 6 and the Verified tier, and keeps "verbatim" in step 3,
+where it describes a passage: it is the page *about* the machinery, the reader
+has been walked through extraction in step 2 before step 6
 names it, and naming the technique there is the service being offered (#125 left
 it on purpose and #129 confirms that on purpose). And the export preamble's
 not-re-checked clause, which #128 protected, changed with the rest, on the
@@ -328,12 +329,45 @@ rendered from it, and grepped on `c9d9deb` the readers are of `STAMP_LABEL` and
 `STAMP_COLOR` only, with each page spelling its own sentence around a symbol and
 its own extra clause. It is the wording those sentences are copied from, and a
 change there is a change to make in each of them.
-**Still saying "verbatim", and outside #129's ruling**: the evidence page's
-●/○/◌ key ("both quotes were verified verbatim against the source text"), which
-#127 protects; the dossier's verified caption; and the export's verified
-per-quote stamp. #129 ruled on the sentences that said "string-matched" or
-"extracted", which is what its grep found, so these were left rather than swept,
-and they are #135.
+**A third rule finished it, on seven surfaces the first grep could not see**
+(issue #135, UX ruling implemented as given, 2026-08-08). **"Verbatim" describes
+a passage and never a check**: "verified verbatim against X" is the banned word
+wearing an adverb, so none of the three lines #129 left standing was the
+quotation case that would have been defensible. And **"against the source text"
+had to go regardless of the copy question**, which is why this outranked a copy
+sweep: "extracted" was ambiguous about who pulled the text out, while "source"
+positively suggests the published paper, so each line stated a slightly stronger
+claim than the product can support on the three surfaces where a sceptic goes to
+check one. Nothing here is a rule 2 violation, and no claim moved on any of the
+seven; it is drift in the direction rule 2 exists to prevent.
+The seven: the **home page hero**, which was outside #129's grep and outside
+#135's own filing and is the loudest statement of the promise in the product
+(the owner found it on the deployed site) -- now "Every claim carries a quote
+from the paper, checked word for word against the text this system pulled out of
+it. Quotes the check could not find are marked, never hidden", the third
+sentence being new and the first time the front page has said what happens to a
+quote the check cannot find; the evidence page's ●/○/◌ key, whose *structure* is
+what #127 protects and whose vocabulary changed with it, along with an "it" that
+had drifted from the relationship to the quote; the dossier's verified caption,
+which now carries the `· shown as verified` tail its two neighbours had; the app
+export's verified per-quote stamp, matched to the document it sits in ("verified:
+found word for word in the paper's own text") rather than to the pages, because a
+document read away from every page needs one vocabulary inside itself above all;
+the dossier's footer, a third phrasing of one promise four lines under captions
+that say it the settled way, where "our own copy" could be read as a copy of the
+PDF rather than of the text pulled out of it; **the CLI export's not-re-checked
+mark** in `pipeline/export_related_work.py`, outside `app/` and so outside both
+#129's grep and #130's list, in the other document that goes into somebody's
+manuscript; and `/about`'s Verified tier, which said "string-matched against our
+reading of the source" -- "reading" being the word every dossier line, thread
+account and rationale on the site uses to mean *judgement, not checked*, spent on
+the mechanical check, on the page whose job is to teach the difference. It now
+says "our own extraction of the paper's text", the phrasing #129 already granted
+that page.
+**Left standing on purpose**: the evidence page's citing-sentence label
+("supplied by Semantic Scholar, so we could not check it against our own copy of
+the paper"), which is about the citing sentence rather than the quote and says
+the true thing plainly.
 **Reading the view gave the home page a hard dependency on migration 016, and
 that dependency degrades rather than falling over** (issue #92): an app deployed
 before the migration lands did not lose two numbers, it lost `/` entirely, since
@@ -783,10 +817,14 @@ was a back-link in whatever corner each page happened to use.
   (issue #127): "Verbatim quotes are string-matched against our own extraction of
   the source; the tool's readings are labelled as such and never wear the
   verified stamp" is now "Every quote on this page was checked word for word
-  against our own copy of the paper's text. Anything labelled the tool's reading
-  is the tool's judgement, and never carries the verified mark." Both claims are
+  against the text this system pulled out of the paper. Anything labelled the
+  tool's reading is the tool's judgement, and never carries the verified mark."
+  Both claims are
   the same claim. It matters here more than elsewhere because a reader reaches
-  this footer having just read a dozen model-written link rationales.
+  this footer having just read a dozen model-written link rationales. #127's
+  version said "our own copy of the paper's text"; #135 replaced that clause
+  because it was a third phrasing of one promise, sitting four lines under stamp
+  captions that say it the settled way.
 - `/g/[id]/evidence` : the former genealogy page, now the evidence and
   workbench layer. Timeline of concept-state cards, typed relationship rows
   with evidence panels (both quotes, verification stamp, confidence), workbench

@@ -155,10 +155,19 @@ export default function AboutPage() {
           because conflating them is the failure mode this tool exists to avoid.
         </P>
         <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
+          {/* "Reading" is the one word this product cannot spend in the Verified
+              tier (issue #135). Every dossier line, thread account and
+              relationship rationale on the site is labelled "the tool's reading"
+              to mean judgement rather than checked, and this sentence used it
+              for the mechanical check, on the page whose job is to teach the
+              difference, inside the clause claiming the words are the paper's
+              and not the tool's. #129's exception for this page covers
+              "string-matched" and "our own extraction", which is what it now
+              says. */}
           <Tier
             label="Verified"
             color="var(--verified)"
-            body="Quoted passages carrying the ✓ stamp. These were string-matched against our reading of the source, so the words are the paper's and not the tool's. The guarantee stops exactly there: converting a paper into plain text can drop a symbol or a phrase, and where we know that happened the paper's page says so."
+            body="Quoted passages carrying the ✓ stamp. These were string-matched against our own extraction of the paper's text, so the words are the paper's and not the tool's. The guarantee stops exactly there: converting a paper into plain text can drop a symbol or a phrase, and where we know that happened the paper's page says so."
           />
           <Tier
             label="Sourced but unverified"

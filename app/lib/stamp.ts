@@ -45,6 +45,16 @@ export const STAMP_COLOR: Record<StampState, string> = {
  * mechanical, word for word, against this system's own copy and never against
  * the published PDF.
  *
+ * A third rule, from the sweep that finished the job (issue #135, UX ruling).
+ * **"Verbatim" describes a passage and never a check**: "verified verbatim
+ * against X" is the word on an adverb, which is the banned case wearing a
+ * different coat, and /about step 3's "return the defining passage verbatim" is
+ * the one place it does honest work on a noun. **"Against the source text" is
+ * not a style point and outranks the rest**: "source" positively suggests the
+ * published paper, where "extracted" was merely ambiguous, so the sentence
+ * states a stronger claim than the product can support on exactly the surfaces
+ * a sceptic visits to check one.
+ *
  * **Nothing reads this constant today.** #129 was filed believing every stamp
  * surface rendered from it; grepped on c9d9deb, the readers are of STAMP_LABEL
  * and STAMP_COLOR only, and each page spells its own sentence around a symbol

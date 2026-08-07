@@ -590,6 +590,12 @@ gone from the document and from stdout in favour of pluralising from the count,
 and the curation line says "N changes by hand applied", which is what the home
 card has said since #120. This document goes into somebody's paper, so the
 machine's voice costs more here than on a page a reader can leave.
+Its per-quote not-re-checked mark was outside that sweep, because it is outside
+`app/` and so outside both #129's grep and #130's list; it said "not matched
+against the paper's extracted text as it now stands" and now says "not matched
+against the paper's text as it now stands", matching the sentence #129 settled
+for the app export's preamble (issue #135). The inferred mark beside it keeps its
+em dash: it was not among #135's seven surfaces and was left rather than swept.
 **It cites papers it has no BibTeX entry for** (issue #136, found while verifying
 #130 and older than it): every member of a sense gets a `\cite`, including one
 whose author metadata is missing, and that paper is then skipped in the `.bib` and

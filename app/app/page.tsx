@@ -23,10 +23,21 @@ export default async function Home() {
         <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2.1rem", margin: 0 }}>
           Read a concept’s development
         </h1>
+        {/* The loudest statement of the promise in the product, and it was the
+            last surface still making it in the words #129 replaced everywhere
+            else (issue #135). "Verified against the source text" says the check
+            ran against the paper; it ran against the text this system pulled out
+            of the paper, which /about admits can drop a symbol. That is a
+            stronger claim than the product can support, on the sentence a
+            sceptic reads before clicking anything. The third sentence is new:
+            the front page had never said what happens to a quote the check
+            cannot find, and marking rather than hiding them is the whole reason
+            the promise is worth making. */}
         <p style={{ color: "var(--ink-soft)", margin: ".45rem 0 0", lineHeight: 1.5 }}>
           Read how an academic concept evolved: the threads it split into, how they fed each other,
-          and the papers that moved it, in order. Every claim is tied to a verbatim quote, verified
-          against the source text.{" "}
+          and the papers that moved it, in order. Every claim carries a quote from the paper,
+          checked word for word against the text this system pulled out of it. Quotes the check
+          could not find are marked, never hidden.{" "}
           <Link href="/about" style={{ color: "var(--edge-extends)", whiteSpace: "nowrap" }}>
             How it works ›
           </Link>
