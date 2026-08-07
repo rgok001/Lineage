@@ -666,6 +666,18 @@ was a back-link in whatever corner each page happened to use.
   it non-zero is the run that makes it appear. The derived sentence beside it
   lost its unreachable branch with the change: it is only ever rendered on a map
   that has at least one, so "no map in this system has one" could not be shown.
+  **Corpus age leads with the papers-per-year chart, and the three quantile rows
+  are cut** (issue #113). Lower quartile, median and upper quartile were a
+  harder-to-read summary of the distribution the chart draws directly, in
+  statistician's words. The median was offered as a sentence under the chart and
+  was declined: `percentile_cont` interpolates, so a map can have a median of
+  2019.5, and "half the defining papers are from 2019.5 or earlier" is a half
+  year printed as a date on the page that exists to keep figures honest. Earliest
+  and latest year stay, named as the chart's two ends, and **"papers with no
+  year" stays below the chart**, because undated papers appear nowhere in it and
+  a chart that silently omits them is the blank-reads-as-zero defect in picture
+  form. All three quantiles still print in `pipeline/map_report.py`.
+  Together the page went from 39 figure rows to 29, measured on the harness.
   **The page opens with one paragraph, not three**
   (issue #106, the UX review of #104): roughly 170 words of what the page is not
   stood between the reader and the first number. The lede now carries the story

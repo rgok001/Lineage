@@ -569,33 +569,19 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               as when the work first appeared rather than as a publication date. A
               paper with no year is counted separately and never guessed at."
       >
-        <Figure label="earliest year" value={year(r.year_min)} absent="no years recorded"
-          counts="The oldest defining paper in the map."
-          moves="Reading further back, and any correction to a stored year."
-          others={others((m) => m.year_min, year)} />
-        <Figure label="lower quartile" value={year(r.year_p25)} absent="no years recorded"
-          counts="A quarter of the defining papers are this old or older."
-          moves="The distribution of what was read."
-          others={others((m) => m.year_p25, year)} />
-        <Figure label="median year" value={year(r.year_median)} absent="no years recorded"
-          counts="Half the defining papers are this old or older."
-          moves="The distribution of what was read."
-          others={others((m) => m.year_median, year)} />
-        <Figure label="upper quartile" value={year(r.year_p75)} absent="no years recorded"
-          counts="Three quarters of the defining papers are this old or older."
-          moves="The distribution of what was read."
-          others={others((m) => m.year_p75, year)} />
-        <Figure label="latest year" value={year(r.year_max)} absent="no years recorded"
-          counts="The newest defining paper in the map."
-          moves="Re-running the search, which is the only thing that brings in newer work."
-          others={others((m) => m.year_max, year)} />
-        <Figure label="papers with no year" value={count(r.papers_with_no_year)}
-          absent="not recorded"
-          counts="Defining papers with no year at all. They are left out of the five figures above rather than being given a guessed date."
-          moves="Better metadata for those papers."
-          others={others((m) => m.papers_with_no_year, count)} />
-
-        <div style={{ marginTop: ".9rem" }}>
+        {/* The chart leads, and the three quantile rows it summarised are gone
+            (issue #113). "A quarter of the defining papers are this old or
+            older" is a statistician's sentence about something the picture
+            below it showed directly, on a page already over-supplied with
+            figures. The median was offered as a sentence under the chart and is
+            not taken: `percentile_cont` interpolates, so half the maps would
+            read "half the papers are from 2019.5 or earlier", and a page that
+            exists to keep figures honest should not print a half year as a
+            date. All three still print in `pipeline/map_report.py`.
+            "Papers with no year" survives below the chart, because those papers
+            are invisible in it and a chart that quietly omits them is the same
+            defect as a blank reading as a zero. */}
+        <div style={{ marginTop: ".2rem" }}>
           <div style={{ ...mono, fontSize: ".68rem", letterSpacing: ".08em",
             textTransform: "uppercase", color: "var(--ink-faint)" }}>
             papers per year
@@ -631,6 +617,22 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               no years recorded
             </p>
           )}
+        </div>
+
+        <div style={{ marginTop: "1.1rem" }}>
+          <Figure label="earliest year" value={year(r.year_min)} absent="no years recorded"
+            counts="The oldest defining paper in the map, which is the left end of the chart above."
+            moves="Reading further back, and any correction to a stored year."
+            others={others((m) => m.year_min, year)} />
+          <Figure label="latest year" value={year(r.year_max)} absent="no years recorded"
+            counts="The newest defining paper in the map, which is the right end of the chart above."
+            moves="Re-running the search, which is the only thing that brings in newer work."
+            others={others((m) => m.year_max, year)} />
+          <Figure label="papers with no year" value={count(r.papers_with_no_year)}
+            absent="not recorded"
+            counts="Defining papers with no year at all. They are nowhere in the chart above and in neither figure, rather than being given a guessed date."
+            moves="Better metadata for those papers."
+            others={others((m) => m.papers_with_no_year, count)} />
         </div>
       </Section>
 
