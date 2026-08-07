@@ -158,11 +158,12 @@ destinations table added for them.
 
 ## 3. Data model
 
-Six tables, migrations `001` through `015`, applied by
+Six tables and two views, migrations `001` through `016`, applied by
 `python pipeline/db/migrate.py` (tracked in `schema_migrations`). Migrations
 `008`-`009` are data fixes (paths relative to `DATA_DIR`; correcting future
 publication years OpenAlex mis-dated). `010`-`012` carry the paper-centric turn
-and are described inline below.
+and are described inline below. `016` adds no table and no column at all: it is
+the two report views, described at the end of this section.
 
 **papers** (001, 002, 015): one row per fetched arXiv paper. Notable columns:
 `raw_path` and `extracted_text_path` point into `DATA_DIR`;
@@ -340,6 +341,65 @@ and `failed`. `progress` JSONB is written live by the worker; `updated_at`
 doubles as the worker heartbeat; `genealogy_id` links the finished map. A
 partial unique index allows only one open request per concept, enforced at the
 database level because app-level checks can be raced by simultaneous submits.
+
+**map_report_by_source and map_report** (016, `016_map_report.sql`): the map
+report (issue #30, `[F2]`), and the only two views in the schema. They store
+nothing. `CREATE VIEW` writes no row, takes no rewrite lock and is reversed by
+`DROP VIEW map_report; DROP VIEW map_report_by_source;`, and the whole point of
+computing rather than storing is that a quality figure written to a column
+survives the curatorial edit that invalidates it.
+
+`map_report_by_source` is the base: one row per (genealogy, unit, source), where
+`unit` is `'definition'` or `'edge'`, carrying `total`, `verified`, `inferred`
+and `stale`. `map_report` is one row per map, and its per-unit verification
+counts are `SUM`s over the base view, so the per-source figures adding up to the
+map figure is true by construction rather than by test. Every other figure —
+coverage of the reading, quote reuse, the shape of the node graph, the corpus
+year distribution, the last completed run's cost and wall clock — is computed
+directly from `edges`, `definitions`, `papers`, `genealogies.nodes` and
+`trace_requests`. Every share is a `NULLIF(denominator, 0)` division and is
+**absent** rather than zero when the denominator is zero: zero percent is a claim
+about a population, and there is no population.
+
+**There is no threshold anywhere in these views and there must never be one.**
+The only numeric literals are `0.25`, `0.5`, `0.75` (the quantiles that define
+the quartiles and the median) and `2` (quote slots per edge); each defines a
+statistic and none decides anything. A colour scale, a grade, a badge or a
+composite score would be a threshold with the evidence removed.
+
+The per-source grain is built in from the first row because F7 (non-arXiv
+sources) needs a before-and-after comparison against a number of the same shape.
+`papers.source` does not exist yet, so the label is **measured from the row**
+(`p.id IS NULL` -> `no paper row`, `p.arxiv_id IS NOT NULL` -> `arxiv`, else
+`source not recorded`) rather than asserted as a literal, which is an expression
+that can fail rather than one that cannot; F7's migration replaces it with
+`p.source` in the same migration that creates the column. An edge is grouped by
+the pair of its two endpoint labels, sorted and joined, so every edge lands in
+exactly one bucket and the buckets sum to the edge count.
+
+Three figures the report is asked for have no input in this database and each
+renders as an explicit "not recorded", never a zero and never a blank: run cost
+(`genealogies.spend_usd` exists and is written by nothing, reading `0.0000` on
+both live maps, so the view reads `trace_requests.progress->>'spend_usd'` from
+the last completed run and **must never `COALESCE` to that column or to 0** —
+issues #85 and #47), wall clock (recorded for worker runs only, and neither live
+map is one), and Stage D's discarded citation pairs (counted nowhere; issue #86).
+`run_cost_basis` carries which of those two states the cost figure is in.
+
+Both joins from `edges` to `papers` are `LEFT`, for the reason the rest of this
+section gives at length (issues #60, #79, #83): the join must not decide whether
+an edge exists, and a missing paper row yields a NULL digest, which every copy of
+the stamp rule calls stale. `definitions.paper_id` cannot dangle, so its
+`LEFT JOIN` is uniformity rather than behaviour.
+
+`CREATE OR REPLACE VIEW` cannot change a column's type, drop a column or reorder
+columns, so any later change beyond appending trailing columns is a `DROP VIEW`
+and a `CREATE VIEW`. **No consumer may `SELECT *`**: every reader names every
+column it reads, so a redefinition cannot silently change what a page renders.
+The migration also issues a `GRANT SELECT` to `lineage_ro`, guarded by a `DO`
+block that checks `pg_roles` so a local database without that role still
+migrates; without it the read-only CLI would fail against production while
+working perfectly for the owner.
 
 ---
 
