@@ -171,10 +171,19 @@ def duration(v) -> str | None:
     return f"{m} min {rem} s" if rem else f"{m} min"
 
 
-# The figures, in the page's order, under the page's labels, with the page's
-# words for an absent value. `m30_cli.py` in the scratchpad compares this list
-# with the labels in app/app/g/[id]/report/page.tsx, because "the same figures in
-# the same order under the same labels" is a claim and not a hope.
+# The figures, under the page's labels, with the page's words for an absent
+# value. `m30_cli.py` in the scratchpad compares this list with the labels in
+# app/app/g/[id]/report/page.tsx, because agreement between the two surfaces is a
+# claim and not a hope.
+#
+# **This command prints every figure; the page prints a reader's tier of them**
+# (the UX review, #104 and #107 to #113). The page merged each count with its
+# share onto one row, cut the figures that only the team reads, and re-ordered
+# two sections; this list did not, because the Operator is this command's reader
+# and the full account is the point of it. So the claim the comparison enforces
+# is that the page's labels are a *subset* of this list, with identical wording
+# wherever both surfaces print a figure. It is deliberately weaker than the
+# equality it replaces: a figure dropped from this list is still a defect.
 SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
     ("Coverage of the reading", [
         ("papers with a reading", "papers_with_a_reading", count, "not recorded"),

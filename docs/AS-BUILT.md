@@ -647,6 +647,27 @@ was a back-link in whatever corner each page happened to use.
   is the same figure for every other map, labelled "the other maps in this
   system" rather than a baseline, with the sample size taken from the number of
   rows the view returned rather than written into the page.
+  **The page shows a reader's tier of the figures; `pipeline/map_report.py`
+  shows all of them** (issues #107 to #113, from the UX review). Until
+  2026-08-07 the invariant was equality, checked by a scratchpad harness:
+  40 labels on the page, 40 in the command, same order, same absent-words.
+  That was deliberately relaxed to **the page's labels are a subset of the
+  command's, with identical wording wherever both print a figure**, because the
+  two have different readers: a researcher meets the page, and the Operator runs
+  the command with the read-only connection string and wants the whole account.
+  The relaxation is recorded in both files' own comments so neither can be
+  "fixed" back into equality by accident, and the harness now checks the subset
+  plus an explicit list of what the tickets cut. Nothing is cut from the command.
+  The first cut was **the count/share pairs merging onto one row** (issue #107):
+  39 figure rows rendered at one identical visual weight, so "definitions
+  verified, as a share" (the product's promise) looked exactly like "quote slots"
+  (bookkeeping). Five pairs now print as `138 (100.0%)` under the count's label,
+  and seven rows that carry the page's story are set one step of type larger than
+  the rest. Weight only: no colour, no badge, no mark of quality, so decisions 24
+  and 25 and the no-threshold rule are untouched. **A merged row carries two
+  absent-words, not one**, because a count can be missing for a different reason
+  than its share: on a map with no relationships "relationships verified" renders
+  `0 (no relationships)`, a real zero beside an absent share.
   Every figure carries two sentences: what it counts and what would move it.
   **No sentence on the page states a count of the world that the page cannot
   recompute** (issue #89). Three did: "Both maps that exist today were built

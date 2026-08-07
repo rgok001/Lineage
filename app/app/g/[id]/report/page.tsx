@@ -23,6 +23,16 @@ export const dynamic = "force-dynamic"; // computed on read, never stored
  *
  * Copy obeys product rule 3 throughout: this page describes what the map is made
  * of, never how good it is, and never calls the map the history of anything.
+ *
+ * **This page shows a reader's tier of the figures; `pipeline/map_report.py`
+ * shows every one** (the UX review, #104 and #107 to #113). Thirty-nine figures
+ * rendered at one identical weight is a page of no figures: "definitions
+ * verified" looked exactly like "quote slots". So counts and their shares merged
+ * onto one row, a handful of rows carry the page's story in one step of larger
+ * type, and figures that serve only the team were cut or demoted. The command
+ * keeps all of them, because its reader is the Operator. The invariant is now
+ * that the page's labels are a **subset** of the command's, with identical
+ * wording wherever both print a figure — not the equality it used to be.
  */
 
 /** A duration, in the same words in both places that print one. */
@@ -73,17 +83,32 @@ type Fmt = (v: number | null) => string | null;
  * nothing in this system holds the number, and something like **"no edges"**
  * means the population is empty. Neither is ever printed as 0, and neither is
  * ever left blank, because a blank reads as a zero.
+ *
+ * `share` is the same figure as a proportion, printed beside the count instead
+ * of on a row of its own (issue #107). The two carry **different** absent words
+ * and both are required for the same reason as above: a count can be missing
+ * because nothing recorded it while its share is missing because the population
+ * it would divide by is empty, and one pair of words cannot say both.
+ *
+ * `lead` is weight and nothing else: one step of type size, so that the figures
+ * carrying the page's story are not identical to the page's bookkeeping. It is
+ * never a colour, a badge or a mark of quality, because those are thresholds
+ * however they are spelled.
  */
 function Figure({
-  label, value, counts, moves, absent, others,
+  label, value, counts, moves, absent, others, share, lead,
 }: {
   label: string;
   value: string | null;
   counts: string;
   moves: string;
   absent: string;
-  others: { concept: string; value: string | null }[];
+  others: { concept: string; value: string | null; share?: string | null }[];
+  share?: { value: string | null; absent: string };
+  lead?: boolean;
 }) {
+  const shown = (o: { value: string | null; share?: string | null }) =>
+    `${o.value ?? absent}${share ? ` (${o.share ?? share.absent})` : ""}`;
   return (
     <div style={{ padding: ".85rem 0", borderTop: "1px solid var(--line-soft)" }}>
       <div style={{ display: "flex", gap: "1rem", alignItems: "baseline", flexWrap: "wrap" }}>
@@ -93,12 +118,24 @@ function Figure({
         }}>
           {label}
         </span>
-        <span style={{
-          fontFamily: "var(--font-mono)", fontSize: "1.15rem",
-          color: value === null ? "var(--ink-soft)" : "var(--ink)",
-          fontStyle: value === null ? "italic" : "normal",
-        }}>
-          {value ?? absent}
+        <span style={{ display: "inline-flex", alignItems: "baseline", gap: ".45rem",
+          flexWrap: "wrap" }}>
+          <span style={{
+            fontFamily: "var(--font-mono)", fontSize: lead ? "1.15rem" : ".95rem",
+            color: value === null ? "var(--ink-soft)" : "var(--ink)",
+            fontStyle: value === null ? "italic" : "normal",
+          }}>
+            {value ?? absent}
+          </span>
+          {share && (
+            <span style={{
+              fontFamily: "var(--font-mono)", fontSize: lead ? ".92rem" : ".82rem",
+              color: "var(--ink-soft)",
+              fontStyle: share.value === null ? "italic" : "normal",
+            }}>
+              ({share.value ?? share.absent})
+            </span>
+          )}
         </span>
       </div>
       <p style={{
@@ -116,7 +153,7 @@ function Figure({
           {others.map((o, i) => (
             <span key={o.concept}>
               {i > 0 && " · "}
-              {o.concept} {o.value ?? absent}
+              {o.concept} {shown(o)}
             </span>
           ))}
         </p>
@@ -159,6 +196,11 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
    *  is the number of rows the view returned. */
   const others = (pick: (m: MapReport) => number | null, fmt: Fmt) =>
     rest.map((m) => ({ concept: m.concept, value: fmt(pick(m)) }));
+
+  /** The same, for a row that prints a count and its share together (#107). */
+  const othersPair = (pick: (m: MapReport) => number | null,
+                      pickShare: (m: MapReport) => number | null) =>
+    rest.map((m) => ({ concept: m.concept, value: count(pick(m)), share: share(pickShare(m)) }));
 
   const defBuckets = r.buckets.filter((b) => b.unit === "definition");
   const edgeBuckets = r.buckets.filter((b) => b.unit === "edge");
@@ -268,14 +310,14 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               size of the corpus."
       >
         <Figure
-          label="papers with a reading"
+          label="papers with a reading" lead
           value={count(r.papers_with_a_reading)} absent="not recorded"
           counts="Papers this map holds an extracted reading for, whether or not that reading found a definition."
           moves="Reading more papers moves it; so does a paper whose text could not be fetched or extracted, which never appears here at all."
           others={others((m) => m.papers_with_a_reading, count)}
         />
         <Figure
-          label="papers that define the term"
+          label="papers that define the term" lead
           value={count(r.papers_defining)} absent="not recorded"
           counts="Of those, the ones whose reading found a definition of this term. This is the denominator of every definition figure below."
           moves="A re-read that changes a paper's verdict moves it, in either direction."
@@ -299,18 +341,12 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               text as it now stands)."
       >
         <Figure
-          label="definitions verified"
+          label="definitions verified" lead
           value={count(r.definitions_verified)} absent="not recorded"
-          counts="Definition quotes found verbatim in that paper's own extracted text, against the text as it stands now."
-          moves="Re-reading the papers moves it, and so does the text itself changing, which makes a stamp not re-checked until the check is run again."
-          others={others((m) => m.definitions_verified, count)}
-        />
-        <Figure
-          label="definitions verified, as a share"
-          value={share(r.definitions_verified_share)} absent="no papers define the term"
-          counts="The same count over the papers that define the term."
-          moves="Anything that moves either number. It is absent rather than 0% when no paper defines the term, because a share of nothing is not zero."
-          others={others((m) => m.definitions_verified_share, share)}
+          share={{ value: share(r.definitions_verified_share), absent: "no papers define the term" }}
+          counts="Definition quotes found verbatim in that paper's own extracted text, against the text as it stands now, with the share of the papers that define the term beside it."
+          moves="Re-reading the papers moves it, and so does the text itself changing, which makes a stamp not re-checked until the check is run again. The share reads absent rather than 0% when no paper defines the term, because a share of nothing is not zero."
+          others={othersPair((m) => m.definitions_verified, (m) => m.definitions_verified_share)}
         />
         <Figure
           label="definitions inferred"
@@ -334,18 +370,12 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           others={others((m) => m.edges_total, count)}
         />
         <Figure
-          label="relationships verified"
+          label="relationships verified" lead
           value={count(r.edges_verified)} absent="not recorded"
-          counts="Relationships where both quotes are string-matched against their papers' current text. Both sides, not one: half a checked relationship is not a checked relationship."
-          moves="The same re-check. This counts relationships, not quotes, and many relationships rest on the same quote."
-          others={others((m) => m.edges_verified, count)}
-        />
-        <Figure
-          label="relationships verified, as a share"
-          value={share(r.edges_verified_share)} absent="no relationships"
-          counts="The same count over every relationship in the map."
-          moves="Anything that moves either number. It is absent rather than 0% on a map with no relationships."
-          others={others((m) => m.edges_verified_share, share)}
+          share={{ value: share(r.edges_verified_share), absent: "no relationships" }}
+          counts="Relationships where both quotes are string-matched against their papers' current text, with the share of every relationship in the map beside it. Both sides, not one: half a checked relationship is not a checked relationship."
+          moves="The same re-check. This counts relationships, not quotes, and many relationships rest on the same quote. The share reads absent rather than 0% on a map with no relationships."
+          others={othersPair((m) => m.edges_verified, (m) => m.edges_verified_share)}
         />
         <Figure
           label="relationships inferred"
@@ -461,7 +491,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               grouping is a judgement, and so is the direction of a relationship."
       >
         <Figure
-          label="meanings"
+          label="meanings" lead
           value={count(r.nodes_total)} absent="not recorded"
           counts="Groups of papers this map treats as holding one meaning of the term."
           moves="Re-running the grouping, and every split, merge or delete in the workbench."
@@ -477,16 +507,10 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <Figure
           label="meanings holding one paper"
           value={count(r.nodes_with_one_member)} absent="not recorded"
-          counts="Meanings with a single paper in them."
-          moves="Re-running the grouping, and merging two meanings by hand."
-          others={others((m) => m.nodes_with_one_member, count)}
-        />
-        <Figure
-          label="meanings holding one paper, as a share"
-          value={share(r.nodes_with_one_member_share)} absent="no meanings"
-          counts="The same count over every meaning in the map."
-          moves="Anything that moves either number."
-          others={others((m) => m.nodes_with_one_member_share, share)}
+          share={{ value: share(r.nodes_with_one_member_share), absent: "no meanings" }}
+          counts="Meanings with a single paper in them, with the share of every meaning in the map beside it."
+          moves="Re-running the grouping, and merging two meanings by hand. The share reads absent rather than 0% on a map with no meanings."
+          others={othersPair((m) => m.nodes_with_one_member, (m) => m.nodes_with_one_member_share)}
         />
         <Figure
           label="meanings with no link to another meaning"
@@ -503,18 +527,12 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           others={others((m) => m.largest_node_members, count)}
         />
         <Figure
-          label="relationships touching the largest meaning"
+          label="relationships touching the largest meaning" lead
           value={count(r.largest_node_edges)} absent="not recorded"
-          counts="Relationships with the largest meaning at either end."
-          moves="The same things, plus anything that changes which relationships exist."
-          others={others((m) => m.largest_node_edges, count)}
-        />
-        <Figure
-          label="relationships touching the largest meaning, as a share"
-          value={share(r.largest_node_edges_share)} absent="no relationships"
-          counts="The same count over every relationship in the map. It says how much of the map hangs off one group."
-          moves="Anything that moves either number."
-          others={others((m) => m.largest_node_edges_share, share)}
+          share={{ value: share(r.largest_node_edges_share), absent: "no relationships" }}
+          counts="Relationships with the largest meaning at either end, with the share of every relationship in the map beside it. It says how much of the map hangs off one group."
+          moves="The same things, plus anything that changes which relationships exist. The share reads absent rather than 0% on a map with no relationships."
+          others={othersPair((m) => m.largest_node_edges, (m) => m.largest_node_edges_share)}
         />
         <Figure
           label="pairs of meanings that are linked"
@@ -533,16 +551,10 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <Figure
           label="relationships on those pairs"
           value={count(r.edges_on_disagreeing_pairs)} absent="not recorded"
-          counts="How many relationships sit on a pair that carries more than one kind of link. Read beside the count above: a few large pairs and many small ones are different findings."
-          moves="The same things."
-          others={others((m) => m.edges_on_disagreeing_pairs, count)}
-        />
-        <Figure
-          label="relationships on those pairs, as a share"
-          value={share(r.edges_on_disagreeing_pairs_share)} absent="no relationships"
-          counts="The same count over every relationship in the map."
-          moves="Anything that moves either number."
-          others={others((m) => m.edges_on_disagreeing_pairs_share, share)}
+          share={{ value: share(r.edges_on_disagreeing_pairs_share), absent: "no relationships" }}
+          counts="How many relationships sit on a pair that carries more than one kind of link, with the share of every relationship in the map beside it. Read beside the count above: a few large pairs and many small ones are different findings."
+          moves="The same things. The share reads absent rather than 0% on a map with no relationships."
+          others={othersPair((m) => m.edges_on_disagreeing_pairs, (m) => m.edges_on_disagreeing_pairs_share)}
         />
         <Figure
           label="relationships inside one meaning"
@@ -642,7 +654,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           others={others((m) => m.runs_recorded, count)}
         />
         <Figure
-          label="time the run took"
+          label="time the run took" lead
           value={r.run_wall_clock === null ? null : duration(r.run_wall_clock)}
           absent="not recorded"
           counts="From the run starting to the run finishing, for the most recent completed run."
