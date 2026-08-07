@@ -637,6 +637,18 @@ was a back-link in whatever corner each page happened to use.
   "kernel") renders as separate families under a disclosure banner, with
   citation-isolated meanings pulled into an "Unconnected meanings" section. A
   single-family map renders flat and unchanged.
+  **The page's banner and the door into it are scoped to the viewer** (issue
+  #118). The banner said "Evidence & workbench" and the front door's card
+  promised "the curation tools" to everyone, while every one of those tools is
+  behind `canEdit = isOwner(await getViewer())`. A reader told there are tools
+  and finds none concludes "broken" or "oversold", not "owner-only". The banner
+  now reads "Evidence" and the door "The evidence → every typed relationship and
+  the proof behind each" unless the viewer is the owner, in which case both say
+  what they always did. `/g/[id]` calls `getViewer` for this and for nothing
+  else; the tools stay gated where they were, inside the page and inside every
+  action. **The underlying tension is unresolved and is the owner's**: product
+  rule 3 says users can split, merge, rename and reclassify, and today only the
+  owner can. The copy is now true either way, which is what stopped it waiting.
   **A relationship row keeps the stamp and the confidence apart** (issue #117).
   It read "● verified · 0.87": a mechanical result and the model's confidence in
   its own classification, sharing a line, a font and a separator dot, with the

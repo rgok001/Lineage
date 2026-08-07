@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { getViewer, isOwner } from "../../../lib/authz";
 import { getInfluenceMap } from "../../../lib/genealogy";
 import InfluenceMap from "./InfluenceMap";
 
@@ -7,8 +8,12 @@ export const dynamic = "force-dynamic";
 
 export default async function GenealogyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const data = await getInfluenceMap(Number(id));
+  const [data, viewer] = await Promise.all([getInfluenceMap(Number(id)), getViewer()]);
   if (!data) redirect(`/g/${id}/evidence`); // maps without a generated river fall back to the evidence view
+  // Only to decide what the evidence door may promise (issue #118). The
+  // workbench is gated inside the evidence page and inside every action; this
+  // has no authority over anything and grants nothing.
+  const owner = isOwner(viewer);
 
   const verifiedDrawn = data.edges.filter((e) => e.stamp === "verified").length;
 
@@ -117,14 +122,23 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
         </div>
       </section>
 
+      {/* The door promises what this reader will find behind it (issue #118).
+          It read "the curation tools" to everyone, and the workbench renders for
+          the owner alone: a reader told there are curation tools and finding
+          none concludes "broken" or "oversold", not "owner-only". The deeper
+          tension is real and is not settled here -- product rule 3 says users
+          can edit, and today only the owner can -- but that is the owner's
+          decision to make, and the copy should not stay wrong while it waits. */}
       <Link href={`/g/${id}/evidence`} style={{ display: "flex", alignItems: "center", gap: ".6rem",
         textDecoration: "none", marginTop: "1.5rem", padding: ".65rem .9rem", borderRadius: 8,
         border: "1px dashed var(--line)" }}>
         <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: ".95rem", color: "var(--ink)" }}>
-          The evidence and workbench →
+          {owner ? "The evidence and workbench →" : "The evidence →"}
         </span>
         <span style={{ fontSize: ".8rem", color: "var(--ink-soft)", marginLeft: "auto" }}>
-          every typed relationship, the proof, and the curation tools
+          {owner
+            ? "every typed relationship, the proof, and your curation tools"
+            : "every typed relationship and the proof behind each"}
         </span>
       </Link>
 

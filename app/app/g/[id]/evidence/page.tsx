@@ -54,8 +54,13 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
       </div>
 
       <header style={{ borderBottom: "2px solid var(--line)", padding: "1rem 0 1.1rem", marginBottom: "1.5rem" }}>
+        {/* "Evidence & workbench" named a room half of it does not have (issue
+            #118): the reclassify controls, the delete and the danger zone are
+            all behind canEdit. The banner now says what this reader gets. */}
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", letterSpacing: ".14em",
-          textTransform: "uppercase", color: "var(--ink-soft)" }}>Evidence &amp; workbench</div>
+          textTransform: "uppercase", color: "var(--ink-soft)" }}>
+          {canEdit ? "Evidence & workbench" : "Evidence"}
+        </div>
         <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.9rem", margin: ".4rem 0 0" }}>
           “{g.concept}” · the papers and their links
         </h1>
