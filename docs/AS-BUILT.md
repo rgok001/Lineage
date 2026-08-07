@@ -754,9 +754,15 @@ was a back-link in whatever corner each page happened to use.
   says a stranger should see what a map cost, this file's copy rules say no cost
   talk aimed at visitors, and the two cannot both hold — the cost figure renders
   for the owner only and every other figure renders for everyone.
-  `/g/[id]` links to it from the footer beside the curation line and shows no
-  report figures itself, because that header's "X of Y links quote-verified"
-  counts only the links drawn on the canvas and is a narrower population.
+  `/g/[id]` links to it from a full-width row beside the evidence and export
+  rows and shows no report figures itself, because that header's badge counts
+  only the links drawn on the canvas and is a narrower population. **That row's
+  subtitle promises only what every reader receives** (issue #112): it read "what
+  is verified, what it rests on, what the run cost", and the cost figure renders
+  for the owner alone and says "not recorded" even for them on a map built from
+  the command line. A door that promises what the room does not hold spends the
+  trust the product exists to earn, so while the cost figure is owner-only no
+  public copy advertises it.
 - `/about` : the public methods page, written for a researcher deciding whether
   to rely on this. What a map is, how one is built, how papers are ranked (and
   why ranking on uptake alone hides the papers that moved a term), the six link

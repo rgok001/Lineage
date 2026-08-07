@@ -102,8 +102,13 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
         <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: ".95rem", color: "var(--ink)" }}>
           What this map is made of →
         </span>
+        {/* Promises what every reader is actually given (issue #112). This said
+            "what the run cost", which renders for the owner alone and reads "not
+            recorded" even for them on a map built from the command line: a door
+            offering three things where one reader in a hundred receives three.
+            If the cost figure stays owner-only, no public copy advertises it. */}
         <span style={{ fontSize: ".8rem", color: "var(--ink-soft)", marginLeft: "auto" }}>
-          its own account, figure by figure: what is verified, what it rests on, what the run cost
+          its own account, figure by figure: what was read, what is verified, and what rests on this tool’s reading
         </span>
       </Link>
 
