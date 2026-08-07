@@ -222,15 +222,35 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const n = all.length;
   const maps = (k: number) => `${k} of the ${n} maps in this system`;
 
-  // What the per-source table is about to show, counted from its own rows. The
-  // labels are read out rather than named, because the label is measured from
-  // the paper row and F7 is what makes a second one appear.
+  /**
+   * What the per-source table is about to show, counted from its own rows. The
+   * labels are read out rather than named, because the label is measured from
+   * the paper row and F7 is what makes a second one appear.
+   *
+   * **The table renders only when the rows carry more than one label** (issue
+   * #109), which is exactly the moment it starts saying something. Until then it
+   * is a six-column restatement of the Evidence totals split by nothing a reader
+   * can see, followed by a lede explaining that it exists for a source that has
+   * not arrived. It collapses to one sentence in Evidence instead. The view and
+   * the command keep the per-source grain either way, so nothing is lost and F7
+   * still changes this table visibly rather than changing one number quietly.
+   *
+   * **This makes #98 the thing that reveals the table.** A map holding an edge
+   * whose paper row is missing gets a second bucket labelled "arxiv + no paper
+   * row", which is a data-integrity artefact and not a source, and it trips this
+   * condition. That is the wrong trigger and #98 is where it is fixed: the
+   * label-counting has to separate a source from an integrity bucket. Rendered
+   * here rather than suppressed, because a table that appears is at least
+   * visible, where a condition that silently swallowed the artefact would hide
+   * it.
+   */
   const sourceLabels = Array.from(new Set(r.buckets.map((b) => b.source)));
+  const splitBySource = sourceLabels.length > 1;
   const sourceSentence =
     sourceLabels.length === 0
-      ? "This map holds nothing to split."
+      ? "This map holds no definitions and no relationships, so there is nothing to split by source."
       : sourceLabels.length === 1
-        ? `Every row of this map’s table carries the same label, “${sourceLabels[0]}”.`
+        ? `Every paper in this map came from the same place, “${sourceLabels[0]}”. When a second source is added, these figures will be split by source here.`
         : `This map’s rows carry ${sourceLabels.length} different labels.`;
 
   const selfEdgeMaps = all.filter((m) => m.edges_within_one_node > 0).length;
@@ -391,15 +411,24 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           moves="Re-running the free check. This can read as the whole map immediately after the records were introduced, which is honest rather than broken."
           others={others((m) => m.edges_stale, count)}
         />
+        {/* Where the six-column table used to stand while it split by nothing
+            (issue #109). Derived from the map's own rows, never a named source:
+            what makes a second label appear is F7, and a sentence this page
+            cannot recompute does not ship on it (issue #89). */}
+        {!splitBySource && (
+          <p style={{ ...prose, fontSize: ".9rem", margin: "1rem 0 0" }}>
+            {sourceSentence}
+          </p>
+        )}
       </Section>
 
+      {splitBySource && (
       <Section
         title="By source"
-        lede={`The same counts, split by where each paper came from. The split exists
-              so that adding a source later changes this table visibly instead of
-              changing one number quietly. A relationship is grouped by the pair of
-              its two ends, so every relationship lands in exactly one row and the
-              rows add up to the totals above. ${sourceSentence}`}
+        lede={`The same counts, split by where each paper came from. A relationship is
+              grouped by the pair of its two ends, so every relationship lands in
+              exactly one row and the rows add up to the totals above.
+              ${sourceSentence}`}
       >
         <table style={{ ...mono, fontSize: ".78rem", borderCollapse: "collapse",
           width: "100%", marginTop: ".6rem" }}>
@@ -426,17 +455,10 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 </tr>
               )),
             )}
-            {r.buckets.length === 0 && (
-              <tr>
-                <td colSpan={6} style={{ padding: ".5rem .6rem", color: "var(--ink-soft)",
-                  fontStyle: "italic" }}>
-                  nothing to split: this map holds no definitions and no relationships
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
       </Section>
+      )}
 
       <Section
         title="Shape"

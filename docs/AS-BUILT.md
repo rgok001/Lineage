@@ -641,6 +641,20 @@ was a back-link in whatever corner each page happened to use.
   holding no text") are gone from the page and what they established is prose in
   the section's lede; the command still prints both, and their counting defects
   are #88 and are untouched by this.
+  **The By source table renders only when the rows carry more than one label**
+  (issue #109). While there is one source, the six-column table restated the
+  Evidence totals split by nothing a reader can see, under a lede explaining
+  that it exists so a future source changes it visibly. It is one sentence in
+  Evidence instead ("Every paper in this map came from the same place,
+  <label>. When a second source is added, these figures will be split by
+  source here"), with the label read out of the map's own rows rather than
+  named. The view, `map_report_by_source` and the command keep the per-source
+  grain regardless. **The known wrong trigger is #98**: an edge whose paper row
+  is missing produces a bucket labelled `arxiv + no paper row`, which is an
+  integrity artefact rather than a source, and it makes the table appear. That
+  is where the label counting gets separated from the integrity buckets; the
+  table is allowed to appear meanwhile, because a condition that swallowed the
+  artefact would hide it instead.
   **The page opens with one paragraph, not three**
   (issue #106, the UX review of #104): roughly 170 words of what the page is not
   stood between the reader and the first number. The lede now carries the story
