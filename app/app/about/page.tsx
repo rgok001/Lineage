@@ -49,24 +49,34 @@ export default function AboutPage() {
       </Section>
 
       <Section title="How a map is built">
-        <Step n={1} name="Select a corpus.">
-          Starting from your term and its field, candidate papers come from OpenAlex, scoped to the
-          discipline you chose. Candidates are ranked by embedding similarity to the term, keeping
-          the top N rather than applying a similarity cutoff, because a fixed cutoff removes
-          foundational papers: “Attention Is All You Need” scores only 0.567 against the query
-          “attention” and a 0.62 threshold once deleted it. The corpus is then expanded one hop
-          through the citation graph, and that expansion is deliberately <em>not</em> filtered by
-          similarity, because ancestors do not use their descendants’ vocabulary. Bahdanau’s 2014
+        {/* "Corpus" is introduced here, once, and then it is a word the reader
+            owns for the rest of the page (issue #125). It was used eleven times
+            and never explained, starting with this heading, and it carries the
+            whole method. This page is the one place in the app where keeping it
+            is right, because the researcher reading it will meet the word again
+            in their own field; everywhere else it is simply removed. */}
+        <Step n={1} name="Choose the papers.">
+          Starting from your term and its field, a list of candidate papers (the corpus) comes from
+          OpenAlex, scoped to the
+          discipline you chose. Candidates are ranked by how close each paper is to the term in
+          meaning, and a fixed number of the closest are kept. A cut-off score is deliberately not
+          used, because it deletes foundational papers: “Attention Is All You Need” scores only
+          0.567 for closeness to the word “attention”, and a cut-off of 0.62 once removed it from
+          the map entirely. The list is then widened by one step, to the papers those papers cite
+          and the papers that cite them. That step is deliberately <em>not</em> filtered for
+          closeness to the term, because ancestors do not use their descendants’ vocabulary.
+          Bahdanau’s 2014
           paper, the origin of neural attention, never says “attention”; it says “align”. It can only
-          enter through citations. Everything is metadata-only at this stage: nothing is downloaded
-          and nothing is paid for until the corpus is fixed.
+          enter through citations. At this stage only titles, authors, dates and citations are used.
+          No paper is downloaded and nothing is paid for until the list of papers is settled.
         </Step>
         <Step n={2} name="Fetch and extract full text.">
           Papers are fetched from arXiv, LaTeX source preferred over PDF because LaTeX extracts
           cleanly and PDFs do not. Extraction is checked against the paper’s claimed title, because
           metadata sources sometimes attach the wrong identifier to a work: two well-known models in
-          our own corpus carried titles belonging to different papers. Anything below the match
-          threshold is dropped rather than silently mis-attributed.
+          our own corpus carried titles belonging to different papers. If the text we get back does
+          not match the title we expected closely enough, the paper is dropped rather than quietly
+          filed under the wrong name.
         </Step>
         <Step n={3} name="Read every paper for its own definition.">
           A language model reads each paper’s full text and answers one question: does this paper give
@@ -79,8 +89,8 @@ export default function AboutPage() {
           The corpus is read as a whole to identify the distinct lines of development the term
           followed, grouped by what the papers say rather than by who cites whom. Two papers can
           define a term identically without ever citing each other, and a citation can cross between
-          threads; grouping by citation topology would produce a graph-theoretic artifact rather
-          than a conceptual one.
+          threads. Grouping by who cites whom would draw a picture of the citation network, not a
+          picture of the idea.
         </Step>
         <Step n={5} name="Type the links between papers.">
           Where one corpus paper cites another, the sentence containing that citation is retrieved from
@@ -112,7 +122,7 @@ export default function AboutPage() {
         </P>
         <P>
           <strong>Displacement</strong> marks turning points: how far a paper’s definition sits from
-          the centroid of every definition before it. The two measures are close to uncorrelated in
+          the average of every definition that came before it. The two measures are close to uncorrelated in
           practice, which is the point. The most-built-on paper usually consolidates a settled
           meaning; the paper that moved a term furthest is often lightly cited within the corpus,
           because the field it moved into is a different literature. Ranking on uptake alone would
@@ -197,11 +207,13 @@ export default function AboutPage() {
           <li>
             <strong>The reading is a model’s.</strong> Link types, threads and contributions are
             generated. They are grounded in quoted evidence and shown beside it, but they are not
-            peer review, and the confidence scores are calibrated judgment rather than measurement.
+            peer review, and a confidence score is the model’s own estimate of how sure it is, not a
+            measurement of anything.
           </li>
           <li>
-            <strong>It is a draft until a human touches it.</strong> Anything not yet curated is raw
-            pipeline output. The audit trail on each map records what a person changed and when, so
+            <strong>It is a draft until a person checks it.</strong> Anything nobody has been
+            through by hand is exactly what the machine produced, unedited. The audit trail on each
+            map records what a person changed and when, so
             you can see how much human judgment a given map has had.
           </li>
         </ul>
@@ -243,8 +255,8 @@ export default function AboutPage() {
           Anyone signed in can{" "}
           <Link href="/trace" style={{ color: "var(--edge-extends)" }}>request a term</Link>. Reading a
           corpus costs real money in model usage, so requests are reviewed before they run. Approved
-          runs report progress live: which paper is being read, what each stage found, and what the run
-          has cost. A 150-paper corpus takes about fifteen minutes.
+          runs report progress as they go: which paper is being read, what each step found, and what
+          the run has cost so far. A 150-paper corpus takes about fifteen minutes.
         </P>
       </Section>
     </main>

@@ -886,6 +886,28 @@ was a back-link in whatever corner each page happened to use.
   cannot drift), "What you can and cannot rely on" separating verified quotes
   from sourced-but-unverified text from machine judgment, "Limitations and
   scope", draft-then-judgment, and reproducibility.
+  **Machinery is the subject here, so the test applied is narrower than
+  elsewhere**: not "does a sentence mention a mechanism", but "does it name one
+  the reader has not been introduced to, or need two reads" (issue #125). Ten
+  failed it. "Keeping the top N rather than applying a similarity cutoff" is now
+  "a fixed number of the closest are kept" and "a cut-off score is deliberately
+  not used"; "grouping by citation topology would produce a graph-theoretic
+  artifact" is "grouping by who cites whom would draw a picture of the citation
+  network, not a picture of the idea"; "the centroid of every definition before
+  it" is "the average"; "expanded one hop through the citation graph" is
+  "widened by one step, to the papers those papers cite and the papers that cite
+  them"; "anything below the match threshold" names the title check it is
+  actually about; "raw pipeline output" is "exactly what the machine produced,
+  unedited"; "calibrated judgment rather than measurement" is "the model's own
+  estimate of how sure it is, not a measurement of anything". No claim is
+  weakened and no guarantee widened by any of them.
+  **"Corpus" is introduced once and then owned by the reader.** It was used
+  eleven times and never explained, starting with the heading of step 1, and it
+  carries the whole method. Step 1 is now "Choose the papers" and its first
+  sentence reads "a list of candidate papers (the corpus)". This page is the one
+  place in the app where keeping the word is right, because the researcher
+  reading it will meet it again in their own field; everywhere else it is
+  removed rather than glossed.
 - `/roadmap` : built / working on next / under consideration / not planned,
   so a researcher can judge whether the gap between this and what they need is
   likely to close. "Not planned" is load-bearing: not a recommender, not a
