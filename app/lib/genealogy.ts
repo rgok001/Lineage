@@ -417,39 +417,39 @@ export const EDGE_MEANING: Record<string, string> = {
  *  instead of a second one in a query. `jsonb_array_length` used to stand here
  *  and it counted incident 12's restore as somebody's editorial work.
  *
- *  `verified_count` and `stale_count` are `stampOf`'s rule in SQL, and this is
- *  the only place it is written a third time. It is here rather than in
- *  TypeScript because these are one aggregate per map on the front page, and
- *  resolving them in TypeScript would mean fetching every edge of every map to
- *  count them. The predicate is exactly "digest present and equal", which is
- *  `stampOf`'s first line; if that line ever moves it moves here and in
- *  `pipeline/common.py` too. The home page said "287 verified quotes" about
- *  stamps nobody could re-check, which is the sentence migration 015 exists to
- *  stop. The noun was wrong too, and for longer: this counts edges, and the page
- *  now says "verified relationships" (issue #73).
+ *  `verified_count` and `stale_count` are `stampOf`'s rule in SQL, and they used
+ *  to be written out here as two subqueries — the third implementation of a
+ *  three-line rule, and the one that disagreed with the other two on an
+ *  empty-string digest and put a wrong number on the front page (issue #60).
+ *  **They now come from `map_report`** (migration 016, issue #30): the rule's SQL
+ *  form is one `CASE` producing one label per row, in one place, and this page and
+ *  `pipeline/map_report.py` read that one expression instead of two. The count of
+ *  implementations is unchanged at three — `stamp_state` in `pipeline/common.py`,
+ *  `stampOf` in `app/lib/stamp.ts`, and the view — which is the whole argument
+ *  for a view: two surfaces that must agree now read one expression.
  *
- *  The `<> ''` and `COALESCE(..., '') = ''` tests are not decoration (issue #60).
- *  `IS NOT NULL` alone let a pair of empty strings satisfy `'' = ''` and counted
- *  the edge **verified**, where both `stamp_state` and `stampOf` treat `""` as
- *  falsy and return stale. Nothing writes an empty digest today — `text_digest`
- *  only ever returns `sha256:<64 hex>` — so this was latent, and the polarity was
- *  wrong in the one copy where the answer is a number on the front page.
+ *  It stays in SQL rather than moving to TypeScript because these are one
+ *  aggregate per map on the front page, and resolving them here would mean
+ *  fetching every edge of every map to count them.
  *
- *  **LEFT JOIN, so all three counts range over the same edges** (issue #60, the
- *  residue). `edge_count` joins nothing while these two INNER JOINed `papers`,
- *  and `edges.source_paper_id` / `target_paper_id` are nullable
- *  (`001_init.sql:61-62`), so an edge with no paper row was counted in
- *  `edge_count` and in neither of the others: the card said "N relationships" and
- *  then described fewer than N of them, with the difference nowhere. Excluding a
- *  row in the JOIN rather than in the predicate also decides the question
- *  silently, and it decided it the one way that is not available — an edge whose
- *  paper is missing is certainly not verified, but it is also not nothing.
- *  A LEFT JOIN gives `sp.extracted_text_digest = NULL`, which is exactly what
- *  `stamp_state` and `stampOf` are handed for a paper with no digest, and both
- *  return stale; so the missing row now counts as not-re-checked in all three
- *  copies of the rule instead of vanishing from one. Latent today for the same
- *  reason as the empty digest: Stage D writes ids it has just looked up and
- *  `restore_genealogy.py` refuses an edge whose paper is missing. */
+ *  Everything the old subqueries were careful about is carried by the view and
+ *  is commented there: the `COALESCE(..., '') = ''` tests that stop a pair of
+ *  empty digests satisfying `'' = ''` and reading verified (#60), and the two
+ *  `LEFT JOIN`s to `papers` that stop the join deciding whether an edge exists,
+ *  so that a missing paper row counts as not-re-checked here exactly as it
+ *  resolves stale on the page this card links to (#60's residue, then #79, #83).
+ *
+ *  `paper_count` and `edge_count` are deliberately still counted here. The view
+ *  publishes `papers_defining` and `edges_total` and they must equal these; that
+ *  equality is a check the report is meant to be able to fail, and taking all
+ *  four numbers from one expression would make it true by construction and
+ *  therefore worth nothing.
+ *
+ *  LEFT JOIN to the view, not JOIN. Every genealogies row has a `map_report` row
+ *  because the view selects `FROM genealogies` and joins everything else outward,
+ *  so this changes no result today; it is written this way because a JOIN here
+ *  would be the join deciding whether a map appears on the front page, which is
+ *  the fault this file has now paid for three times. */
 export async function listGenealogies() {
   const rows = (await sql`
     SELECT g.id, g.concept, g.prompt_version, g.status, g.updated_at,
@@ -460,24 +460,10 @@ export async function listGenealogies() {
              WHERE d.concept = g.concept AND d.prompt_version = g.prompt_version
                AND d.defines_concept = true)                                             AS paper_count,
            (SELECT count(*) FROM edges e WHERE e.genealogy_id = g.id)                    AS edge_count,
-           (SELECT count(*) FROM edges e
-              LEFT JOIN papers sp ON sp.id = e.source_paper_id
-              LEFT JOIN papers tp ON tp.id = e.target_paper_id
-             WHERE e.genealogy_id = g.id AND e.verified
-               AND e.source_text_digest <> '' AND e.target_text_digest <> ''
-               AND e.source_text_digest = sp.extracted_text_digest
-               AND e.target_text_digest = tp.extracted_text_digest)                      AS verified_count,
-           (SELECT count(*) FROM edges e
-              LEFT JOIN papers sp ON sp.id = e.source_paper_id
-              LEFT JOIN papers tp ON tp.id = e.target_paper_id
-             WHERE e.genealogy_id = g.id
-               AND (COALESCE(e.source_text_digest, '') = ''
-                    OR COALESCE(sp.extracted_text_digest, '') = ''
-                    OR e.source_text_digest IS DISTINCT FROM sp.extracted_text_digest
-                    OR COALESCE(e.target_text_digest, '') = ''
-                    OR COALESCE(tp.extracted_text_digest, '') = ''
-                    OR e.target_text_digest IS DISTINCT FROM tp.extracted_text_digest)) AS stale_count
+           r.edges_verified                                                              AS verified_count,
+           r.edges_stale                                                                 AS stale_count
     FROM genealogies g
+    LEFT JOIN map_report r ON r.genealogy_id = g.id
     ORDER BY g.updated_at DESC
   `) as {
     id: number; concept: string; prompt_version: string; status: string;

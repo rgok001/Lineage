@@ -273,15 +273,26 @@ boolean is true, **inferred** otherwise. Stale dominates the boolean in both
 directions, because a failed check against text that has since changed is no more
 about today's text than a passing one. `edge_stamp_state` / `edgeStampOf` apply
 it to a unit carrying two stamps: either side stale makes the edge stale. A third
-expression of the rule exists in SQL, in `listGenealogies`, and only because the
-home page needs it as an aggregate per map; the three move together, and the SQL
-one tests `<> ''` as well as NULL because `'' = ''` otherwise counted an edge
-verified where both languages say stale (issue #60). Its two subqueries
-`LEFT JOIN papers` rather than joining it, so that they range over the same edges
-`edge_count` does: `edges.source_paper_id` is nullable, an inner join dropped
-such an edge from both state counts while the card still counted it a
+expression of the rule exists in SQL, **in migration 016's
+`map_report_by_source` since issue #30**, and only because the home page needs it
+as an aggregate per map; the three move together. It was two subqueries inside
+`listGenealogies`, which now selects `edges_verified` and `edges_stale` from
+`map_report` instead, so the app and `pipeline/map_report.py` read one expression
+rather than two — the count of implementations is unchanged at three, which was
+the condition for building the view at all. The SQL form is **one `CASE`
+producing one label per row**, not three predicates, so the three states are
+disjoint and sum to the edge count by construction; Stage E's `stats` block did
+it the other way and its counts summed to more than the edge count (issue #59).
+It tests `COALESCE(..., '') = ''` as well as NULL because `'' = ''` otherwise
+counted an edge verified where both languages say stale (issue #60), and it
+`LEFT JOIN`s `papers` rather than joining it, so that it ranges over the same
+edges `edge_count` does: `edges.source_paper_id` is nullable, an inner join
+dropped such an edge from both state counts while the card still counted it a
 relationship, and a missing paper row yields a NULL digest, which is what the
 other two copies of the rule are handed and both call stale (issue #60 again).
+`listGenealogies` still counts `paper_count` and `edge_count` itself rather than
+taking them from the view, so that "the report and the card agree about the size
+of a map" stays a check that can fail instead of an identity.
 **The queries that fetch an edge's papers LEFT JOIN them, for the same reason**
 (issue #79): `listGenealogies` was the only one that did for one commit, so the
 home card counted an edge with a missing paper row and `getGenealogy` dropped it,
