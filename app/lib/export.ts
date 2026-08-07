@@ -79,7 +79,12 @@ const slug = (s: string) =>
 export function curationNote(edits: unknown): string {
   const curated = curatorialEdits(edits);
   if (!curated.length) return "";
-  const head = `> ${curated.length} workbench edit(s) applied`;
+  // "(s)" is the machine's plural and "workbench" is a word the reader meets
+  // only if they are the owner, in the document that lands in somebody else's
+  // manuscript (issue #130). #120 settled on "changes by hand" for this same
+  // count on the home card; its twin in pipeline/export_related_work.py says the
+  // same words, because the two move together or not at all.
+  const head = `> ${curated.length} change${curated.length === 1 ? "" : "s"} by hand applied`;
   const { parts, anyKnown } = actorTally(curated);
   return anyKnown ? `${head}: ${parts.join(", ")}.`
                   : `${head}. No actor is recorded for any of them.`;

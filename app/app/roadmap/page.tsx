@@ -50,7 +50,10 @@ const NEXT: Item[] = [
   { title: "Bring your own corpus",
     body: "Point it at a folder of PDFs or a BibTeX file instead of having it choose papers for you. Finding papers and reading them are already separate steps inside the system, so this is more wiring than invention." },
   { title: "A preview before a run",
-    body: "Showing the candidate papers, the year span and the cost before a map is built, so you can judge the corpus before spending on it." },
+    // The last reader-facing "corpus" outside /about, which #125 confined it to
+    // and #128 missed here (issue #130). The item title "Bring your own corpus"
+    // stays: #128 accepted it as a phrase a researcher knows.
+    body: "Showing the candidate papers, the year span and the cost before a map is built, so you can judge the papers before spending on them." },
 ];
 
 const CONSIDERING: Item[] = [
