@@ -654,14 +654,14 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           label="distinct quote strings"
           value={count(r.distinct_quote_strings)} absent="no quotes"
           counts="How many different passages the relationships actually rest on."
-          moves="Reading more papers, and any change to how a paper's defining passage is chosen."
+          moves="More papers being read, or the system starting to pick a different sentence as a paper's key quote."
           others={others((m) => m.distinct_quote_strings, count)}
         />
         <Figure
           label="distinct papers on relationships"
           value={count(r.distinct_papers_on_edges)} absent="no relationships"
           counts="How many different papers appear at either end of a relationship. Read it beside the line above: the two should be close."
-          moves="The same things. If the distinct quotes fall materially below this, two different papers are carrying the same passage, which is worth knowing."
+          moves="The same things. If there are clearly fewer different quotes than papers here, one quote is standing in for two different papers, which is worth knowing."
           others={others((m) => m.distinct_papers_on_edges, count)}
         />
         <Figure
