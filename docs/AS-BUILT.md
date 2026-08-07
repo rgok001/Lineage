@@ -633,7 +633,14 @@ was a back-link in whatever corner each page happened to use.
   of the reading, evidence (the three stamp states for definitions and for
   relationships), the same counts split by source, quote reuse, shape, corpus
   age with a per-year histogram, the run, and a closing list of the three things
-  the page cannot tell you. **No threshold, no colour scale, no grade, no badge
+  the page cannot tell you. **The page opens with one paragraph, not three**
+  (issue #106, the UX review of #104): roughly 170 words of what the page is not
+  stood between the reader and the first number. The lede now carries the story
+  in three sentences (the two kinds of claim, and which of them is mechanical),
+  keeps "no grade, no colour and no pass mark" as one clause, and the
+  reference-point caveat moved down to sit beside `n=` above the first section,
+  where it applies. Measured on the render harness, the header's prose went from
+  3 paragraphs and 205 words to 1 and 108. **No threshold, no colour scale, no grade, no badge
   and no composite score**, because each of those is a threshold however it is
   spelled; the only colours on the page are the ink, line and card tokens plus
   the one link colour, which is checked rather than asserted. Beside every figure

@@ -222,31 +222,26 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           margin: ".3rem 0 0", letterSpacing: "-.01em" }}>
           “{r.concept}”
         </h1>
+        {/* One paragraph, not three (issue #106). The page opened with roughly
+            170 words of what it is not — not a score, not a baseline, not an
+            expectation — before its first number, so a reader learned it was
+            about liability rather than about their map. Every claim those three
+            paragraphs made is still here: the mechanical check is still
+            described mechanically, the shape is still labelled a reading, the
+            map is still not the history of the term, and the no-score clause
+            still lands before any figure. The reference-point caveat moved
+            down to where it applies, beside n= and above the first section. */}
         <p style={{ ...prose, margin: ".7rem 0 0" }}>
-          This page is an account of one map, counted from that map’s own rows at the
-          moment you loaded it. It says what the map is made of. It does not say
-          whether the map is good, and it is not a score: there is no grade, no
-          colour and no pass mark anywhere on it, because judging a map that way
-          would need a standard nobody here has agreed on.
+          This page says what the “{r.concept}” map is made of, counted from the map
+          itself at the moment you loaded it. Two kinds of claim sit in a map: quotes,
+          which are checked word for word against the text extracted from each paper,
+          and the <em>shape</em> (which papers were grouped together, which
+          relationships exist and which way round they point, which paper matters
+          most), which is this tool’s reading and not the history of the term. The
+          figures below say how much of each this map holds; none of them is a score,
+          and there is no grade, no colour and no pass mark anywhere on the page.
         </p>
-        <p style={{ ...prose, margin: ".7rem 0 0" }}>
-          Two different kinds of claim sit in a map and this page keeps them apart.
-          A quote marked verified has been string-matched against that paper’s own
-          extracted text; that check is mechanical and it either passed or it did
-          not. Everything about the <em>shape</em> is this tool’s reading of the
-          literature: which papers were grouped together, which relationships exist
-          and which way round they point, which paper matters most. A reading
-          is one account among possible ones, so nothing here is the history of the
-          term; it is what this reconstruction contains.
-        </p>
-        <p style={{ ...prose, margin: ".7rem 0 0" }}>
-          Beside each figure is the same figure for every other map in this system,
-          with the sample size. Two or three maps are not a distribution, so those
-          are reference points and not a baseline, an expectation or a typical
-          value.{" "}
-          <span style={mono}>n={n}</span>
-        </p>
-        <p style={{ ...mono, fontSize: ".72rem", color: "var(--ink-faint)", marginTop: ".8rem" }}>
+        <p style={{ ...mono, fontSize: ".72rem", color: "var(--ink-faint)", marginTop: ".9rem" }}>
           <Link href={`/g/${id}`} style={{ color: "var(--edge-extends)" }}>← the map</Link>
           {" · "}
           <Link href={`/g/${id}/evidence`} style={{ color: "var(--edge-extends)" }}>
@@ -254,6 +249,15 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </Link>
         </p>
       </header>
+
+      {/* The reference-point caveat, at the point where it first applies rather
+          than in the header (issue #106), in the words issue #111 asked for. */}
+      <p style={{ ...mono, fontSize: ".72rem", color: "var(--ink-faint)", lineHeight: 1.7,
+        margin: "1.6rem 0 0", maxWidth: "44rem" }}>
+        Beside each figure is the same figure for every other map in this system.
+        With only a few maps to compare against, read those as points of comparison,
+        not as an average or as what a map should show. n={n}
+      </p>
 
       <Section
         title="Coverage of the reading"
