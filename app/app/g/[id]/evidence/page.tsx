@@ -217,9 +217,27 @@ function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear
             {e.edge_type}
           </span>
           <span style={{ fontSize: ".78rem", color: "var(--ink-soft)" }}>{EDGE_MEANING[e.edge_type]}</span>
-          <span style={{ marginLeft: "auto", fontSize: ".78rem", fontFamily: "var(--font-mono)",
-            color: STAMP_COLOR[e.stamp] }}>
-            {e.stamp === "verified" ? "● verified" : STAMP_LABEL[e.stamp]} · {e.confidence.toFixed(2)}
+          {/* The stamp and the judgement, labelled apart (issue #117). This read
+              "● verified · 0.87": a mechanical result and the model's confidence
+              in its own classification, in one font, one line and one separator
+              dot, with the number carrying no label at all. A reader does one of
+              two wrong things with that -- reads 0.87 as the strength of the
+              verification, which makes the stamp look probabilistic when its
+              entire value is that it is not, or reads "verified" as endorsing
+              the link type, which the stamp never checks. The number now names
+              what it is a confidence in, sits on its own line, and is set
+              smaller and fainter than the stamp, because it claims less.
+              #41 [Q4] is the separate question of how many digits it deserves. */}
+          <span style={{ marginLeft: "auto", display: "inline-flex", flexDirection: "column",
+            alignItems: "flex-end", gap: ".12rem" }}>
+            <span style={{ fontSize: ".78rem", fontFamily: "var(--font-mono)",
+              color: STAMP_COLOR[e.stamp] }}>
+              {e.stamp === "verified" ? "● verified" : STAMP_LABEL[e.stamp]}
+            </span>
+            <span style={{ fontSize: ".66rem", fontFamily: "var(--font-mono)",
+              color: "var(--ink-faint)" }}>
+              the tool’s confidence in the link type: {e.confidence.toFixed(2)}
+            </span>
           </span>
         </div>
         <div style={{ marginTop: ".55rem", display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap", fontSize: ".92rem" }}>

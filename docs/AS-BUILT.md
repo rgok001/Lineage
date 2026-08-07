@@ -637,6 +637,14 @@ was a back-link in whatever corner each page happened to use.
   "kernel") renders as separate families under a disclosure banner, with
   citation-isolated meanings pulled into an "Unconnected meanings" section. A
   single-family map renders flat and unchanged.
+  **A relationship row keeps the stamp and the confidence apart** (issue #117).
+  It read "● verified · 0.87": a mechanical result and the model's confidence in
+  its own classification, sharing a line, a font and a separator dot, with the
+  number unlabelled. Either half could be read as the other, and both readings
+  are wrong -- the stamp is not probabilistic, and it says nothing about whether
+  the link type is right. The stamp now stands alone in its state colour, and
+  beneath it, smaller and in `--ink-faint`, "the tool's confidence in the link
+  type: 0.87". How many digits that number deserves is #41 `[Q4]`, still open.
 - `/g/[id]/report` : what this map is made of (issue #30, `[F2]`). One screen,
   one column, no interactivity, every figure selected from migration 016's two
   views by `lib/report.ts` and computed nowhere else, so this page and
