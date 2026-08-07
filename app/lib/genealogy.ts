@@ -248,6 +248,15 @@ export type InfluenceMapData = {
   edges: MapEdge[];
   streams: { id: string; name: string; color: string; count: number }[];
   total_papers: number;
+  /** Every typed relationship in the map, not just the ones the canvas draws.
+   *  The badge needs both counts to name both populations (issue #114): a reader
+   *  went home card 320, front door "39 of 39", evidence 320, with the single
+   *  word "shown" to explain the drop, and the careful reader concluded the map
+   *  had lost 281 relationships. This is the same quantity the evidence page
+   *  prints as "N typed relationships", counted the same way: `getGenealogy`
+   *  selects every edge of the map and its LEFT JOINs cannot multiply a row,
+   *  because `definitions` is UNIQUE on (paper_id, concept, prompt_version). */
+  total_edges: number;
   /** The footer's whole claim, already resolved server-side: how many
    *  CURATORIAL edits this map carries and who by. The footer used to say
    *  "curated by hand" on every map unconditionally, then said "1 curatorial
@@ -342,6 +351,14 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
     source_current_digest: string | null; target_current_digest: string | null;
   })[];
 
+  // Counted, never inferred from what the canvas drew. `COUNT(*)` on the map's
+  // edges is exactly the population the evidence page lists, so the badge's
+  // "the full N are in the evidence" is a promise the next page keeps.
+  const totals = (await sql`
+    SELECT COUNT(*) AS total FROM edges WHERE genealogy_id = ${id}
+  `) as { total: number | string }[];
+  const total_edges = Number(totals[0]?.total ?? 0);
+
   // An edge means "the newer paper did X to the older one's concept", so a link
   // pointing backwards in time is a data error: arXiv revisions let two papers
   // cite each other, and the stored year is the v1 date. Drop the reverse leg
@@ -378,6 +395,7 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
     edges,
     streams: river.streams.map((s) => ({ id: s.id, name: s.name, color: s.color, count: s.papers.length })),
     total_papers: rows.length,
+    total_edges,
     curation: curationSentence(g[0].user_edits),
   };
 }

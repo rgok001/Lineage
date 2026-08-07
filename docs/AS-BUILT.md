@@ -754,6 +754,18 @@ was a back-link in whatever corner each page happened to use.
   says a stranger should see what a map cost, this file's copy rules say no cost
   talk aimed at visitors, and the two cannot both hold — the cost figure renders
   for the owner only and every other figure renders for everyone.
+  **The front door's badge names both populations** (issue #114). It read
+  "28 pivotal of 138 papers · 39 of 39 links shown quote-verified" while the home
+  card said "320 verified relationships" and the evidence page said "320 typed
+  relationships", with the word "shown" as the only bridge, so a careful reader
+  concluded the map had lost 281 links. It now reads "N links drawn here, all
+  quote-verified · the full M are in the evidence", and the M clause is omitted
+  when the canvas already draws every link. `getInfluenceMap` counts M with
+  `COUNT(*)` over the map's edges, which is exactly the population the evidence
+  page lists: `getGenealogy` selects every edge of the map, and its LEFT JOINs
+  cannot multiply a row because `definitions` is UNIQUE on (paper_id, concept,
+  prompt_version). Issue #30's reasoning is kept rather than reversed: two counts
+  on one page are dangerous *unlabelled*, and this labels them.
   `/g/[id]` links to it from a full-width row beside the evidence and export
   rows and shows no report figures itself, because that header's badge counts
   only the links drawn on the canvas and is a narrower population. **That row's

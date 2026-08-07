@@ -10,6 +10,8 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
   const data = await getInfluenceMap(Number(id));
   if (!data) redirect(`/g/${id}/evidence`); // maps without a generated river fall back to the evidence view
 
+  const verifiedDrawn = data.edges.filter((e) => e.stamp === "verified").length;
+
   const legend: [string, string][] = [
     ["migrates", "jumped fields"], ["extends", "built on"], ["narrows", "specialised"], ["renames", "same idea, new name"],
   ];
@@ -21,6 +23,16 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
           <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2.1rem", margin: 0, letterSpacing: "-.01em" }}>
             How “{data.concept}” evolved
           </h1>
+          {/* Both populations named, so neither can be read as the other (issue
+              #114). A reader met "320 verified relationships" on the home card,
+              then "39 of 39 links shown quote-verified" here, then "320 typed
+              relationships" on the evidence page, with the word "shown" as the
+              only bridge; the reasonable conclusion was that the map had lost
+              281. The canvas draws links between pivotal papers, a narrower
+              population than the map holds, and the badge now says so and says
+              where the rest are. Issue #30's reasoning is kept, not reversed: two
+              counts on one page are dangerous UNLABELLED, and the fix is to
+              label them rather than to show one. */}
           <span style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)",
             background: "var(--card)", border: "1px solid var(--line)", borderRadius: 999, padding: ".38rem .8rem", marginTop: ".4rem" }}>
             {data.papers.length} pivotal of {data.total_papers} papers ·{" "}
@@ -29,7 +41,12 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
               /* Counted on the resolved stamp, not the stored boolean. A count
                  that folds "not re-checked since the text changed" into
                  "verified" is the same overclaim as the line itself. */
-              : `${data.edges.filter((e) => e.stamp === "verified").length} of ${data.edges.length} links shown quote-verified`}
+              : `${data.edges.length} links drawn here, ${
+                  verifiedDrawn === data.edges.length
+                    ? "all quote-verified"
+                    : `${verifiedDrawn} quote-verified`}`}
+            {data.total_edges > data.edges.length &&
+              ` · the full ${data.total_edges} are in the evidence`}
           </span>
         </div>
         {data.through_line && (
