@@ -1020,7 +1020,35 @@ was a back-link in whatever corner each page happened to use.
   absent-words, not one**, because a count can be missing for a different reason
   than its share: on a map with no relationships "relationships verified" renders
   `0 (no relationships)`, a real zero beside an absent share.
-  Every figure carries two sentences: what it counts and what would move it.
+  Every figure carries two lines: what it counts, and what would change it under
+  a lead-in that asks the question.
+  **The what-would-change-this note is its own line, led by "What would change
+  this:"** (issue #137, UX filing implemented as given, 2026-08-08). It used to
+  sit inside the explainer's paragraph, joined by a single space at one size in
+  one colour, and 21 of the 25 rows opened that note with a subjectless,
+  verbless fragment: the first figure on the page read "Papers whose text this
+  map has read, whether or not a definition was found in them. The map being
+  rebuilt over more papers." as one paragraph, where the middle sentence is not
+  parseable at all. It was a careful answer to a question the page never asked
+  aloud. The lead-in supplies the missing subject, so all 21 fragments ship
+  unchanged, and "the same check as above" gains a visible antecedent because
+  the row above now has a distinguishable note line. Styled as a label and not a
+  heading: one line break, italic lead-in, `--ink-faint`, same size, never bold,
+  because 25 bold labels would re-inflate the page #107 flattened.
+  **The note slot was doing two jobs, and only one of them is that question.**
+  Ten sentences across nine rows were reading caveats -- "the share reads absent
+  rather than 0% on a map with no relationships", "a paper whose text could not
+  be downloaded or read is not counted here at all" -- and they moved onto the
+  end of the explainer, where they explain the figure. `papers that do not define
+  the term` had a note that was *only* a caveat, so labelling the whole slot
+  would have made that one row's label a lie; it now carries the plain note "The
+  map being rebuilt", which is the truth about it. Verified by rendering the page
+  before and after and comparing each row's two slots as a multiset of sentences:
+  24 rendered rows, every sentence the sentence it was, one row gaining one.
+  No figure was added or removed, no number changed, and nothing here grades,
+  colours or thresholds anything. Two conditional rows, `meanings that could not
+  be read` and `relationships inside one meaning`, keep a trailing caveat in the
+  note; neither was on the filing's list and both were left rather than swept.
   **Five sentences a reader could not parse were rewritten, and the record's
   dialect is off the page** (issue #111, the Product Owner: "some of the
   language used to describe the measures feels convoluted and not very clear").

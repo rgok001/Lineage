@@ -75,7 +75,15 @@ const year = (v: number | null) =>
 type Fmt = (v: number | null) => string | null;
 
 /**
- * One figure, its two sentences, and the same figure on every other map.
+ * One figure, its two lines, and the same figure on every other map.
+ *
+ * `counts` says what the number counts, and carries any caveat about how to read
+ * it. `moves` answers "what would change this", and renders on its own line
+ * under a lead-in that says so (issue #137). **Nothing but an answer to that
+ * question belongs in `moves`**: the two used to share one paragraph, and a
+ * reading caveat sitting where an answer was expected is what made 21 of these
+ * rows unparseable. A row with no answer worth giving passes the empty string
+ * and prints no note line.
  *
  * `absent` is the words to print when the value is null, and it is required
  * rather than defaulted, because the two reasons a figure can be missing are
@@ -157,8 +165,33 @@ function Figure({
         fontFamily: "var(--font-display)", fontSize: ".92rem", lineHeight: 1.55,
         color: "var(--ink-soft)", margin: ".35rem 0 0", maxWidth: "44rem",
       }}>
-        {counts} {moves}
+        {counts}
       </p>
+      {/* The note is an answer to a question the page never asked aloud (issue
+          #137). It used to sit inside the explainer's paragraph, joined by a
+          single space at one size in one colour, so 21 of the 25 rows showed a
+          reader a subjectless, verbless fragment as the second sentence of a
+          paragraph about something else: "Papers whose text this map has read
+          ... The map being rebuilt over more papers." Unparseable, and in fact a
+          careful answer to *what would change this number?*
+          The lead-in supplies the missing subject, so every one of those
+          fragments ships unchanged, and "the same check as above" acquires a
+          visible antecedent, because the row above now has a distinguishable
+          note line. It is a label and not a heading: one line break, no bold,
+          one step fainter, no extra weight on a page #107 worked to flatten.
+          The caveats that used to share this slot have moved onto the end of the
+          explainer, where they explain the figure rather than pretending to
+          answer the question. Guarded on emptiness so that a row whose only
+          sentence was a caveat can never render a lead-in with nothing after
+          it. */}
+      {moves && (
+        <p style={{
+          fontFamily: "var(--font-display)", fontSize: ".92rem", lineHeight: 1.55,
+          color: "var(--ink-faint)", margin: ".15rem 0 0", maxWidth: "44rem",
+        }}>
+          <span style={{ fontStyle: "italic" }}>What would change this:</span> {moves}
+        </p>
+      )}
       {others.length > 0 && (
         <p style={{
           fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-faint)",
@@ -401,8 +434,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <Figure
           label="papers read" lead
           value={count(r.papers_with_a_reading)} absent="not recorded"
-          counts="Papers whose text this map has read, whether or not a definition was found in them."
-          moves="The map being rebuilt over more papers. A paper whose text could not be downloaded or read is not counted here at all."
+          counts="Papers whose text this map has read, whether or not a definition was found in them. A paper whose text could not be downloaded or read is not counted here at all."
+          moves="The map being rebuilt over more papers."
           others={others((m) => m.papers_with_a_reading, count)}
         />
         <Figure
@@ -412,11 +445,15 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           moves="The map being rebuilt, and a paper being read differently the second time, in either direction."
           others={others((m) => m.papers_defining, count)}
         />
+        {/* The one row whose whole note was a caveat, so labelling the slot
+            would have made this row's label an outright lie (issue #137).
+            Nothing but a rebuild changes it, and that is what the note now says,
+            rather than an empty line under a lead-in. */}
         <Figure
           label="papers that do not define the term"
           value={count(r.papers_not_defining)} absent="not recorded"
-          counts="Papers read and found not to define the term. That is a finding, not a gap, and it is reported here rather than folded away."
-          moves="Shown so the percentages below can be read honestly: they are percentages of the papers that define the term, not of every paper read."
+          counts="Papers read and found not to define the term. That is a finding, not a gap, and it is reported here rather than folded away. Shown so the percentages below can be read honestly: they are percentages of the papers that define the term, not of every paper read."
+          moves="The map being rebuilt."
           others={others((m) => m.papers_not_defining, count)}
         />
       </Section>
@@ -442,8 +479,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           label="definitions verified" lead
           value={count(r.definitions_verified)} absent="not recorded"
           share={{ value: share(r.definitions_verified_share), absent: "no papers define the term" }}
-          counts="Definition quotes found word for word in the text this system pulled out of that paper, as that text stands now, with the share of the papers that define the term beside it."
-          moves="The map being rebuilt. Also the text of a paper changing: any quote checked against the old text goes back to not re-checked. The share reads absent rather than 0% when no paper defines the term, because a share of nothing is not zero."
+          counts="Definition quotes found word for word in the text this system pulled out of that paper, as that text stands now, with the share of the papers that define the term beside it. The share reads absent rather than 0% when no paper defines the term, because a share of nothing is not zero."
+          moves="The map being rebuilt. Also the text of a paper changing: any quote checked against the old text goes back to not re-checked."
           others={othersPair((m) => m.definitions_verified, (m) => m.definitions_verified_share)}
         />
         <Figure
@@ -476,8 +513,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           label="relationships verified" lead
           value={count(r.edges_verified)} absent="not recorded"
           share={{ value: share(r.edges_verified_share), absent: "no relationships" }}
-          counts="Relationships where both quotes were matched word for word against their papers' current text, with the share of every relationship in the map beside it. Both sides, not one: half a checked relationship is not a checked relationship."
-          moves="The same check as above. It counts relationships, not quotes: many relationships rest on the same quote. The share reads absent rather than 0% on a map with no relationships."
+          counts="Relationships where both quotes were matched word for word against their papers' current text, with the share of every relationship in the map beside it. Both sides, not one: half a checked relationship is not a checked relationship. It counts relationships, not quotes: many relationships rest on the same quote. The share reads absent rather than 0% on a map with no relationships."
+          moves="The same check as above."
           others={othersPair((m) => m.edges_verified, (m) => m.edges_verified_share)}
         />
         <Figure
@@ -490,8 +527,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <Figure
           label="relationships not re-checked"
           value={count(r.edges_stale)} absent="not recorded"
-          counts="Relationships whose last check ran against an older copy of a paper's text, or that have no record of a check at all. A relationship whose paper is missing from our records sits here too, because a missing paper cannot support a check."
-          moves="The check being run again. On an older map this can read as the whole map, which is honest rather than broken."
+          counts="Relationships whose last check ran against an older copy of a paper's text, or that have no record of a check at all. A relationship whose paper is missing from our records sits here too, because a missing paper cannot support a check. On an older map this can read as the whole map, which is honest rather than broken."
+          moves="The check being run again."
           others={others((m) => m.edges_stale, count)}
         />
         {/* Where the six-column table used to stand while it split by nothing
@@ -586,8 +623,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           label="meanings holding one paper"
           value={count(r.nodes_with_one_member)} absent="not recorded"
           share={{ value: share(r.nodes_with_one_member_share), absent: "no meanings" }}
-          counts="Meanings with a single paper in them, with the share of every meaning in the map beside it."
-          moves="Rebuilding the map, or someone editing it merging two meanings into one. The share reads absent rather than 0% on a map with no meanings."
+          counts="Meanings with a single paper in them, with the share of every meaning in the map beside it. The share reads absent rather than 0% on a map with no meanings."
+          moves="Rebuilding the map, or someone editing it merging two meanings into one."
           others={othersPair((m) => m.nodes_with_one_member, (m) => m.nodes_with_one_member_share)}
         />
         <Figure
@@ -608,8 +645,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           label="relationships touching the largest meaning" lead
           value={count(r.largest_node_edges)} absent="not recorded"
           share={{ value: share(r.largest_node_edges_share), absent: "no relationships" }}
-          counts="Relationships with the largest meaning at either end, with the share of every relationship in the map beside it. It says how much of the map hangs off one group."
-          moves="The same things as above, plus anything that adds or removes a relationship. The share reads absent rather than 0% on a map with no relationships."
+          counts="Relationships with the largest meaning at either end, with the share of every relationship in the map beside it. It says how much of the map hangs off one group. The share reads absent rather than 0% on a map with no relationships."
+          moves="The same things as above, plus anything that adds or removes a relationship."
           others={othersPair((m) => m.largest_node_edges, (m) => m.largest_node_edges_share)}
         />
         {/* Three rows about node pairs became one (issue #134), applying the
@@ -634,8 +671,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           value={outOf(r.edges_on_disagreeing_pairs, r.edges_total)} absent="not recorded"
           share={{ value: share(r.edges_on_disagreeing_pairs_share), absent: "no relationships" }}
           tail={acrossPairs(r.node_pairs_disagreeing)}
-          counts="Where two groups of papers are linked more than once, the links do not always say the same thing: one paper may extend an idea while another narrows it. These are the relationships to read first if you are checking the tool's reading."
-          moves="Someone editing the map changing what kind of link a relationship is, or the map being rebuilt. The share reads absent rather than 0% on a map with no relationships."
+          counts="Where two groups of papers are linked more than once, the links do not always say the same thing: one paper may extend an idea while another narrows it. These are the relationships to read first if you are checking the tool's reading. The share reads absent rather than 0% on a map with no relationships."
+          moves="Someone editing the map changing what kind of link a relationship is, or the map being rebuilt."
           others={rest.map((m) => ({
             concept: m.concept,
             value: outOf(m.edges_on_disagreeing_pairs, m.edges_total),
@@ -761,8 +798,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <Figure
           label="runs recorded"
           value={count(r.runs_recorded)} absent="not recorded"
-          counts="Completed runs this system has a record of for this map. The figures below describe the most recent one, not the map's whole life."
-          moves="Mapping the term again. A map the team built directly, rather than through a request on this site, has no run record, and every figure below then reads not recorded."
+          counts="Completed runs this system has a record of for this map. The figures below describe the most recent one, not the map's whole life. A map the team built directly, rather than through a request on this site, has no run record, and every figure below then reads not recorded."
+          moves="Mapping the term again."
           others={others((m) => m.runs_recorded, count)}
         />
         <Figure
