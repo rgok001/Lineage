@@ -692,6 +692,34 @@ The why behind the load-bearing choices, in one place:
     product's and is not the product's: it now reports both and treats a
     disagreement as a finding.
 
+31. **Deployments are fully automatic, migrations included, and the owner chose
+    it knowing what it retires** (2026-08-07, Product Owner, issue 102). Until
+    now the app auto-deployed on push, the worker deployed from the blueprint,
+    and database migrations were the one deliberately manual act: run from the
+    owner's terminal, so that agent-written work could not reach the production
+    database without a human between. The owner was offered semi-automatic — keep
+    exactly that one manual command — with the trade-off stated in plain terms:
+    full automation means the day an agent pushes flawed work, it changes the
+    production database with no human in between. The owner chose full
+    automation; the manual step was rare enough to be forgettable and forgotten,
+    and a checkpoint that is a hassle is a checkpoint that gets skipped or
+    batched, which is its own failure mode.
+    What implements it: the worker's blueprint gains `autoDeploy: true` and
+    `preDeployCommand: python pipeline/db/migrate.py`, so Render applies pending
+    migrations before it swaps in the worker code that expects them. The worker's
+    `DATABASE_URL` is already the direct endpoint migrations require. Agent
+    sessions remain database-refused — `LINEAGE_NO_DB` is untouched; what changed
+    is who carries a migration to production, not who may talk to the database
+    from a shell.
+    Two consequences are accepted rather than hidden. The Vercel app can go live
+    minutes before the worker's pre-deploy applies a migration, so **migrations
+    must be additive and the app must tolerate a schema one migration behind**
+    (issue 92's fallback is the pattern, and migration 016's own deploy window is
+    the precedent that survived it). And an auto-deploy restarts the worker,
+    killing and requeuing any in-flight trace; acceptable at current volume,
+    revisit when traces are frequent. The manual `migrate.py` path stays in the
+    runbook as the emergency route.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record

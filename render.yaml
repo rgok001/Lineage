@@ -30,6 +30,16 @@ services:
     # downgrade to save cost once a Voyage run is confirmed. Kept at 'standard'
     # for now for safety. For a blueprint service this line is authoritative.
     plan: standard
+    # Decision 31 (issue #102): deployments are fully automatic, migrations
+    # included. autoDeploy makes every push to master a worker deploy;
+    # preDeployCommand applies pending migrations before the new worker code
+    # that expects them starts. migrate.py is idempotent over the applied set
+    # (schema_migrations) and DATABASE_URL here is the direct endpoint
+    # migrations require. If the pre-deploy fails, Render aborts the deploy and
+    # the old worker keeps running — a broken migration stops the release, it
+    # does not half-apply it.
+    autoDeploy: true
+    preDeployCommand: python pipeline/db/migrate.py
     buildCommand: pip install -r pipeline/requirements.txt
     # -u for the same reason the worker passes -u to every stage it spawns: with
     # stdout on a pipe rather than a terminal, Python buffers by the kilobyte, so

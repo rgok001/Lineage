@@ -51,11 +51,28 @@ invoke `C:\Users\GGPC\AppData\Local\Programs\Python\Python312\python.exe`.
 is `app/`). Env var changes in Vercel do not reach an existing build: redeploy
 after changing them.
 
-**Deploying the worker.** Render dashboard -> New -> Blueprint -> this repo;
-Render reads `render.yaml` and prompts for every secret it marks `sync: false`;
-the table above says what each one is for. A count was written here instead, and
-it was still saying three after `VOYAGE_API_KEY` became the fourth. Success looks
-like "Worker up. Polling every 10s for approved trace requests" in the logs.
+**Deploying the worker, and migrations with it.** Automatic since decision 31
+(2026-08-07, issue #102): a push to `master` deploys the worker
+(`autoDeploy: true` in `render.yaml`), and Render's pre-deploy step runs
+`python pipeline/db/migrate.py` before the new worker code starts, so pending
+migrations apply themselves in order with the code that expects them. If the
+pre-deploy fails, Render aborts the deploy and the old worker keeps running: a
+broken migration stops the release rather than half-applying it — read the
+deploy log, fix, push again. Because Vercel is usually live minutes before the
+worker's pre-deploy finishes, **migrations must be additive and the app must
+tolerate a schema one migration behind** (the #92 fallback is the pattern).
+
+The manual path remains the emergency route: `python pipeline/db/migrate.py`
+from the owner's terminal applies whatever is pending, and is safe beside the
+automatic one because both consult `schema_migrations`.
+
+First-time worker creation is unchanged: Render dashboard -> New -> Blueprint ->
+this repo; Render reads `render.yaml` and prompts for every secret it marks
+`sync: false`; the table above says what each one is for. A count was written
+here instead, and it was still saying three after `VOYAGE_API_KEY` became the
+fourth. Success looks like "Worker up. Polling every 10s for approved trace
+requests" in the logs. An auto-deploy restarts the worker; an in-flight trace is
+killed and requeued, which is accepted at current trace volume (decision 31).
 
 **Backup and restore.** Stage E's JSON exports under `data/` are the map
 backups; re-export after curating. Restore with
@@ -169,9 +186,11 @@ step 1 and re-run step 2; nothing is damaged, but nothing is published either.
 `recheck_stamp.py` needs `LINEAGE_READ_URL` and issues only `SELECT`, so it is
 safe to run at any point above, including from an agent's shell.
 
-**Applying migration 016 (the map report). Run the migration BEFORE deploying
-the app, never after: the home page and `/g/<id>/report` both read `map_report`,
-and until it exists there is no report to read.**
+**Applying migration 016 (the map report). The migration must land BEFORE the
+app renders against it: the home page and `/g/<id>/report` both read
+`map_report`, and until it exists there is no report to read.** Since decision
+31 the worker's pre-deploy applies it on the next push; until that push has
+deployed, or to close the window sooner, run it manually as below.
 
 That ordering used to be the whole of it. Since issue #92 the home page also
 degrades rather than falling over: `listGenealogies` asks `to_regclass` whether

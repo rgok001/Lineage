@@ -100,7 +100,8 @@ be designed and built when it is reached. It does not mean scaffolding for it no
 - Cache aggressively: per-paper extractions and full trace outputs are immutable once built (invalidate only on prompt-version bump).
 - All pipeline stages runnable as standalone CLI scripts before any UI exists.
 - Secrets in .env, never committed. Keys needed: ANTHROPIC_API_KEY, SEMANTIC_SCHOLAR_API_KEY.
-- Database access is refused by default. `.claude/settings.json` sets `LINEAGE_NO_DB=1`, so `env("DATABASE_URL")` raises rather than connecting. Real runs against Neon happen from a terminal outside Claude Code. Reaching production takes an act, not an omission.
+- Database access is refused by default. `.claude/settings.json` sets `LINEAGE_NO_DB=1`, so `env("DATABASE_URL")` raises rather than connecting. Pipeline runs against Neon happen from a terminal outside Claude Code, or through the worker. No agent shell reaches production directly.
+- Deployments are fully automatic, migrations included (owner decision 31, 2026-08-07, issue 102): a push to `master` deploys the app via Vercel and the worker via Render, whose pre-deploy step runs `pipeline/db/migrate.py`. Because the app can go live minutes before the worker applies a migration, migrations must be additive and the app must tolerate a schema one migration behind.
 - `LINEAGE_READ_URL` is the read-only connection: the `lineage_ro` Postgres role, SELECT and nothing else. It is the only database access any agent may use, and the Operator is the only role that uses it. It is deliberately not named DATABASE_URL so that no existing code path can route through it by accident.
 - Prefer boring tech. No microservices, no Kubernetes, no message brokers. One repo, one Postgres, one Next.js app, one worker process.
 
