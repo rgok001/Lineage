@@ -90,25 +90,33 @@ type Fmt = (v: number | null) => string | null;
  * because nothing recorded it while its share is missing because the population
  * it would divide by is empty, and one pair of words cannot say both.
  *
+ * `tail` is a second count that belongs on the same row rather than on one of
+ * its own (issue #134). The multi-type pair figures were two rows, and the
+ * second told the reader to "read beside the count above", which is a self-check
+ * rather than a finding; the counts matter together, because a few large pairs
+ * and many small ones are different findings. It is set in the share's quiet
+ * type for the same reason: it qualifies the number, it is not a second number.
+ *
  * `lead` is weight and nothing else: one step of type size, so that the figures
  * carrying the page's story are not identical to the page's bookkeeping. It is
  * never a colour, a badge or a mark of quality, because those are thresholds
  * however they are spelled.
  */
 function Figure({
-  label, value, counts, moves, absent, others, share, lead,
+  label, value, counts, moves, absent, others, share, tail, lead,
 }: {
   label: string;
   value: string | null;
   counts: string;
   moves: string;
   absent: string;
-  others: { concept: string; value: string | null; share?: string | null }[];
+  others: { concept: string; value: string | null; share?: string | null; tail?: string }[];
   share?: { value: string | null; absent: string };
+  tail?: string;
   lead?: boolean;
 }) {
-  const shown = (o: { value: string | null; share?: string | null }) =>
-    `${o.value ?? absent}${share ? ` (${o.share ?? share.absent})` : ""}`;
+  const shown = (o: { value: string | null; share?: string | null; tail?: string }) =>
+    `${o.value ?? absent}${share ? ` (${o.share ?? share.absent})` : ""}${o.tail ?? ""}`;
   return (
     <div style={{ padding: ".85rem 0", borderTop: "1px solid var(--line-soft)" }}>
       <div style={{ display: "flex", gap: "1rem", alignItems: "baseline", flexWrap: "wrap" }}>
@@ -127,13 +135,20 @@ function Figure({
           }}>
             {value ?? absent}
           </span>
-          {share && (
+          {/* One span, so the row's own gap does not open before the tail's
+              comma: "(58.2%) , across 30 pairs" is what two flex children of a
+              gapped container render as. */}
+          {(share || tail) && (
             <span style={{
               fontFamily: "var(--font-mono)", fontSize: lead ? ".92rem" : ".82rem",
               color: "var(--ink-soft)",
-              fontStyle: share.value === null ? "italic" : "normal",
             }}>
-              ({share.value ?? share.absent})
+              {share && (
+                <span style={{ fontStyle: share.value === null ? "italic" : "normal" }}>
+                  ({share.value ?? share.absent})
+                </span>
+              )}
+              {tail}
             </span>
           )}
         </span>
@@ -201,6 +216,14 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const othersPair = (pick: (m: MapReport) => number | null,
                       pickShare: (m: MapReport) => number | null) =>
     rest.map((m) => ({ concept: m.concept, value: count(pick(m)), share: share(pickShare(m)) }));
+
+  /** A count with the population it came out of, in the row rather than in the
+   *  explainer (issues #123, #134). Both arrive from `lib/report.ts` as counts
+   *  the view coalesces, so neither can be null; when the population is empty
+   *  the count stands alone, because "0 of 0" is not a population. */
+  const outOf = (v: number, total: number) =>
+    total > 0 ? `${v.toLocaleString()} of ${total.toLocaleString()}` : v.toLocaleString();
+  const acrossPairs = (v: number) => `, across ${v.toLocaleString()} pairs`;
 
   const defBuckets = r.buckets.filter((b) => b.unit === "definition");
   const edgeBuckets = r.buckets.filter((b) => b.unit === "edge");
@@ -589,27 +612,36 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           moves="The same things as above, plus anything that adds or removes a relationship. The share reads absent rather than 0% on a map with no relationships."
           others={othersPair((m) => m.largest_node_edges, (m) => m.largest_node_edges_share)}
         />
+        {/* Three rows about node pairs became one (issue #134), applying the
+            owner's measure test: a figure earns its place by having a use, and
+            what it measures has to be apparent without knowing how the system
+            works. "Pairs of meanings that are linked" had no use anyone could
+            name and spent its second sentence teaching the counting; it is cut
+            from the page and still prints in `pipeline/map_report.py`. The other
+            two had a use the page never stated, split across two rows, the
+            second of which said "read beside the count above" — the same
+            self-check #132 cut a whole section for.
+
+            The wording is deliberate about what it does NOT claim. More than one
+            kind of link between two meanings is not the tool contradicting
+            itself: the relationships on a pair come from different papers, and
+            two papers can genuinely have done different things to the same idea.
+            So the innocent reading is given first and in full. This is a count
+            and a share, not a quality signal, and nothing here grades it
+            (decisions 24 and 25, issue #30). */}
         <Figure
-          label="pairs of meanings that are linked"
-          value={count(r.node_pairs)} absent="not recorded"
-          counts="Pairs of meanings carrying at least one relationship. A pair counts once in each direction, because a relationship says the later paper did something to the earlier one's idea, and the reverse is a different claim."
-          moves="A relationship appearing between two meanings nothing else linked, or the last one between them being deleted."
-          others={others((m) => m.node_pairs, count)}
-        />
-        <Figure
-          label="pairs carrying more than one kind of link"
-          value={count(r.node_pairs_disagreeing)} absent="not recorded"
-          counts="Pairs where the relationships between the same two meanings do not all say the same thing."
-          moves="Someone editing the map changing what kind of link a relationship is, or the map being rebuilt."
-          others={others((m) => m.node_pairs_disagreeing, count)}
-        />
-        <Figure
-          label="relationships on those pairs"
-          value={count(r.edges_on_disagreeing_pairs)} absent="not recorded"
+          label="relationships between meanings linked in more than one way"
+          value={outOf(r.edges_on_disagreeing_pairs, r.edges_total)} absent="not recorded"
           share={{ value: share(r.edges_on_disagreeing_pairs_share), absent: "no relationships" }}
-          counts="How many relationships sit on a pair that carries more than one kind of link, with the share of every relationship in the map beside it. Read beside the count above: a few large pairs and many small ones are different findings."
-          moves="The same things. The share reads absent rather than 0% on a map with no relationships."
-          others={othersPair((m) => m.edges_on_disagreeing_pairs, (m) => m.edges_on_disagreeing_pairs_share)}
+          tail={acrossPairs(r.node_pairs_disagreeing)}
+          counts="Where two groups of papers are linked more than once, the links do not always say the same thing: one paper may extend an idea while another narrows it. These are the relationships to read first if you are checking the tool's reading."
+          moves="Someone editing the map changing what kind of link a relationship is, or the map being rebuilt. The share reads absent rather than 0% on a map with no relationships."
+          others={rest.map((m) => ({
+            concept: m.concept,
+            value: outOf(m.edges_on_disagreeing_pairs, m.edges_total),
+            share: share(m.edges_on_disagreeing_pairs_share),
+            tail: acrossPairs(m.node_pairs_disagreeing),
+          }))}
         />
         {/* Zero by construction until F3 (#31) lets papers inside one meaning be
             related to each other, and its explainer used to say so in the words

@@ -841,7 +841,31 @@ was a back-link in whatever corner each page happened to use.
   map with nothing to say it about says nothing rather than printing a zero.
   All three figures still print in `pipeline/map_report.py`, which is the same
   page/command subset "quote slots" left under #108. Grammar at n=1 is #99's.
-  Together the page went from 39 figure rows to 26, measured on the harness.
+  **Shape's three pair rows are one row led by what it means** (issue #134, the
+  owner's measure test applied to every figure on the page rather than only to
+  the section he flagged: a measure earns its place by having a usable purpose,
+  and what it measures must be apparent without a full account of how the system
+  works). "Pairs of meanings that are linked" is cut from the page: nobody could
+  name what a researcher or a sceptic would do differently knowing it, and its
+  second sentence taught the counting rule rather than the finding. The other two
+  had a use the page never stated, split over two rows, the second of which said
+  "read beside the count above". They now read as one figure, "relationships
+  between meanings linked in more than one way — 167 of 287 (58.2%), across 30
+  pairs", with the count, its population, its share and the pair count on one
+  row, and the explainer saying what to do with it: these are the relationships
+  to read first when checking the tool's reading. **The copy deliberately does
+  not say the tool contradicted itself.** The relationships on a pair come from
+  different papers, and two papers can genuinely have done different things to
+  the same idea, so the innocent reading is given first and in full ("the links
+  do not always say the same thing: one paper may extend an idea while another
+  narrows it"). Confirmed against migration 016's `pairs` CTE, which groups edges
+  by an ordered (source_node, target_node) and counts distinct `edge_type`: a
+  multi-type pair is two or more edges, from different paper pairs, carrying
+  different types. It is a count and a share and carries no grade (decisions 24
+  and 25). Both surviving labels were renamed in `pipeline/map_report.py` in the
+  same commit, which widens its label column from 52 to 70 characters; the two
+  cut labels are command-only, like "quote slots" since #108.
+  Together the page went from 39 figure rows to 24, measured on the harness.
   **The page opens with one paragraph, not three**
   (issue #106, the UX review of #104): roughly 170 words of what the page is not
   stood between the reader and the first number. The lede now carries the story

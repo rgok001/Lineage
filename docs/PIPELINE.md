@@ -706,7 +706,12 @@ commit and in the same words: issue #124 moved "papers with a reading" to
 three sections. The subset widened again with issue #132, which cut the whole
 "The evidence behind the map" section from the page and left all three of its
 figures printing here: the page now says what they add up to in one sentence, and
-the Operator keeps the counts. **Two section titles are read back by `render()`** to decide
+the Operator keeps the counts. Issue #134 did the same to Shape's pair rows,
+cutting "pairs of meanings that are linked" and "pairs carrying more than one
+kind of link" from the page and renaming the two that survive to "relationships
+between meanings linked in more than one way" and its share, here and on the page
+together. That rename widens `LABEL_WIDTH` from 52 to 70, which is computed and
+not written down. **Two section titles are read back by `render()`** to decide
 whether to print the By source table and the papers-per-year histogram, so a
 rename in `SECTIONS` that is not made there too loses a whole block in silence.
 The absent words are the same on both surfaces as well — "not recorded" when

@@ -229,9 +229,15 @@ SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
         ("pairs of meanings that are linked", "node_pairs", count, "not recorded"),
         ("pairs carrying more than one kind of link", "node_pairs_disagreeing", count,
          "not recorded"),
-        ("relationships on those pairs", "edges_on_disagreeing_pairs", count, "not recorded"),
-        ("relationships on those pairs, as a share", "edges_on_disagreeing_pairs_share",
-         share, "no relationships"),
+        # Renamed with the page (issue #134): the page merged this count, its
+        # share and the pair count onto one row led by what it means, and a
+        # label the page rewrites is rewritten here in the same words. "Pairs of
+        # meanings that are linked" and "pairs carrying more than one kind of
+        # link" are now command-only, like "quote slots" since #108.
+        ("relationships between meanings linked in more than one way",
+         "edges_on_disagreeing_pairs", count, "not recorded"),
+        ("relationships between meanings linked in more than one way, as a share",
+         "edges_on_disagreeing_pairs_share", share, "no relationships"),
         ("relationships inside one meaning", "edges_within_one_node", count, "not recorded"),
     ]),
     ("When the papers were written", [
