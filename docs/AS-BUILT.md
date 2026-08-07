@@ -617,6 +617,16 @@ was a back-link in whatever corner each page happened to use.
   system" rather than a baseline, with the sample size taken from the number of
   rows the view returned rather than written into the page.
   Every figure carries two sentences: what it counts and what would move it.
+  **No sentence on the page states a count of the world that the page cannot
+  recompute** (issue #89). Three did: "Both maps that exist today were built
+  from the command line", "Today the classification never proposes one, so this
+  reads zero on every map", and "Every paper this system reads today comes from
+  arXiv". All three were false the moment they were rendered against six maps
+  and nothing failed, and the second was the instrument F3 (#31) is meant to be
+  read on. Each is now derived from the rows the page already holds: how many of
+  the `n` maps have no run record, how many have a relationship inside one
+  meaning, and which labels this map's own per-source rows carry, read out rather
+  than named.
   **An absent figure prints words, never a zero and never a blank**, and the
   words distinguish "not recorded" (nothing in this system holds it) from an
   empty population ("no relationships", "no years recorded"). The cost figure is

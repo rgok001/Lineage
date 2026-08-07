@@ -163,6 +163,48 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const defBuckets = r.buckets.filter((b) => b.unit === "definition");
   const edgeBuckets = r.buckets.filter((b) => b.unit === "edge");
 
+  /**
+   * Three sentences on this page used to state counts of the world in fixed
+   * prose, and nothing recomputed any of them (issue #89). Rendered against six
+   * maps, two of them with run records, all three were false and nothing failed:
+   * "Both maps that exist today were built from the command line", "Today the
+   * classification never proposes one, so this reads zero on every map", and
+   * "Every paper this system reads today comes from arXiv".
+   *
+   * They are derived below from the same rows the figures come from, so they
+   * move when the system does. **A sentence the honesty page cannot recompute
+   * does not ship on it** — the second was the worst of the three, because F3
+   * (#31) is precisely the change that makes `edges_within_one_node` non-zero
+   * and this page is the instrument that is supposed to show it.
+   */
+  const n = all.length;
+  const maps = (k: number) => `${k} of the ${n} maps in this system`;
+
+  // What the per-source table is about to show, counted from its own rows. The
+  // labels are read out rather than named, because the label is measured from
+  // the paper row and F7 is what makes a second one appear.
+  const sourceLabels = Array.from(new Set(r.buckets.map((b) => b.source)));
+  const sourceSentence =
+    sourceLabels.length === 0
+      ? "This map holds nothing to split."
+      : sourceLabels.length === 1
+        ? `Every row of this map’s table carries the same label, “${sourceLabels[0]}”.`
+        : `This map’s rows carry ${sourceLabels.length} different labels.`;
+
+  const selfEdgeMaps = all.filter((m) => m.edges_within_one_node > 0).length;
+  const selfEdgeSentence =
+    selfEdgeMaps === 0
+      ? `No map in this system has one: this reads zero on all ${n} of them.`
+      : `${maps(selfEdgeMaps)} ${selfEdgeMaps === 1 ? "has" : "have"} at least one.`;
+
+  const noRunMaps = all.filter((m) => m.runs_recorded === 0).length;
+  const runRecordSentence =
+    noRunMaps === 0
+      ? `Every map in this system has a run record, so nothing reads not recorded for want of one.`
+      : noRunMaps === n
+        ? `No map in this system has a run record at all, so those cells read not recorded rather than zero on every one of the ${n}.`
+        : `${maps(noRunMaps)} ${noRunMaps === 1 ? "has" : "have"} no run record at all, so those cells read not recorded rather than zero.`;
+
   const mono = { fontFamily: "var(--font-mono)" as const };
   const prose = {
     fontFamily: "var(--font-display)", fontSize: ".95rem", lineHeight: 1.65,
@@ -202,7 +244,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           with the sample size. Two or three maps are not a distribution, so those
           are reference points and not a baseline, an expectation or a typical
           value.{" "}
-          <span style={mono}>n={all.length}</span>
+          <span style={mono}>n={n}</span>
         </p>
         <p style={{ ...mono, fontSize: ".72rem", color: "var(--ink-faint)", marginTop: ".8rem" }}>
           <Link href={`/g/${id}`} style={{ color: "var(--edge-extends)" }}>← the map</Link>
@@ -319,12 +361,11 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
 
       <Section
         title="By source"
-        lede="The same counts, split by where each paper came from. Every paper this
-              system reads today comes from arXiv, so one row is the expected shape;
-              the split exists so that adding a source later changes this table
-              visibly instead of changing one number quietly. A relationship is
-              grouped by the pair of its two ends, so every relationship lands in
-              exactly one row and the rows add up to the totals above."
+        lede={`The same counts, split by where each paper came from. The split exists
+              so that adding a source later changes this table visibly instead of
+              changing one number quietly. A relationship is grouped by the pair of
+              its two ends, so every relationship lands in exactly one row and the
+              rows add up to the totals above. ${sourceSentence}`}
       >
         <table style={{ ...mono, fontSize: ".78rem", borderCollapse: "collapse",
           width: "100%", marginTop: ".6rem" }}>
@@ -502,7 +543,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <Figure
           label="relationships inside one meaning"
           value={count(r.edges_within_one_node)} absent="not recorded"
-          counts="Relationships whose two ends are the same meaning. Today the classification never proposes one, so this reads zero on every map."
+          counts={`Relationships whose two ends are the same meaning. ${selfEdgeSentence}`}
           moves="Allowing papers within one meaning to be related to each other, which is queued work and is exactly what this line is here to measure before and after."
           others={others((m) => m.edges_within_one_node, count)}
         />
@@ -645,8 +686,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           <li style={{ margin: ".4rem 0" }}>
             <strong>What the map cost and how long it took, when it was not built
             from a request.</strong>{" "}
-            Both maps that exist today were built from the command line and have no
-            run record at all, so those cells read not recorded rather than zero.
+            A map built from the command line leaves no run record, and nothing
+            else in this system holds either figure. {runRecordSentence}
           </li>
           <li style={{ margin: ".4rem 0" }}>
             <strong>Whether the map is right.</strong>{" "}
