@@ -629,11 +629,19 @@ was a back-link in whatever corner each page happened to use.
 - `/g/[id]/report` : what this map is made of (issue #30, `[F2]`). One screen,
   one column, no interactivity, every figure selected from migration 016's two
   views by `lib/report.ts` and computed nowhere else, so this page and
-  `pipeline/map_report.py` cannot disagree about the same map. Sections: coverage
+  `pipeline/map_report.py` cannot disagree about a figure they both print (which
+  is no longer every figure: see the subset invariant below). Sections: coverage
   of the reading, evidence (the three stamp states for definitions and for
-  relationships), the same counts split by source, quote reuse, shape, corpus
-  age with a per-year histogram, the run, and a closing list of the three things
-  the page cannot tell you. **The page opens with one paragraph, not three**
+  relationships), the same counts split by source, shape, corpus age with a
+  per-year histogram, quote reuse, the run, and a closing list of the three
+  things the page cannot tell you. **Quote reuse sits below Corpus age, not
+  fourth from the top** (issue #108): it stood between the reader and the
+  sections they came for, and it answered a question nobody asked in a word only
+  the team knows. The two rows built on that word ("quote slots", "quote slots
+  holding no text") are gone from the page and what they established is prose in
+  the section's lede; the command still prints both, and their counting defects
+  are #88 and are untouched by this.
+  **The page opens with one paragraph, not three**
   (issue #106, the UX review of #104): roughly 170 words of what the page is not
   stood between the reader and the first number. The lede now carries the story
   in three sentences (the two kinds of claim, and which of them is mechanical),

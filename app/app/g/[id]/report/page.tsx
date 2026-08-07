@@ -439,52 +439,6 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       </Section>
 
       <Section
-        title="Quote reuse"
-        lede="A relationship carries each paper's own definition quote, so a paper on
-              forty relationships contributes its one quote forty times. Far fewer
-              distinct quotes than relationships is therefore the expected shape and
-              not a fault; what it says is that a relationship does not carry evidence
-              of its own. The number worth reading it against is how many distinct
-              papers those relationships touch."
-      >
-        <Figure
-          label="quote slots"
-          value={count(r.quote_slots)} absent="no relationships"
-          counts="Two per relationship, one for each end."
-          moves="Only the number of relationships."
-          others={others((m) => m.quote_slots, count)}
-        />
-        <Figure
-          label="quote slots holding no text"
-          value={count(r.quote_slots_empty)} absent="no relationships"
-          counts="Slots whose quote is empty once whitespace is trimmed. A quote holding no text of the paper is not evidence, so these are excluded from the distinct count below."
-          moves="A re-read that finds a passage for that paper."
-          others={others((m) => m.quote_slots_empty, count)}
-        />
-        <Figure
-          label="distinct quote strings"
-          value={count(r.distinct_quote_strings)} absent="no quotes"
-          counts="How many different passages the relationships actually rest on."
-          moves="Reading more papers, and any change to how a paper's defining passage is chosen."
-          others={others((m) => m.distinct_quote_strings, count)}
-        />
-        <Figure
-          label="distinct papers on relationships"
-          value={count(r.distinct_papers_on_edges)} absent="no relationships"
-          counts="How many different papers appear at either end of a relationship. Read it beside the line above: the two should be close."
-          moves="The same things. If the distinct quotes fall materially below this, two different papers are carrying the same passage, which is worth knowing."
-          others={others((m) => m.distinct_papers_on_edges, count)}
-        />
-        <Figure
-          label="most reused quote, uses"
-          value={count(r.most_repeated_quote_uses)} absent="no quotes"
-          counts="How many slots the single most repeated passage fills."
-          moves="How central one paper is to the map, and nothing else."
-          others={others((m) => m.most_repeated_quote_uses, count)}
-        />
-      </Section>
-
-      <Section
         title="Shape"
         lede="How the map's meanings and relationships are distributed. All of this is
               the tool's reading rather than anything checked against a paper: a
@@ -636,6 +590,48 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             </p>
           )}
         </div>
+      </Section>
+
+      {/* Below Shape and Corpus age, which is where a reader was heading when
+          this stood in the way (issue #108). "Quote slots" was the team's word
+          for a storage position and it was the fourth thing on the page; the two
+          rows that used it are gone and what they established is in the lede,
+          because a researcher does not arrive asking whether quote duplication
+          is a fault. The counting defects in those two figures are #88 and are
+          untouched here; the command still prints both. */}
+      <Section
+        title="Quote reuse"
+        lede="A relationship carries each paper's own definition quote, so a paper on
+              forty relationships contributes its one quote forty times. Each
+              relationship holds a quote from each of its two ends, and one that turns
+              out to hold no text is not evidence, so it is left out of the counts
+              below. So it is normal to see far fewer distinct quotes than
+              relationships. The comparison that matters is with the number of papers:
+              if there are noticeably fewer distinct quotes than papers on
+              relationships, two different papers are being represented by the same
+              quote, and that is worth knowing."
+      >
+        <Figure
+          label="distinct quote strings"
+          value={count(r.distinct_quote_strings)} absent="no quotes"
+          counts="How many different passages the relationships actually rest on."
+          moves="Reading more papers, and any change to how a paper's defining passage is chosen."
+          others={others((m) => m.distinct_quote_strings, count)}
+        />
+        <Figure
+          label="distinct papers on relationships"
+          value={count(r.distinct_papers_on_edges)} absent="no relationships"
+          counts="How many different papers appear at either end of a relationship. Read it beside the line above: the two should be close."
+          moves="The same things. If the distinct quotes fall materially below this, two different papers are carrying the same passage, which is worth knowing."
+          others={others((m) => m.distinct_papers_on_edges, count)}
+        />
+        <Figure
+          label="most reused quote, uses"
+          value={count(r.most_repeated_quote_uses)} absent="no quotes"
+          counts="How many times the single most repeated passage is used across the relationships."
+          moves="How central one paper is to the map, and nothing else."
+          others={others((m) => m.most_repeated_quote_uses, count)}
+        />
       </Section>
 
       <Section
