@@ -665,6 +665,37 @@ stamp a reader is not shown the same way, and on the global check (more than one
 stamp examined and not one file readable), and it does not re-anchor, repair or
 write. Ever.
 
+`map_report.py`
+(`map_report.py <concept> [--prompt-version PV] [--all] [--json]`): what a map is
+made of, from the map's own rows (issue #30, `[F2]`). Every figure is selected
+from migration `016`'s two views, `map_report` and `map_report_by_source`, and
+computed here not at all, so this command and `/g/<id>/report` read one
+expression and cannot disagree about the same map. **It reads `LINEAGE_READ_URL`
+and never `DATABASE_URL`, and issues no statement but `SELECT`** — the second
+tool in this pipeline built that way, and for `recheck_stamp.py`'s reason: its
+value is that an Operator can run it against production and paste the answer into
+a report, which is only safe if it structurally cannot write. It does not repair
+and there is nothing to refresh, because a view holds no data.
+`--all` prints every map, which is how the reference points beside each figure
+are read from a shell. **`--json` goes to stdout and to no file**: a report
+written to disk is a stored quality figure with a different spelling, and would
+survive the curatorial edit that invalidates it. Numbers arrive as strings in the
+JSON rather than as floats, because they are exact values out of Postgres and
+turning a count or a spend into a binary float on the way out would be this
+command inventing a number.
+It prints the same figures in the same order under the same labels as the page,
+and the same words for an absent one — "not recorded" when nothing in the system
+holds the figure, and the name of the empty population ("no relationships", "no
+years recorded") when the denominator is zero. Neither is ever a zero: `run_cost_usd`
+in particular is NULL when no run recorded a spend, and `genealogies.spend_usd`,
+which reads `0.0000` on every map and is written by nothing, is never consulted
+by the view, by this command or by the page. There is no threshold, cut-off,
+grade or colour in it, and the sample size beside the reference points is the
+number of rows the view returned rather than a literal.
+Unlike the page, it prints the cost figure unconditionally: it needs the
+read-only role's connection string to run at all, so its reader is the Operator
+and never a visitor.
+
 **Stage F: magnitude** (`stage_f_magnitude.py <concept> [--prompt-version PV]`).
 Fills `definitions.attention` and `definitions.displacement` (migration 011),
 which is what the influence map selects and sizes by. Attention is on-term
