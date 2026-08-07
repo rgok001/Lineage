@@ -293,6 +293,21 @@ other two copies of the rule are handed and both call stale (issue #60 again).
 `listGenealogies` still counts `paper_count` and `edge_count` itself rather than
 taking them from the view, so that "the report and the card agree about the size
 of a map" stays a check that can fail instead of an identity.
+**Reading the view gave the home page a hard dependency on migration 016, and
+that dependency degrades rather than falling over** (issue #92): an app deployed
+before the migration lands did not lose two numbers, it lost `/` entirely, since
+Postgres raises `UndefinedTable` for a statement naming a relation that is not
+there. `listGenealogies` now asks `to_regclass('public.map_report')` first, in
+its own statement — a guard inside the query would be parsed by the thing it
+guards against — and selects `NULL` for both counts when the answer is NULL. The
+card prints "verified relationships not counted", in ink-soft and never in the
+verified colour: `0 verified relationships` over a map holding 287 of them would
+be a worse answer than the 500 it replaced, and a green one. Measured against a
+real PostgreSQL with the views dropped: the query at `a30a006` raises
+`UndefinedTable`, the query in the tree returns every map with both counts NULL,
+and with the views present the two return identical counts on every map.
+`RUNBOOK.md` still leads the migration entry with migration-before-deploy,
+because `/g/[id]/report` has no such fallback and none would be honest.
 **The queries that fetch an edge's papers LEFT JOIN them, for the same reason**
 (issue #79): `listGenealogies` was the only one that did for one commit, so the
 home card counted an edge with a missing paper row and `getGenealogy` dropped it,

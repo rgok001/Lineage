@@ -449,8 +449,39 @@ export const EDGE_MEANING: Record<string, string> = {
  *  because the view selects `FROM genealogies` and joins everything else outward,
  *  so this changes no result today; it is written this way because a JOIN here
  *  would be the join deciding whether a map appears on the front page, which is
- *  the fault this file has now paid for three times. */
+ *  the fault this file has now paid for three times.
+ *
+ *  And the view may not be there at all: see the `to_regclass` probe below
+ *  (issue #92). */
 export async function listGenealogies() {
+  // **Does the view exist?** Reading the two counts from `map_report` gave the
+  // home page a hard dependency on migration 016, and an app that deploys before
+  // the migration lands does not lose two numbers, it loses the front page:
+  // Postgres raises `UndefinedTable` for the whole statement and `/` returns a
+  // 500 (issue #92). `to_regclass` answers NULL instead of raising for a
+  // relation that is not there, and it has to be its own statement, because
+  // every relation named in a statement is resolved before any expression in it
+  // runs — a guard inside the query would be parsed by the thing it guards
+  // against. The runbook says migration before deploy; this is what happens when
+  // that is not what happened.
+  const [probe] = (await sql`
+    SELECT to_regclass('public.map_report') IS NOT NULL AS reported
+  `) as { reported: boolean }[];
+  const reported = probe?.reported === true;
+
+  // Absence is reported as absence. `NULL` here, and the card prints words for
+  // it, because 0 verified relationships is a claim about the map and this is a
+  // claim about the schema: a page that renders "0 verified relationships" over
+  // a map with 287 of them is worse than the 500 it replaced.
+  const counts = reported
+    ? sql.unsafe(`r.edges_verified AS verified_count,
+                  r.edges_stale    AS stale_count`)
+    : sql.unsafe(`NULL::bigint AS verified_count,
+                  NULL::bigint AS stale_count`);
+  const join = reported
+    ? sql.unsafe("LEFT JOIN map_report r ON r.genealogy_id = g.id")
+    : sql.unsafe("");
+
   const rows = (await sql`
     SELECT g.id, g.concept, g.prompt_version, g.status, g.updated_at,
            COALESCE(g.user_edits, '[]'::jsonb) AS user_edits,
@@ -460,16 +491,15 @@ export async function listGenealogies() {
              WHERE d.concept = g.concept AND d.prompt_version = g.prompt_version
                AND d.defines_concept = true)                                             AS paper_count,
            (SELECT count(*) FROM edges e WHERE e.genealogy_id = g.id)                    AS edge_count,
-           r.edges_verified                                                              AS verified_count,
-           r.edges_stale                                                                 AS stale_count
+           ${counts}
     FROM genealogies g
-    LEFT JOIN map_report r ON r.genealogy_id = g.id
+    ${join}
     ORDER BY g.updated_at DESC
   `) as {
     id: number; concept: string; prompt_version: string; status: string;
     updated_at: string; user_edits: UserEdit[]; stream_count: number | null;
-    paper_count: number; edge_count: number; verified_count: number;
-    stale_count: number;
+    paper_count: number; edge_count: number; verified_count: number | null;
+    stale_count: number | null;
   }[];
   return rows.map((g) => ({ ...g, edit_count: curatorialEdits(g.user_edits).length }));
 }

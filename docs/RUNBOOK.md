@@ -169,7 +169,20 @@ step 1 and re-run step 2; nothing is damaged, but nothing is published either.
 `recheck_stamp.py` needs `LINEAGE_READ_URL` and issues only `SELECT`, so it is
 safe to run at any point above, including from an agent's shell.
 
-**Applying migration 016 (the map report).** Two `CREATE VIEW`s and one guarded
+**Applying migration 016 (the map report). Run the migration BEFORE deploying
+the app, never after: the home page and `/g/<id>/report` both read `map_report`,
+and until it exists there is no report to read.**
+
+That ordering used to be the whole of it. Since issue #92 the home page also
+degrades rather than falling over: `listGenealogies` asks `to_regclass` whether
+the view is there and, if it is not, selects NULL for the two counts, so `/`
+renders with "verified relationships not counted" on every card instead of
+returning a 500 in full. The degraded state is a safety net and not a supported
+one — `/g/<id>/report` still needs the view and has nothing to show without it —
+so the ordering above is still the instruction. Deploy first and the front page
+tells every visitor that nothing is counted.
+
+Two `CREATE VIEW`s and one guarded
 `GRANT`. No table, no column, no data touched, no backfill, no rewrite lock, and
 nothing to schedule afterwards: a view holds no data and is computed on read.
 

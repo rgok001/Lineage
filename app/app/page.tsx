@@ -68,9 +68,24 @@ export default async function Home() {
                         this is that vocabulary, not a new one. A quote count, if it
                         is ever wanted here, has to be counted with DISTINCT and not
                         renamed into existence. */}
-                    <span style={{ color: "var(--verified)" }}>{g.verified_count} verified relationships</span>
-                    {g.stale_count > 0 && (
-                      <span style={{ color: "var(--ink-soft)" }}> · {g.stale_count} not re-checked</span>
+                    {/* Absence, not zero (issue #92). The counts are null only
+                        when the report the card reads them from is not in the
+                        database yet — an app deployed ahead of its migration.
+                        "0 verified relationships" on a map holding 287 of them
+                        would be a worse answer than the 500 this replaced, and
+                        it would be a green one. No verified colour on it
+                        either: green here is the stamp. */}
+                    {g.verified_count === null ? (
+                      <span style={{ color: "var(--ink-soft)", fontStyle: "italic" }}>
+                        verified relationships not counted
+                      </span>
+                    ) : (
+                      <>
+                        <span style={{ color: "var(--verified)" }}>{g.verified_count} verified relationships</span>
+                        {Number(g.stale_count ?? 0) > 0 && (
+                          <span style={{ color: "var(--ink-soft)" }}> · {g.stale_count} not re-checked</span>
+                        )}
+                      </>
                     )}
                     {g.edit_count > 0 && <> · {g.edit_count} curatorial change(s)</>}
                   </div>
