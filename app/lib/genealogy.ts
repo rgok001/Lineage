@@ -171,17 +171,24 @@ export function actorTally(edits: UserEdit[]): { parts: string[]; anyKnown: bool
   return { parts, anyKnown: known.length > 0 };
 }
 
-/** The sentence the two pages use: how many curatorial changes, and who by,
+/** The sentence the two pages use: how many changes made by hand, and who by,
  *  with the same tally the exports print. Never asserts attribution the entries
- *  have not established, which is decision 18 applied to its own copy. */
+ *  have not established, which is decision 18 applied to its own copy.
+ *
+ *  Says it in the reader's words rather than the team's (issue #126): this read
+ *  "No curatorial changes have been made to it since" on the front door's
+ *  footnote, where "curatorial" is a word the reader meets nowhere else, and
+ *  "change(s)" is the machine talking in the same place #120 removed it from the
+ *  home card. The count and what counts as curation are untouched. */
 export function curationSentence(edits: unknown): string {
   const curated = curatorialEdits(edits);
   if (!curated.length)
-    return "No curatorial changes have been made to it since; any that are will be recorded with who made them.";
+    return "Nobody has edited this map by hand since. If anyone does, the change will be recorded, along with who made it.";
   const { parts, anyKnown } = actorTally(curated);
-  const head = `${curated.length} curatorial change(s) have been made to it since`;
+  const one = curated.length === 1;
+  const head = `${curated.length} change${one ? "" : "s"} ${one ? "has" : "have"} been made to it by hand since`;
   return anyKnown ? `${head}: ${parts.join(", ")}.`
-                  : `${head}. No actor is recorded for any of them.`;
+                  : `${head}. Who made ${one ? "it" : "them"} was not recorded.`;
 }
 
 /** A paper ranked for the spine. attention = on-term weighted uptake (who built

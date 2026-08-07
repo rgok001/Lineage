@@ -538,6 +538,16 @@ was a back-link in whatever corner each page happened to use.
   on a page whose only curated map was the one this document had already
   retracted that claim about. It is now gated on `edit_count` across the listed
   maps and says the truthful thing when none has been curated (decision 18).
+  **That closing line now says it in the reader's words** (issue #126): "any
+  curatorial change is listed in the map's audit trail, with its actor where one
+  was recorded" put two team words in one clause, and #120 had already replaced
+  the first of them on the counter three lines above, so the page said "changes
+  by hand" in one place and "curatorial change" in another about the same thing.
+  It reads "Nobody has edited one by hand since. If anyone does, the change is
+  listed in that map's audit trail, along with who made it where we know." The
+  ticket left "audit trail" as the app's choice and it is **kept**: a researcher
+  knows the phrase, and `/about` and the evidence page already use it, so the
+  thing has one name in all three places.
   Each card counts **papers that define the term** (issue #123 names the
   population, because three other surfaces print a different number under the
   bare word "papers"; the four are set out under `/g/[id]/report` below), threads
@@ -601,6 +611,17 @@ was a back-link in whatever corner each page happened to use.
   arXiv revisions let two papers cite each other and the stored year is the v1
   date, so a reverse leg is a data artefact, not a lineage. Below the map: the
   through-line, the thread list, and a link into the evidence layer.
+  **The closing footnote says what it means** (issue #126). "No curatorial
+  changes have been made to it since" is `curationSentence` in `lib/genealogy.ts`
+  and now reads "Nobody has edited this map by hand since. If anyone does, the
+  change will be recorded, along with who made it"; its other branch lost the
+  machine's "change(s)" and pluralises properly, including the verb, in both
+  directions. "Scope is the corpus: broadening the source adds threads, each
+  arriving with its evidence attached" was three team words and a claim
+  compressed past one read, and now says it outright: this map covers only the
+  papers it read, all of them from arXiv, and reading more from more places
+  would add threads, each arriving with its own evidence. The count, and what
+  counts as curation, are untouched.
 - `/g/[id]/river/[sid]` : a thread's account. Its arc, then its papers in the
   order the idea moved, each with what it did, the grounded prose, and the
   paper's own definition quote carrying its true verdict. The quote comes from

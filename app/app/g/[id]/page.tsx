@@ -186,9 +186,15 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
 
       <p style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-faint)",
         lineHeight: 1.8, marginTop: "1.8rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>
+        {/* "Scope is the corpus: broadening the source adds threads" was three
+            team words and a compressed claim that needed two reads (issue #126).
+            What it is honestly saying is worth keeping and is now said outright:
+            this map covers only what it read, and the limit is where we read,
+            not the idea. */}
         Drafted automatically from the papers’ own words. {data.curation}{" "}
-        Scope is the corpus: broadening the source adds threads, each arriving with its
-        evidence attached.
+        This map covers only the papers it read, all of them from arXiv. Reading more,
+        from more places, would add threads, and each one would arrive with its own
+        evidence.
       </p>
     </main>
   );

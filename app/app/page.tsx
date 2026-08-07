@@ -134,12 +134,19 @@ export default async function Home() {
           read "then curated by hand" on every map; then it counted a restore
           after an incident as somebody's editorial work. And "with who made it"
           asserts an attribution the entries themselves may not carry, which is
-          the defect decision 18 exists to remove, restated in its own copy. */}
+          the defect decision 18 exists to remove, restated in its own copy.
+
+          "Curatorial change" and "its actor" were two team words in one clause
+          (issue #126), and #120 had already replaced the first of them three
+          lines above, so the page said "changes by hand" in one place and
+          "curatorial change" in another about the same thing. "Audit trail" is
+          kept deliberately: it is a phrase a researcher knows, and /about and
+          the evidence page both use it, so the app names the thing one way. */}
       <p style={{ marginTop: "2rem", fontSize: ".78rem", color: "var(--ink-soft)", fontStyle: "italic" }}>
         Each account is drafted automatically from the papers themselves.{" "}
         {rows.some((g) => g.edit_count > 0)
-          ? "Where one has been curated since, the count is shown above and each change is listed in that map’s audit trail, with its actor where one was recorded."
-          : "None has been curated since. Any curatorial change is listed in the map’s audit trail, with its actor where one was recorded."}
+          ? "Where a map has been edited by hand, the number of changes is shown above, and each one is listed in that map’s audit trail, along with who made it where we know."
+          : "Nobody has edited one by hand since. If anyone does, the change is listed in that map’s audit trail, along with who made it where we know."}
       </p>
     </main>
   );
