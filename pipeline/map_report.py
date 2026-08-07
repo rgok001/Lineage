@@ -11,11 +11,26 @@ answer into a report, and that is only safe if it structurally cannot write. It
 does not repair, it does not refresh anything, and there is nothing to refresh --
 a view holds no data.
 
+It does, however, COMMIT. `with psycopg.connect(...)` commits on the way out of
+the block -- that is what psycopg's connection context manager does, and nothing
+here suppresses it -- so a statement counter watching this command sees two
+SELECTs and one commit, not two SELECTs and nothing (issue #93). The commit
+carries no change, because the only statements in the transaction are those two
+SELECTs, and it is left alone rather than turned into a rollback: what makes this
+command safe to point at production is the read-only role and the statements it
+issues, and rearranging the transaction to make a sentence true would be
+decorating the guarantee rather than strengthening it. Inherited from
+`recheck_stamp.py`, which does the same.
+
 **--json writes to stdout and to no file.** A report written to disk is a stored
 quality figure with a different spelling: it would survive the curatorial edit
 that invalidates it, which is the one thing this ticket exists to prevent. If you
 want it in a file, redirect it, and then it is your file and dated by your shell
 rather than ours.
+
+**--json's shape follows the flag and not the data**: `--all` is always a JSON
+array, of one element if the database holds one map, and a named concept is
+always a JSON object.
 
 There is no threshold in this file and there must never be one. No cut-off, no
 grade, no colour, no composite score, and no constant that decides how anything
@@ -27,7 +42,8 @@ Usage:
   python pipeline/map_report.py "attention"
   python pipeline/map_report.py "attention" --prompt-version v2
   python pipeline/map_report.py --all
-  python pipeline/map_report.py "attention" --json
+  python pipeline/map_report.py "attention" --json      # one JSON object
+  python pipeline/map_report.py --all --json            # a JSON array, always
 """
 
 import argparse
@@ -313,7 +329,8 @@ def main() -> None:
     ap.add_argument("--all", action="store_true",
                     help="report on every map, so the reference points can be read here")
     ap.add_argument("--json", action="store_true",
-                    help="the row as JSON, on stdout and to no file")
+                    help="JSON on stdout and to no file: an object for a named "
+                         "concept, an array for --all however many maps exist")
     args = ap.parse_args()
     if not args.concept and not args.all:
         ap.error("name a concept, or pass --all")
@@ -346,8 +363,18 @@ def main() -> None:
                      f"This database holds: {have}.")
 
     if args.json:
-        print(json.dumps([json.loads(as_json(r, buckets)) for r in chosen], indent=2)
-              if len(chosen) > 1 else as_json(chosen[0], buckets))
+        # **The flag decides the shape, never the row count** (issue #93). This
+        # used to switch on `len(chosen) > 1`, so `--all --json` emitted an
+        # object against a database holding one map and an array against a
+        # database holding six. A script parsing it worked until somebody mapped
+        # a second concept or deleted the second-to-last, and then broke on data
+        # rather than on a change anyone made to this file. `--all` is always an
+        # array, of one if that is all there is; a named concept is always an
+        # object.
+        if args.all:
+            print(json.dumps([json.loads(as_json(r, buckets)) for r in chosen], indent=2))
+        else:
+            print(as_json(chosen[0], buckets))
         return
 
     for i, row in enumerate(chosen):

@@ -676,11 +676,22 @@ tool in this pipeline built that way, and for `recheck_stamp.py`'s reason: its
 value is that an Operator can run it against production and paste the answer into
 a report, which is only safe if it structurally cannot write. It does not repair
 and there is nothing to refresh, because a view holds no data.
+It commits, and the docstring says so. `with psycopg.connect(...)` commits on the
+way out of the block, which is what psycopg's context manager does; the commit
+carries nothing because the transaction holds two `SELECT`s, and it is left alone
+rather than rewritten into a rollback, because the guarantee rests on the
+read-only role and the statements issued rather than on the transaction's shape
+(issue #93). `recheck_stamp.py` does the same.
 `--all` prints every map, which is how the reference points beside each figure
 are read from a shell. **`--json` goes to stdout and to no file**: a report
 written to disk is a stored quality figure with a different spelling, and would
-survive the curatorial edit that invalidates it. Numbers arrive as strings in the
-JSON rather than as floats, because they are exact values out of Postgres and
+survive the curatorial edit that invalidates it. **Its shape follows the flag and
+never the row count**: `--all --json` is a JSON array, of one element if the
+database holds one map, and a named concept is a JSON object. It used to switch
+on `len(chosen) > 1`, so `--all --json` returned an object against a database
+with one map and an array against a database with six, and any script reading it
+broke the day a second map was created (issue #93). Numbers arrive as strings in
+the JSON rather than as floats, because they are exact values out of Postgres and
 turning a count or a spend into a binary float on the way out would be this
 command inventing a number.
 It prints the same figures in the same order under the same labels as the page,
