@@ -12,9 +12,29 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
 
   const verifiedDrawn = data.edges.filter((e) => e.stamp === "verified").length;
 
+  /**
+   * The legend is derived from the links this canvas actually drew (issue #115).
+   *
+   * It was four hardcoded entries against a taxonomy of six, and the canvas
+   * holds a colour for all six, so a `contests` or `merges` link among the
+   * pivotal papers drew in a colour the key never explained. That is the key
+   * failing at exactly the moment the map says something unusual: a contested
+   * idea is the most interesting line on any map and it was the unexplained one.
+   *
+   * Derived rather than hardcoded to six, so no map carries dead entries for
+   * types it does not hold. A type with no gloss here still gets a row, named
+   * and unglossed, because a drawn colour with no key is the defect and a
+   * missing sentence is not.
+   */
+  const GLOSS: Record<string, string> = {
+    extends: "built on", contests: "pushed back", narrows: "specialised",
+    renames: "same idea, new name", merges: "combined ideas", migrates: "jumped fields",
+  };
+  const drawnTypes = [...new Set(data.edges.map((e) => e.type))];
   const legend: [string, string][] = [
-    ["migrates", "jumped fields"], ["extends", "built on"], ["narrows", "specialised"], ["renames", "same idea, new name"],
-  ];
+    ...Object.keys(GLOSS).filter((t) => drawnTypes.includes(t)),
+    ...drawnTypes.filter((t) => !(t in GLOSS)).sort(),
+  ].map((t) => [t, GLOSS[t] ?? "an unrecognised kind of link"]);
 
   return (
     <main style={{ maxWidth: 1400, margin: "0 auto", padding: "1rem 1.5rem 4rem" }}>

@@ -557,8 +557,19 @@ was a back-link in whatever corner each page happened to use.
   which on `embedding` sat above 201 verified of 305; and the footer states the
   map's actual `edit_count` instead of asserting it was curated by hand.
   **The badge counts the links *drawn on the map*, not all of the map's
-  relationships**, which is why it says "links shown" — one word doing a lot of
-  work. The full figure lives on `/g/<id>/evidence`.
+  relationships**, and since issue #114 it says both numbers and where the other
+  one is: "N links drawn here, all quote-verified · the full M are in the
+  evidence" (see the report section below for how M is counted). It used to say
+  "N of M links shown quote-verified" and leave the word "shown" to carry the
+  whole difference.
+  **The legend is derived from the link types this map actually drew** (issue
+  #115). It was four hardcoded entries, migrates/extends/narrows/renames, against
+  a taxonomy of six, while `InfluenceMap.tsx` holds a colour for all six: a
+  `contests` or `merges` link among the pivotal papers drew in a colour the key
+  never explained, which is the key failing exactly when the map says something
+  unusual. Derived rather than hardcoded to six, so a map carries no dead entries
+  for types it does not hold, and a type with no gloss still gets a row, named
+  and unglossed, because a drawn colour with no key is the defect.
   `getInfluenceMap()` picks the top 20 papers by attention plus the 8 strongest
   movers by displacement, preferring movers that have some uptake and topping up
   from the rest; every thread is then guaranteed its strongest paper, so the
