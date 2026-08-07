@@ -720,6 +720,17 @@ The why behind the load-bearing choices, in one place:
     revisit when traces are frequent. The manual `migrate.py` path stays in the
     runbook as the emergency route.
 
+32. **The dark palette is blessed; the law now records what ships**
+    (2026-08-07, Product Owner, issue 116). The UX review found `CLAUDE.md`'s
+    token section still carrying the light palette from the original approved
+    mockup while the site has shipped a coherent dark system for weeks, and
+    one of the six edge types (`merges`) had no colour in law at all. Asked
+    which had moved — the system violating its law, or the law lagging a
+    choice already made — the owner blessed the dark palette. `CLAUDE.md` now
+    records the shipped values from `app/app/globals.css` verbatim, including
+    all six edge colours and the two stamp colours. The light values survive
+    only in this entry and in git history.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record

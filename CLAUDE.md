@@ -160,9 +160,12 @@ grep -A1 "^CLASS: derived" CLAUDE.md README.md docs/*.md .claude/memory/*.md
 If something you want to write fits no row above, it does not get written. Add
 the row first, deliberately, or put the content in the file that already owns it.
 
-## UI design tokens (from approved mockup — keep consistent)
-- Palette: paper #EDF0F1, card #FBFCFC, ink #1C2B33, ink-soft #5A6B74, line #D8DEE1
-- Edge colours: extends #33628C · contests #A34A3A · narrows #6B5B95 · renames #8A7433 · migrates #3E7257
+## UI design tokens (owner-blessed 2026-08-07, decision 32 — keep consistent)
+The shipped dark palette is the law; the light values from the original mockup
+were retired when the owner blessed what the site actually ships (issue 116).
+- Palette: paper #0d1317, card #121a20, card-2 #182126, ink #e8eef1, ink-soft #8b9aa2, ink-faint #5a6a72, line #223038, line-soft #18232a
+- Edge colours: extends #6b9bd0 · contests #c9776a · narrows #9a8ac4 · renames #c9a84e · migrates #5cb389 · merges #d0895c
+- Stamp colours: verified #5cb389 · inferred #f0605f
 - Type: Spectral (display/quotes, serif), IBM Plex Sans (UI), IBM Plex Mono (data/years/labels)
 - Evidence panel: two facing quote-cards, verification stamp (green ✓ verified / red ◌ inferred + confidence)
 - Solid edges = verified, dotted = inferred. Legend always visible.
