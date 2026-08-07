@@ -531,7 +531,10 @@ SELECT g.id                        AS genealogy_id,
        -- words.
        --
        -- The real figure is a regex scrape of the stages' stdout, kept by the
-       -- worker in `trace_requests.progress`. It is only as good as the lines the
+       -- worker in `trace_requests.progress`. The design's literal wording for
+       -- `run_cost_basis` named the worker; this says the same thing without it,
+       -- because the string is rendered to a reader and "worker" is on the
+       -- standing list of internal words the interface may not use. It is only as good as the lines the
        -- stages print, and a stage that stops printing its spend silently drops
        -- out of the total with no error; the caveats are printed beside the
        -- figure and the fix is #47. The jsonb type test rather than a cast is so
@@ -540,7 +543,7 @@ SELECT g.id                        AS genealogy_id,
        CASE WHEN jsonb_typeof(lr.progress -> 'spend_usd') = 'number'
             THEN (lr.progress ->> 'spend_usd')::numeric END AS run_cost_usd,
        CASE WHEN jsonb_typeof(lr.progress -> 'spend_usd') = 'number'
-            THEN 'from the worker''s record of the last completed run'
+            THEN 'from the record kept of the last completed run'
             ELSE 'not recorded' END                         AS run_cost_basis,
 
        -- Seconds, not an interval, so the page and the CLI receive the same

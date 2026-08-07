@@ -109,7 +109,14 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
         lineHeight: 1.8, marginTop: "1.8rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>
         Drafted automatically from the papers’ own words. {data.curation}{" "}
         Scope is the corpus: broadening the source adds threads, each arriving with its
-        evidence attached.
+        evidence attached.{" "}
+        {/* A link and no numbers (issue #30). The badge above counts the links
+            DRAWN on this canvas, which is a narrower population than any figure
+            on the report, and putting the two side by side in one header is how
+            two counts of different things start being read as one. */}
+        <Link href={`/g/${id}/report`} style={{ color: "var(--edge-extends)" }}>
+          What this map is made of ›
+        </Link>
       </p>
     </main>
   );

@@ -586,6 +586,34 @@ was a back-link in whatever corner each page happened to use.
   "kernel") renders as separate families under a disclosure banner, with
   citation-isolated meanings pulled into an "Unconnected meanings" section. A
   single-family map renders flat and unchanged.
+- `/g/[id]/report` : what this map is made of (issue #30, `[F2]`). One screen,
+  one column, no interactivity, every figure selected from migration 016's two
+  views by `lib/report.ts` and computed nowhere else, so this page and
+  `pipeline/map_report.py` cannot disagree about the same map. Sections: coverage
+  of the reading, evidence (the three stamp states for definitions and for
+  relationships), the same counts split by source, quote reuse, shape, corpus
+  age with a per-year histogram, the run, and a closing list of the three things
+  the page cannot tell you. **No threshold, no colour scale, no grade, no badge
+  and no composite score**, because each of those is a threshold however it is
+  spelled; the only colours on the page are the ink, line and card tokens plus
+  the one link colour, which is checked rather than asserted. Beside every figure
+  is the same figure for every other map, labelled "the other maps in this
+  system" rather than a baseline, with the sample size taken from the number of
+  rows the view returned rather than written into the page.
+  Every figure carries two sentences: what it counts and what would move it.
+  **An absent figure prints words, never a zero and never a blank**, and the
+  words distinguish "not recorded" (nothing in this system holds it) from an
+  empty population ("no relationships", "no years recorded"). The cost figure is
+  the sharp case: `genealogies.spend_usd` reads `0.0000` on every map and is
+  written by nothing, so a `$0.00` there would be the exact defect this page
+  exists to avoid; nothing in the path from the view to the page coalesces it.
+  Pending the owner's answer to the report design's open question 1 — the roadmap
+  says a stranger should see what a map cost, this file's copy rules say no cost
+  talk aimed at visitors, and the two cannot both hold — the cost figure renders
+  for the owner only and every other figure renders for everyone.
+  `/g/[id]` links to it from the footer beside the curation line and shows no
+  report figures itself, because that header's "X of Y links quote-verified"
+  counts only the links drawn on the canvas and is a narrower population.
 - `/about` : the public methods page, written for a researcher deciding whether
   to rely on this. What a map is, how one is built, how papers are ranked (and
   why ranking on uptake alone hides the papers that moved a term), the six link
