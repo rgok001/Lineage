@@ -538,7 +538,10 @@ was a back-link in whatever corner each page happened to use.
   on a page whose only curated map was the one this document had already
   retracted that claim about. It is now gated on `edit_count` across the listed
   maps and says the truthful thing when none has been curated (decision 18).
-  Each card counts papers, threads or relationships, **verified relationships**
+  Each card counts **papers that define the term** (issue #123 names the
+  population, because three other surfaces print a different number under the
+  bare word "papers"; the four are set out under `/g/[id]/report` below), threads
+  or relationships, **verified relationships**
   and not-re-checked. That middle count read "N verified quotes" until issue #73,
   where N is edges: on the shipped exports 287 verified edges of "attention" rest
   on 79 distinct quote strings and 286 of "embedding" on 107, so the noun
@@ -561,7 +564,10 @@ was a back-link in whatever corner each page happened to use.
   one is: "N links drawn here, all quote-verified · the full M are in the
   evidence" (see the report section below for how M is counted). It used to say
   "N of M links shown quote-verified" and leave the word "shown" to carry the
-  whole difference.
+  whole difference. Its paper count says "N pivotal of M papers this map ranked"
+  for the same reason (issue #123): M is the defining papers that carry an uptake
+  score, which is not the map's paper count and is not what the home card or the
+  evidence page counts.
   **The legend is derived from the link types this map actually drew** (issue
   #115). It was four hardcoded entries, migrates/extends/narrows/renames, against
   a taxonomy of six, while `InfluenceMap.tsx` holds a colour for all six: a
@@ -668,6 +674,10 @@ was a back-link in whatever corner each page happened to use.
   (issue #120): "the raw ranked papers ... the readable account is the map" is
   now "Every paper and every typed relationship, with the evidence behind each.
   For the readable account, go back to the map."
+  Its header count reads "N papers grouped into meanings" rather than "N papers"
+  (issue #123): it sums the membership of `genealogies.nodes`, which is a
+  different population from the three other "papers" counts in the app. All four
+  are set out under `/g/[id]/report` below.
 - `/g/[id]/report` : what this map is made of (issue #30, `[F2]`). One screen,
   one column, no interactivity, every figure selected from migration 016's two
   views by `lib/report.ts` and computed nowhere else, so this page and
@@ -808,6 +818,28 @@ was a back-link in whatever corner each page happened to use.
   cannot multiply a row because `definitions` is UNIQUE on (paper_id, concept,
   prompt_version). Issue #30's reasoning is kept rather than reversed: two counts
   on one page are dangerous *unlabelled*, and this labels them.
+  **Four surfaces print a count of "papers" and all four count different sets**
+  (issue #123). On the live "attention" map they read 88 on the home card, 84 on
+  the front-door badge, 85 on the evidence header and 156 on this page, and a
+  reader crossing that hop had nothing telling them the word meant four things.
+  The four populations, each verified by executing that surface's own query
+  against one constructed map (20 / 12 / 11 / 10, and each number moved only by
+  its own input):
+  - **every `definitions` row for the map**, whether or not the paper defines the
+    term. This page's `papers_with_a_reading`, labelled "papers read".
+  - **the rows with `defines_concept = true`**. The home card's `paper_count` and
+    this page's `papers_defining`. Two implementations, same population, so both
+    say "papers that define the term".
+  - **the membership of `genealogies.nodes`**, summed over the stored grouping.
+    The evidence page header, labelled "papers grouped into meanings". It is a
+    snapshot Stage C wrote and curation edits, so it is neither a subset nor a
+    superset of the defining papers.
+  - **defining papers that also carry an uptake score**, which is the pool
+    `getInfluenceMap` picks the canvas's dots from: a paper with no score cannot
+    be sized or placed. The front-door badge, labelled "papers this map ranked".
+  No query was found wrong and none was changed. The numbers are not forced
+  equal, because they count different things; each names its population where it
+  appears, which is the bar #114 set one number away on the same hop.
   `/g/[id]` links to it from a full-width row beside the evidence and export
   rows and shows no report figures itself, because that header's badge counts
   only the links drawn on the canvas and is a narrower population. **That row's

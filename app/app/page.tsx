@@ -52,7 +52,18 @@ export default async function Home() {
                     {g.concept}
                   </div>
                   <div style={{ fontSize: ".8rem", color: "var(--ink-soft)", marginTop: ".25rem" }}>
-                    {g.paper_count} papers ·{" "}
+                    {/* The population is named, because three other surfaces on
+                        the same journey print a different number under the bare
+                        word "papers" (issue #123): this card 88, the front-door
+                        badge 84, the evidence header 85, the report 156. Each is
+                        a correct count of a different set, and the reader
+                        crossing the hop had nothing telling them that. This one
+                        is `count(*)` over the map's definitions with
+                        `defines_concept = true`, which is exactly what the report
+                        prints as "papers that define the term" — same population,
+                        so the same words. Do not make the four numbers equal;
+                        they count different things. */}
+                    {g.paper_count} papers that define the term ·{" "}
                     {g.stream_count != null
                       ? <>{g.stream_count} threads</>
                       : <>{g.edge_count} relationships</>} ·{" "}

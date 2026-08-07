@@ -247,6 +247,15 @@ export type InfluenceMapData = {
   papers: MapPaper[];
   edges: MapEdge[];
   streams: { id: string; name: string; color: string; count: number }[];
+  /** The papers that define the term AND carry an uptake score: `rows.length`
+   *  from the query above, which is the pool the canvas picks its dots from. It
+   *  is NOT the map's paper count and must never be labelled as one (issue
+   *  #123). Four surfaces print a count under the word "papers" and all four
+   *  count different sets — every definitions row for the map (the report's
+   *  "papers read"), the defining ones (`paper_count` on the home card and
+   *  `papers_defining` on the report), the membership of the stored grouping
+   *  (the evidence page header), and this. Reproduced on one constructed map:
+   *  20 / 12 / 11 / 10, each moved only by its own input. */
   total_papers: number;
   /** Every typed relationship in the map, not just the ones the canvas draws.
    *  The badge needs both counts to name both populations (issue #114): a reader

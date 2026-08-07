@@ -64,8 +64,15 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
         <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.9rem", margin: ".4rem 0 0" }}>
           “{g.concept}” · the papers and their links
         </h1>
+        {/* The third of four "papers" counts on one journey, now named (issue
+            #123). This is the membership of the map's stored grouping, so it is
+            neither the defining papers the home card counts nor the ranked pool
+            the front-door badge counts: a paper leaves it when someone deletes
+            the meaning holding it, and it never held a paper the grouping was
+            written without. Measured on one constructed map, the four queries
+            returned four different numbers from four different populations. */}
         <p style={{ color: "var(--ink-soft)", margin: ".5rem 0 0", lineHeight: 1.5 }}>
-          {g.nodes.reduce((s, n) => s + n.members.length, 0)} papers ·{" "}
+          {g.nodes.reduce((s, n) => s + n.members.length, 0)} papers grouped into meanings ·{" "}
           <strong>{edges.length} typed relationships</strong> (
           <span style={{ color: "var(--verified)" }}>{verified} verified</span>
           {inferred > 0 && (

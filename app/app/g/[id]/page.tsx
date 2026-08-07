@@ -60,7 +60,14 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
               label them rather than to show one. */}
           <span style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)",
             background: "var(--card)", border: "1px solid var(--line)", borderRadius: 999, padding: ".38rem .8rem", marginTop: ".4rem" }}>
-            {data.papers.length} pivotal of {data.total_papers} papers ·{" "}
+            {/* "papers this map ranked", not "papers" (issue #123). #114 named
+                both link populations here and left the paper count bare, and it
+                is the same seam: the home card says 88, this said 84, the
+                evidence page says 85. This number is the papers that define the
+                term AND carry an uptake score, which is the pool the canvas
+                selects its dots from — a paper with no score cannot be sized or
+                placed. Named the way the link clause beside it is named. */}
+            {data.papers.length} pivotal of {data.total_papers} papers this map ranked ·{" "}
             {data.edges.length === 0
               ? "no links between them"
               /* Counted on the resolved stamp, not the stored boolean. A count
