@@ -44,7 +44,14 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
 
   return (
     <main style={{ maxWidth: 940, margin: "0 auto", padding: "1rem 1.5rem 5rem" }}>
-      <Link href={`/g/${g.id}`} style={{ fontSize: ".8rem", color: "var(--ink-soft)" }}>‹ the map</Link>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <Link href={`/g/${g.id}`} style={{ fontSize: ".8rem", color: "var(--ink-soft)" }}>‹ the map</Link>
+        {/* Issue #103: the report is part of the trust story this page tells,
+            so its door belongs here, not in a footer. */}
+        <Link href={`/g/${g.id}/report`} style={{ fontSize: ".8rem", color: "var(--ink-soft)" }}>
+          what this map is made of ›
+        </Link>
+      </div>
 
       <header style={{ borderBottom: "2px solid var(--line)", padding: "1rem 0 1.1rem", marginBottom: "1.5rem" }}>
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", letterSpacing: ".14em",

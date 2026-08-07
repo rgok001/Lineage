@@ -91,6 +91,22 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
         </span>
       </Link>
 
+      {/* Issue #103: this row was a footnote link and nobody scrolled to it. It
+          carries no numbers on purpose — the header badge counts the links drawn
+          on this canvas, a narrower population than any figure on the report,
+          and one page holding both counts unlabelled is how they get read as
+          one (issue #30's reasoning, kept). */}
+      <Link href={`/g/${id}/report`} style={{ display: "flex", alignItems: "center", gap: ".6rem",
+        textDecoration: "none", marginTop: ".6rem", padding: ".65rem .9rem", borderRadius: 8,
+        border: "1px dashed var(--line)" }}>
+        <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: ".95rem", color: "var(--ink)" }}>
+          What this map is made of →
+        </span>
+        <span style={{ fontSize: ".8rem", color: "var(--ink-soft)", marginLeft: "auto" }}>
+          its own account, figure by figure: what is verified, what it rests on, what the run cost
+        </span>
+      </Link>
+
       <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap",
         marginTop: ".6rem", padding: ".65rem .9rem", borderRadius: 8, border: "1px dashed var(--line)" }}>
         <span style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: ".95rem", color: "var(--ink)" }}>
@@ -109,14 +125,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
         lineHeight: 1.8, marginTop: "1.8rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>
         Drafted automatically from the papers’ own words. {data.curation}{" "}
         Scope is the corpus: broadening the source adds threads, each arriving with its
-        evidence attached.{" "}
-        {/* A link and no numbers (issue #30). The badge above counts the links
-            DRAWN on this canvas, which is a narrower population than any figure
-            on the report, and putting the two side by side in one header is how
-            two counts of different things start being read as one. */}
-        <Link href={`/g/${id}/report`} style={{ color: "var(--edge-extends)" }}>
-          What this map is made of ›
-        </Link>
+        evidence attached.
       </p>
     </main>
   );

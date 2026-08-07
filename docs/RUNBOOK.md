@@ -48,8 +48,9 @@ invoke `C:\Users\GGPC\AppData\Local\Programs\Python\Python312\python.exe`.
 `schema_migrations`. Migrations run against the direct endpoint.
 
 **Deploying the app.** Push to `master`; Vercel auto-deploys (root directory
-is `app/`). Env var changes in Vercel do not reach an existing build: redeploy
-after changing them.
+is `app/`) to https://lineage-green.vercel.app — recorded here 2026-08-07
+because until then the address existed only in browser bookmarks. Env var
+changes in Vercel do not reach an existing build: redeploy after changing them.
 
 **Deploying the worker, and migrations with it.** Automatic since decision 31
 (2026-08-07, issue #102): a push to `master` deploys the worker
