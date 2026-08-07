@@ -30,7 +30,8 @@ const SHIPPED: Item[] = [
   { title: "The influence map",
     body: "Every pivotal paper placed by year and sized by how much later work built on it for the term, with the relationships between specific papers typed and named." },
   { title: "Verified quotes throughout",
-    body: "Each definition is quoted verbatim and string-matched against our own extraction of the paper. Quotes that cannot be matched are marked inferred rather than dropped or quietly smoothed over." },
+    // One phrase for the verification claim across the product (issue #129).
+    body: "Each definition is quoted word for word from the paper, and checked against the text this system pulled out of it. Quotes that cannot be found are marked inferred rather than dropped or quietly smoothed over." },
   { title: "Threads and their accounts",
     body: "The parallel lines of development a term followed, each readable as an ordered account of the papers that carried it." },
   { title: "Per-paper dossiers",

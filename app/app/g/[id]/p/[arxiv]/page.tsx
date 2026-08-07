@@ -177,8 +177,12 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
             <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", marginTop: ".35rem",
               color: STAMP_COLOR[quoteStamp], lineHeight: 1.5 }}>
               {quoteStamp === "verified" && "✓ verified verbatim against the source text"}
-              {quoteStamp === "inferred" && "○ could not be string-matched · shown as inferred"}
-              {quoteStamp === "stale" && "◌ not checked against this paper’s extracted text as it now stands · not shown as verified"}
+              {/* One phrase for this claim across the product (issue #129): the
+                  check is named by what it does, not by its technique, and the
+                  text it runs against says who pulled it out. lib/stamp.ts holds
+                  the wording these two are copied from. */}
+              {quoteStamp === "inferred" && "○ the check ran against the text this system pulled out of this paper and could not find it · shown as inferred"}
+              {quoteStamp === "stale" && "◌ not checked against this paper’s text as it now stands · not shown as verified"}
             </div>
             {/* The stamp above says the quote matches our reading of the paper. It
                 cannot say our reading matches the paper, and when we know that

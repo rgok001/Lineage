@@ -283,8 +283,14 @@ function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear
           novelty={e.target_novelty} section={e.target_section} />
         {e.stamp === "inferred" && (
           <p style={{ fontSize: ".78rem", color: "var(--inferred)", margin: ".7rem 0 0" }}>
-            ○ One of these quotes could not be string-matched against the extracted source text, so
-            this relationship is shown as <strong>inferred</strong>, never as verified.
+            {/* One phrase for this claim across the product (issue #129):
+                "word for word", never "string-matched", and "the text this
+                system pulled out of the paper", never "the extracted source
+                text", which named a step this reader has never been told
+                exists. The claim is unchanged. lib/stamp.ts holds the wording. */}
+            ○ The check ran against the text this system pulled out of the papers and could not
+            find one of these quotes, so this relationship is shown as{" "}
+            <strong>inferred</strong>, never as verified.
           </p>
         )}
         {/* The third state (migration 015). Not "we looked and it was not
@@ -296,7 +302,7 @@ function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear
             either of the other two. */}
         {e.stamp === "stale" && (
           <p style={{ fontSize: ".78rem", color: "var(--ink-soft)", margin: ".7rem 0 0" }}>
-            ◌ These quotes have not been checked against this paper&rsquo;s extracted text as it
+            ◌ These quotes have not been checked against the papers&rsquo; text as it
             now stands, either because that text has been replaced since they were checked or
             because the check left no record of what it read. So this relationship is shown as{" "}
             <strong>not re-checked</strong>, never as verified. The check is free and can be

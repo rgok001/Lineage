@@ -30,19 +30,43 @@ export const STAMP_COLOR: Record<StampState, string> = {
   stale: "var(--ink-soft)",
 };
 
-/** The sentence each state is entitled to. Never "verified" for anything but a
- *  stamp whose digest still matches the paper's own.
+/**
+ * The sentence each state is entitled to. Never "verified" for anything but a
+ * stamp whose digest still matches the paper's own.
  *
- *  The stale wording says "as it now stands" rather than "since the text
- *  changed", because stale has two causes and only one of them is a change we
- *  can point to: the stamp's digest differs from the paper's, or no digest was
- *  ever recorded. Naming the first as though it were both would be a claim about
- *  the corpus that the data does not support, which is the habit this ticket is
- *  about. */
+ * **These are the product's words for its central promise, decided once** (issue
+ * #129, UX ruling). Two rules, and they are not cosmetic. **"Word for word"
+ * always**, never "verbatim" and never "string-matched": it says the same thing
+ * without naming a technique. **"The text this system pulled out of the paper"
+ * always**, never "extracted text" and never "our own extraction": a reader
+ * meeting "extracted" cannot tell whether it means taken from the paper, which
+ * is trustworthy, or produced by the tool, which is a judgement, so the phrase
+ * names who did the pulling out. The claim itself is unchanged in all three:
+ * mechanical, word for word, against this system's own copy and never against
+ * the published PDF.
+ *
+ * **Nothing reads this constant today.** #129 was filed believing every stamp
+ * surface rendered from it; grepped on c9d9deb, the readers are of STAMP_LABEL
+ * and STAMP_COLOR only, and each page spells its own sentence around a symbol
+ * and its own extra clause. That is how the product came to state one promise in
+ * two vocabularies. Until a surface can render one of these directly, this is
+ * the wording those sentences are copied from, and a change here is a change to
+ * make in every one of them: /g/[id]/evidence, /g/[id]/p/[arxiv], lib/export.ts
+ * and /roadmap. /about is the one deliberate exception (#129, ruling 1): it is
+ * the page about the machinery, the reader has met extraction in step 2 before
+ * step 6 names it, and there the technique is the service being offered.
+ *
+ * The stale wording says "as it now stands" rather than "since the text
+ * changed", because stale has two causes and only one of them is a change we
+ * can point to: the stamp's digest differs from the paper's, or no digest was
+ * ever recorded. Naming the first as though it were both would be a claim about
+ * the papers that the data does not support.
+ */
 export const STAMP_MEANING: Record<StampState, string> = {
-  verified: "string-matched against this paper's own extracted text",
-  inferred: "could not be string-matched against the extracted text",
-  stale: "not checked against the extracted text as it now stands",
+  verified: "found word for word in the text this system pulled out of the paper",
+  inferred: "the check ran against the text this system pulled out of the paper "
+          + "and could not find it",
+  stale: "not checked against the paper's text as it now stands",
 };
 
 /**

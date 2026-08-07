@@ -293,6 +293,47 @@ other two copies of the rule are handed and both call stale (issue #60 again).
 `listGenealogies` still counts `paper_count` and `edge_count` itself rather than
 taking them from the view, so that "the report and the card agree about the size
 of a map" stays a check that can fail instead of an identity.
+
+**The three states are also said in one vocabulary, decided once** (issue #129,
+UX ruling implemented as given, 2026-08-08). #124 rewrote the verification claim
+on `/g/[id]/report` because "extracted" names a step the reader has never been
+told exists and cannot tell apart from a judgement the tool made; the same claim
+was still made in the old words on six other reader-facing surfaces, so the
+product stated its central promise two ways and a reader meeting both on one
+journey had to work out whether they were the same check. They are. Two rules
+now, recorded in `app/lib/stamp.ts` beside the words themselves: **"word for
+word" always**, never "verbatim" and never "string-matched", because it says the
+same thing without naming a technique; and **"the text this system pulled out of
+the paper" always**, never "extracted text" and never "our own extraction",
+because it names who did the pulling out. The three sentences are: verified,
+"found word for word in the text this system pulled out of the paper"; inferred,
+"the check ran against the text this system pulled out of the paper and could not
+find it"; not re-checked, "not checked against the paper's text as it now
+stands". They were applied to `STAMP_MEANING`, both per-row explainers on
+`/g/[id]/evidence`, both stamp lines on `/g/[id]/p/[arxiv]`, the roadmap's
+"Verified quotes throughout" item, and the export's preamble clause and two of
+its three per-quote footnotes. No claim moved in any of them.
+**Two deliberate exceptions.** `/about` keeps "string-matched against our own
+extraction" in step 6 and the Verified tier: it is the page *about* the
+machinery, the reader has been walked through extraction in step 2 before step 6
+names it, and naming the technique there is the service being offered (#125 left
+it on purpose and #129 confirms that on purpose). And the export preamble's
+not-re-checked clause, which #128 protected, changed with the rest, on the
+argument that the export is read furthest from any page that could explain the
+word and so needs the plainest wording of the three surfaces rather than the most
+protected.
+**`STAMP_MEANING` has no readers**, which is how the divergence happened and is
+recorded in its own comment: #129 was filed believing every stamp surface
+rendered from it, and grepped on `c9d9deb` the readers are of `STAMP_LABEL` and
+`STAMP_COLOR` only, with each page spelling its own sentence around a symbol and
+its own extra clause. It is the wording those sentences are copied from, and a
+change there is a change to make in each of them.
+**Still saying "verbatim", and outside #129's ruling**: the evidence page's
+●/○/◌ key ("both quotes were verified verbatim against the source text"), which
+#127 protects; the dossier's verified caption; and the export's verified
+per-quote stamp. #129 ruled on the sentences that said "string-matched" or
+"extracted", which is what its grep found, so these were left rather than swept,
+and they are #135.
 **Reading the view gave the home page a hard dependency on migration 016, and
 that dependency degrades rather than falling over** (issue #92): an app deployed
 before the migration lands did not lose two numbers, it lost `/` entirely, since
