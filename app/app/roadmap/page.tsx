@@ -43,11 +43,11 @@ const SHIPPED: Item[] = [
 
 const NEXT: Item[] = [
   { title: "Sources beyond arXiv",
-    body: "The single biggest limit on who this is useful to. Resolving open-access copies through DOIs, and biomedical full text, would open fields that do not preprint to arXiv." },
+    body: "The single biggest limit on who this is useful to. Finding free copies of papers by their DOI, and reading biomedical full text, would open up fields that do not post preprints to arXiv." },
   { title: "Claim-level verification, everywhere",
     body: "Part of this is already live: on a thread's account, where it has been run, each thing a paper did carries its own quote, matched against that paper's text or plainly marked as unmatched. What is left is doing that for every map and every account, so a whole reading is auditable sentence by sentence rather than paragraph by paragraph." },
   { title: "Bring your own corpus",
-    body: "Point it at a folder of PDFs or a BibTeX file instead of having it select papers. The pipeline already separates finding papers from reading them, so this is more plumbing than invention." },
+    body: "Point it at a folder of PDFs or a BibTeX file instead of having it choose papers for you. Finding papers and reading them are already separate steps inside the system, so this is more wiring than invention." },
   { title: "A preview before a run",
     body: "Showing the candidate papers, the year span and the cost before a map is built, so you can judge the corpus before spending on it." },
 ];

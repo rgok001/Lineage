@@ -87,10 +87,13 @@ export default function TracePanel({
         color: "var(--ink)", margin: "0 0 .35rem" }}>
         {signedIn ? "Which concept?" : "Requests"}
       </h2>
+      {/* "A curator reviews each request" used the team's word for the person
+          doing it (issue #128). /about explains what a curator is, and this page
+          is often the one a reader reaches first. */}
       <p style={{ fontSize: ".85rem", color: "var(--ink-soft)", margin: "0 0 .9rem", lineHeight: 1.55 }}>
         {owner
           ? "Yours start straight away. Anyone else's waits here for your approval."
-          : "A curator reviews each request before it runs."}
+          : "Someone reviews each request before it runs."}
       </p>
 
       {signedIn ? (
@@ -158,9 +161,12 @@ export default function TracePanel({
         <form action={signInHere}
           style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 8,
             padding: "1rem 1.1rem", marginBottom: "1rem" }}>
+          {/* "Attribute", "queuing" and "corpus" in one clause, and the joke in
+              "the whole corpus" only works for someone who knows what one is
+              (issue #128). Same two reasons for asking, said plainly. */}
           <p style={{ margin: "0 0 .8rem", fontSize: ".88rem", lineHeight: 1.6, color: "var(--ink-soft)" }}>
-            Sign in to name a concept. Your GitHub username is used only to attribute the request and
-            to keep one person from queuing the whole corpus.
+            Sign in to name a term. Your GitHub username is used only to record who asked, and to
+            stop one person requesting every map at once.
           </p>
           <button type="submit"
             style={{ font: "inherit", fontSize: ".85rem", cursor: "pointer", background: "#1d3b31",

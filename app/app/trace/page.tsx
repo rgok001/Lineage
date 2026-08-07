@@ -52,7 +52,9 @@ export default async function TracePage() {
 
       <p style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-faint)",
         lineHeight: 1.8, marginTop: "2rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>
-        Reading a corpus costs real money in model usage, so requests are reviewed before they run.{" "}
+        {/* "Corpus" is introduced on /about and used there; everywhere else it
+            simply does not appear (issue #128, and #125's option (b)). */}
+        Reading a set of papers costs real money in model usage, so requests are reviewed before they run.{" "}
         <Link href="/about" style={{ color: "var(--edge-extends)" }}>How it works ›</Link>
       </p>
     </main>
