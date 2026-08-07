@@ -253,11 +253,13 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         ? `Every paper in this map came from the same place, “${sourceLabels[0]}”. When a second source is added, these figures will be split by source here.`
         : `This map’s rows carry ${sourceLabels.length} different labels.`;
 
+  // Only ever read on a map that has at least one (issue #110), so the "no map
+  // in this system has one" branch this used to carry could not be reached: if
+  // this map has one, the count of maps that do is at least one. Still derived
+  // from the rows rather than written down, for the reason in #89.
   const selfEdgeMaps = all.filter((m) => m.edges_within_one_node > 0).length;
   const selfEdgeSentence =
-    selfEdgeMaps === 0
-      ? `No map in this system has one: this reads zero on all ${n} of them.`
-      : `${maps(selfEdgeMaps)} ${selfEdgeMaps === 1 ? "has" : "have"} at least one.`;
+    `${maps(selfEdgeMaps)} ${selfEdgeMaps === 1 ? "has" : "have"} at least one.`;
 
   const noRunMaps = all.filter((m) => m.runs_recorded === 0).length;
   const runRecordSentence =
@@ -473,13 +475,22 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           moves="Re-running the grouping, and every split, merge or delete in the workbench."
           others={others((m) => m.nodes_total, count)}
         />
-        <Figure
-          label="meanings that could not be read"
-          value={count(r.nodes_unreadable)} absent="not recorded"
-          counts="Entries in the stored grouping that do not carry an identifier and a list of members. They are dropped from every other figure here and counted here instead of being guessed at."
-          moves="Nothing should. Anything above zero means something wrote the grouping in a shape this system does not understand."
-          others={others((m) => m.nodes_unreadable, count)}
-        />
+        {/* A diagnostic row, shown when it has something to report (issue #110).
+            This is not the absent-versus-zero rule bending. That rule governs a
+            figure whose value is MISSING, and this figure cannot be missing:
+            `lib/report.ts` reads it as a count the view coalesces, so it is a
+            number or the row does not exist. What is skipped is a known zero on
+            an alarm that has never once fired, which is the team talking to
+            itself on the reader's page. */}
+        {r.nodes_unreadable !== 0 && (
+          <Figure
+            label="meanings that could not be read"
+            value={count(r.nodes_unreadable)} absent="not recorded"
+            counts="Entries in the stored grouping that do not carry an identifier and a list of members. They are dropped from every other figure here and counted here instead of being guessed at."
+            moves="Nothing should. Anything above zero means something wrote the grouping in a shape this system does not understand, which is why this line appears only on a map that has one."
+            others={others((m) => m.nodes_unreadable, count)}
+          />
+        )}
         <Figure
           label="meanings holding one paper"
           value={count(r.nodes_with_one_member)} absent="not recorded"
@@ -532,13 +543,21 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           moves="The same things. The share reads absent rather than 0% on a map with no relationships."
           others={othersPair((m) => m.edges_on_disagreeing_pairs, (m) => m.edges_on_disagreeing_pairs_share)}
         />
-        <Figure
-          label="relationships inside one meaning"
-          value={count(r.edges_within_one_node)} absent="not recorded"
-          counts={`Relationships whose two ends are the same meaning. ${selfEdgeSentence}`}
-          moves="Allowing papers within one meaning to be related to each other, which is queued work and is exactly what this line is here to measure before and after."
-          others={others((m) => m.edges_within_one_node, count)}
-        />
+        {/* Zero by construction until F3 (#31) lets papers inside one meaning be
+            related to each other, and its explainer used to say so in the words
+            "queued work", which mean nothing to a reader (issue #110). Shown
+            when there is one to report; the instrument F3 is measured on is
+            still this row, and the run that first makes it non-zero is the run
+            that makes it appear. */}
+        {r.edges_within_one_node !== 0 && (
+          <Figure
+            label="relationships inside one meaning"
+            value={count(r.edges_within_one_node)} absent="not recorded"
+            counts={`Relationships whose two ends are the same meaning. ${selfEdgeSentence}`}
+            moves="Allowing papers within one meaning to be related to each other. This line appears only on a map that has at least one, so a map with none does not print it as a zero."
+            others={others((m) => m.edges_within_one_node, count)}
+          />
+        )}
       </Section>
 
       <Section
@@ -715,7 +734,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             <strong>How many candidate links were considered and dropped, and why.</strong>{" "}
             The classification discards candidate pairs for several different reasons
             and counts none of them, so the amount of evidence that did not reach the
-            map is not knowable from here. That counting is queued work.
+            map is not knowable from here. Counting it has not been built yet.
           </li>
           <li style={{ margin: ".4rem 0" }}>
             <strong>What the map cost and how long it took, when it was not built

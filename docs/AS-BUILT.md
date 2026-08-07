@@ -655,6 +655,17 @@ was a back-link in whatever corner each page happened to use.
   is where the label counting gets separated from the integrity buckets; the
   table is allowed to appear meanwhile, because a condition that swallowed the
   artefact would hide it instead.
+  **Two Shape rows render only when their value is not zero** (issue #110):
+  "meanings that could not be read", an integrity alarm that has never fired,
+  and "relationships inside one meaning", which is zero by construction until
+  F3 (#31) and explained itself in the words "queued work". This does not bend
+  the absent-versus-zero rule, which governs a figure whose value is *missing*:
+  `lib/report.ts` reads both as counts the view coalesces, so neither can arrive
+  null, and what is skipped is a known zero rather than an absence. The
+  instrument F3 will be read on is still this row, and the run that first makes
+  it non-zero is the run that makes it appear. The derived sentence beside it
+  lost its unreachable branch with the change: it is only ever rendered on a map
+  that has at least one, so "no map in this system has one" could not be shown.
   **The page opens with one paragraph, not three**
   (issue #106, the UX review of #104): roughly 170 words of what the page is not
   stood between the reader and the first number. The lede now carries the story
