@@ -694,8 +694,20 @@ broke the day a second map was created (issue #93). Numbers arrive as strings in
 the JSON rather than as floats, because they are exact values out of Postgres and
 turning a count or a spend into a binary float on the way out would be this
 command inventing a number.
-It prints the same figures in the same order under the same labels as the page,
-and the same words for an absent one — "not recorded" when nothing in the system
+It prints **every** figure, where the page prints a reader's tier of them, and
+the page's labels are a subset of this command's with identical wording wherever
+both print a figure (the UX review, issues #107 to #113; the equality this
+sentence used to claim was deliberately relaxed then and this line had not
+caught up). So a label rewritten on the page is rewritten here in the same
+commit and in the same words: issue #124 moved "papers with a reading" to
+"papers read", "distinct quote strings" to "different quotes the map stands on",
+"distinct papers on relationships" to "different papers on relationships", and
+"most reused quote, uses" to "times the most reused quote appears", and renamed
+three sections. **Two section titles are read back by `render()`** to decide
+whether to print the By source table and the papers-per-year histogram, so a
+rename in `SECTIONS` that is not made there too loses a whole block in silence.
+The absent words are the same on both surfaces as well — "not recorded" when
+nothing in the system
 holds the figure, and the name of the empty population ("no relationships", "no
 years recorded") when the denominator is zero. Neither is ever a zero: `run_cost_usd`
 in particular is NULL when no run recorded a spend, and `genealogies.spend_usd`,

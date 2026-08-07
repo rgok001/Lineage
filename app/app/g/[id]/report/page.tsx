@@ -298,7 +298,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <p style={{ ...prose, margin: ".7rem 0 0" }}>
           This page says what the “{r.concept}” map is made of, counted from the map
           itself at the moment you loaded it. Two kinds of claim sit in a map: quotes,
-          which are checked word for word against the text extracted from each paper,
+          which are checked word for word against the text this system pulled out of
+          each paper,
           and the <em>shape</em> (which papers were grouped together, which
           relationships exist and which way round they point, which paper matters
           most), which is this tool’s reading and not the history of the term. The
@@ -308,8 +309,13 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <p style={{ ...mono, fontSize: ".72rem", color: "var(--ink-faint)", marginTop: ".9rem" }}>
           <Link href={`/g/${id}`} style={{ color: "var(--edge-extends)" }}>← the map</Link>
           {" · "}
+          {/* The third door promising a workbench to a reader who will not be
+              shown one (issue #124, item 10). #118 scoped the front-door card
+              and the evidence banner and missed this one, so a signed-out reader
+              clicked "the evidence and workbench" and landed on a page headed
+              "Evidence" with no tools. Same fix, same viewer test. */}
           <Link href={`/g/${id}/evidence`} style={{ color: "var(--edge-extends)" }}>
-            the evidence and workbench
+            {owner ? "the evidence and workbench" : "the evidence"}
           </Link>
         </p>
       </header>
@@ -323,26 +329,32 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         not as an average or as what a map should show. n={n}
       </p>
 
+      {/* "Reading" carried two meanings four inches apart (issue #124, item 3):
+          the header calls the shape "this tool's reading", a judgement, and this
+          section called a paper's extracted text a "reading" too, on the one page
+          that turns on keeping judgement and mechanical fact apart. The phrase
+          "this tool's reading" keeps the word; everything mechanical says
+          "read". */}
       <Section
-        title="Coverage of the reading"
-        lede="How many papers this map holds a reading of, and how many of those said
-              they define the term. These figures count only the papers that were
+        title="How much was read"
+        lede="How many papers this map has read, and how many of those define the term.
+              These figures count only the papers that were
               actually read. A paper the run tried and failed to read is not counted
               anywhere on this page, so the number of papers the run set out to read
               may be higher than any figure here."
       >
         <Figure
-          label="papers with a reading" lead
+          label="papers read" lead
           value={count(r.papers_with_a_reading)} absent="not recorded"
-          counts="Papers this map holds an extracted reading for, whether or not that reading found a definition."
-          moves="Reading more papers moves it; so does a paper whose text could not be fetched or extracted, which never appears here at all."
+          counts="Papers whose text this map has read, whether or not a definition was found in them."
+          moves="The map being rebuilt over more papers. A paper whose text could not be downloaded or read is not counted here at all."
           others={others((m) => m.papers_with_a_reading, count)}
         />
         <Figure
           label="papers that define the term" lead
           value={count(r.papers_defining)} absent="not recorded"
-          counts="Of those, the ones whose reading found a definition of this term. This is the denominator of every definition figure below."
-          moves="A re-read that changes a paper's verdict moves it, in either direction."
+          counts="Of those, the papers that give the term a definition of their own. Every percentage about definitions below is a share of this number."
+          moves="The map being rebuilt, and a paper being read differently the second time, in either direction."
           others={others((m) => m.papers_defining, count)}
         />
         <Figure
@@ -354,11 +366,19 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         />
       </Section>
 
+      {/* "Extracted text" and "string-matched" are the sentences that carry the
+          verification claim, and both named a step the reader has not been told
+          exists (issue #124, item 11). The claim is unchanged in every one:
+          still mechanical, still word for word, still against this system's own
+          copy and never against the published PDF. The reader is now told who
+          did the pulling out. */}
       <Section
         title="Evidence"
-        lede="How much of this map's evidence is currently matched against the papers'
-              own extracted text. Every quote is in exactly one of three states.
-              Verified: found word for word in the text extracted from the paper.
+        lede="How much of this map's evidence is currently matched against the text this
+              system pulled out of each paper. Every quote is in exactly one of three
+              states.
+              Verified: found word for word in the text this system pulled out of the
+              paper.
               Inferred: the check ran and could not find it. Not re-checked: the check
               has not yet run against the paper's current text. The three always add
               up to the total."
@@ -367,51 +387,56 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           label="definitions verified" lead
           value={count(r.definitions_verified)} absent="not recorded"
           share={{ value: share(r.definitions_verified_share), absent: "no papers define the term" }}
-          counts="Definition quotes found verbatim in that paper's own extracted text, against the text as it stands now, with the share of the papers that define the term beside it."
-          moves="Re-reading the papers moves it, and so does the text itself changing, which makes a stamp not re-checked until the check is run again. The share reads absent rather than 0% when no paper defines the term, because a share of nothing is not zero."
+          counts="Definition quotes found word for word in the text this system pulled out of that paper, as that text stands now, with the share of the papers that define the term beside it."
+          moves="The map being rebuilt. Also the text of a paper changing: any quote checked against the old text goes back to not re-checked. The share reads absent rather than 0% when no paper defines the term, because a share of nothing is not zero."
           others={othersPair((m) => m.definitions_verified, (m) => m.definitions_verified_share)}
         />
         <Figure
           label="definitions inferred"
           value={count(r.definitions_inferred)} absent="not recorded"
           counts="Definition quotes where the check ran against the current text and did not find the passage."
-          moves="A re-read that finds the passage, or an extraction change that loses it."
+          moves="The map being rebuilt and the passage being found this time. Or the system reading the paper's text differently and losing it."
           others={others((m) => m.definitions_inferred, count)}
         />
+        {/* The second sentence here used to explain a one-off moment in this
+            system's own history ("every stamp made before that record existed")
+            to a reader who was not there. Deleted rather than rewritten: the
+            description above already says "or that have no record of a check at
+            all", which covers the same ground without the archaeology. */}
         <Figure
           label="definitions not re-checked"
           value={count(r.definitions_stale)} absent="not recorded"
           counts="Quotes whose last check ran against an older copy of the paper's text, or that have no record of a check at all. They are not claimed as verified until the check runs again."
-          moves="Re-running the free check moves them out of this state. Every stamp made before that record existed sits here until it is re-made."
+          moves="The check being run again, which costs nothing, because it only compares text with text."
           others={others((m) => m.definitions_stale, count)}
         />
         <Figure
           label="typed relationships"
           value={count(r.edges_total)} absent="not recorded"
-          counts="Relationships between two of this map's states, each carrying a quote from both papers."
-          moves="Re-running the classification, and deleting a relationship in the workbench."
+          counts="Relationships between two of this map's meanings, each carrying a quote from both papers."
+          moves="The map being rebuilt, or someone editing the map deleting a relationship."
           others={others((m) => m.edges_total, count)}
         />
         <Figure
           label="relationships verified" lead
           value={count(r.edges_verified)} absent="not recorded"
           share={{ value: share(r.edges_verified_share), absent: "no relationships" }}
-          counts="Relationships where both quotes are string-matched against their papers' current text, with the share of every relationship in the map beside it. Both sides, not one: half a checked relationship is not a checked relationship."
-          moves="The same re-check. This counts relationships, not quotes, and many relationships rest on the same quote. The share reads absent rather than 0% on a map with no relationships."
+          counts="Relationships where both quotes were matched word for word against their papers' current text, with the share of every relationship in the map beside it. Both sides, not one: half a checked relationship is not a checked relationship."
+          moves="The same check as above. It counts relationships, not quotes: many relationships rest on the same quote. The share reads absent rather than 0% on a map with no relationships."
           others={othersPair((m) => m.edges_verified, (m) => m.edges_verified_share)}
         />
         <Figure
           label="relationships inferred"
           value={count(r.edges_inferred)} absent="not recorded"
           counts="Relationships where the check ran against both papers' current text and at least one quote was not found."
-          moves="A re-check that finds both quotes."
+          moves="The check running again and finding both quotes this time."
           others={others((m) => m.edges_inferred, count)}
         />
         <Figure
           label="relationships not re-checked"
           value={count(r.edges_stale)} absent="not recorded"
           counts="Relationships whose last check ran against an older copy of a paper's text, or that have no record of a check at all. A relationship whose paper is missing from our records sits here too, because a missing paper cannot support a check."
-          moves="Re-running the free check. This can read as the whole map immediately after the records were introduced, which is honest rather than broken."
+          moves="The check being run again. On an older map this can read as the whole map, which is honest rather than broken."
           others={others((m) => m.edges_stale, count)}
         />
         {/* Where the six-column table used to stand while it split by nothing
@@ -519,14 +544,14 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           value={count(r.largest_node_edges)} absent="not recorded"
           share={{ value: share(r.largest_node_edges_share), absent: "no relationships" }}
           counts="Relationships with the largest meaning at either end, with the share of every relationship in the map beside it. It says how much of the map hangs off one group."
-          moves="The same things, plus anything that changes which relationships exist. The share reads absent rather than 0% on a map with no relationships."
+          moves="The same things as above, plus anything that adds or removes a relationship. The share reads absent rather than 0% on a map with no relationships."
           others={othersPair((m) => m.largest_node_edges, (m) => m.largest_node_edges_share)}
         />
         <Figure
           label="pairs of meanings that are linked"
           value={count(r.node_pairs)} absent="not recorded"
-          counts="Distinct ordered pairs of meanings carrying at least one relationship. Ordered, because a relationship says the later paper did something to the earlier one's idea, and the reverse is a different claim."
-          moves="Any new or deleted relationship between two meanings that were not otherwise linked."
+          counts="Pairs of meanings carrying at least one relationship. A pair counts once in each direction, because a relationship says the later paper did something to the earlier one's idea, and the reverse is a different claim."
+          moves="A relationship appearing between two meanings nothing else linked, or the last one between them being deleted."
           others={others((m) => m.node_pairs, count)}
         />
         <Figure
@@ -561,13 +586,15 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         )}
       </Section>
 
+      {/* "Corpus" was the team's word and this heading was its last appearance
+          on the page (issue #124, item 5). The lede's date clause needed two
+          reads and one of them was pure machinery. */}
       <Section
-        title="Corpus age"
-        lede="When the papers behind this map appeared. The year stored for a paper is
-              the earliest credible date we have for it, which is the earlier of the
-              catalogue's date and the date encoded in the arXiv identifier; read it
-              as when the work first appeared rather than as a publication date. A
-              paper with no year is counted separately and never guessed at."
+        title="When the papers were written"
+        lede="Each paper is dated by the earliest date we can trust for it: whichever is
+              earlier of the date the catalogue gives and the date built into its arXiv
+              number. Read it as when the work first appeared, not as a publication
+              date. A paper with no year is counted separately and never guessed at."
       >
         {/* The chart leads, and the three quantile rows it summarised are gone
             (issue #113). "A quarter of the defining papers are this old or
@@ -622,7 +649,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <div style={{ marginTop: "1.1rem" }}>
           <Figure label="earliest year" value={year(r.year_min)} absent="no years recorded"
             counts="The oldest defining paper in the map, which is the left end of the chart above."
-            moves="Reading further back, and any correction to a stored year."
+            moves="The map being rebuilt and reaching further back, or a wrong year being corrected."
             others={others((m) => m.year_min, year)} />
           <Figure label="latest year" value={year(r.year_max)} absent="no years recorded"
             counts="The newest defining paper in the map, which is the right end of the chart above."
@@ -631,44 +658,52 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           <Figure label="papers with no year" value={count(r.papers_with_no_year)}
             absent="not recorded"
             counts="Defining papers with no year at all. They are nowhere in the chart above and in neither figure, rather than being given a guessed date."
-            moves="Better metadata for those papers."
+            moves="Only better publication dates for those papers. Nothing about the map itself moves this."
             others={others((m) => m.papers_with_no_year, count)} />
         </div>
       </Section>
 
-      {/* Below Shape and Corpus age, which is where a reader was heading when
+      {/* Below Shape and the years, which is where a reader was heading when
           this stood in the way (issue #108). "Quote slots" was the team's word
           for a storage position and it was the fourth thing on the page; the two
           rows that used it are gone and what they established is in the lede,
           because a researcher does not arrive asking whether quote duplication
           is a fault. The counting defects in those two figures are #88 and are
-          untouched here; the command still prints both. */}
+          untouched here; the command still prints both.
+
+          The section was called "Quote reuse" until the owner read it twice and
+          said it "does not make sense, or it is not intuitive as to what the
+          measure is alluding to" (issue #124). The title named the mechanism.
+          The reader's question is how much genuinely different evidence stands
+          behind the map, so that is what the title, the lede and the labels now
+          say; the mechanism follows as the explanation rather than leading. No
+          figure and no claim changed. */}
       <Section
-        title="Quote reuse"
-        lede="Each paper has one key quote, and shows that same quote everywhere it
-              appears on the map. So the map rests on far fewer different quotes
-              than it has relationships, and these figures say how many different
-              quotes the whole map really stands on."
+        title="The evidence behind the map"
+        lede="The relationships in this map are backed by quotes from the papers. Each
+              paper shows the same key quote everywhere it appears, so the map stands
+              on fewer different quotes than it has relationships. These figures say
+              how much genuinely different evidence is behind it."
       >
         <Figure
-          label="distinct quote strings"
+          label="different quotes the map stands on"
           value={count(r.distinct_quote_strings)} absent="no quotes"
           counts="How many different passages the relationships actually rest on."
           moves="More papers being read, or the system starting to pick a different sentence as a paper's key quote."
           others={others((m) => m.distinct_quote_strings, count)}
         />
         <Figure
-          label="distinct papers on relationships"
+          label="different papers on relationships"
           value={count(r.distinct_papers_on_edges)} absent="no relationships"
           counts="How many different papers appear at either end of a relationship. Read it beside the line above: the two should be close."
           moves="The same things. If there are clearly fewer different quotes than papers here, one quote is standing in for two different papers, which is worth knowing."
           others={others((m) => m.distinct_papers_on_edges, count)}
         />
         <Figure
-          label="most reused quote, uses"
+          label="times the most reused quote appears"
           value={count(r.most_repeated_quote_uses)} absent="no quotes"
           counts="How many times the single most repeated passage is used across the relationships."
-          moves="How central one paper is to the map, and nothing else."
+          moves="One paper sitting at the end of many relationships. Nothing else moves it."
           others={others((m) => m.most_repeated_quote_uses, count)}
         />
       </Section>
@@ -676,16 +711,21 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       <Section
         title="The run"
         lede="What building this map took. These come from the record kept while a
-              map is being built for someone who asked for it, so a map built from the
-              command line has none of them and says so. Where a figure reads not
+              map is being built for someone who asked for it, so a map built directly
+              by the team, rather than through a request on this site, has none of them
+              and says so. Where a figure reads not
               recorded, nothing in this system holds it; it is not zero and it is not
               an estimate."
       >
+        {/* "A map built from the command line" appeared three times and assumed
+            a reader who knows what a command line is, and that some maps are
+            built without anybody asking (issue #124, item 6). All three now say
+            who built it in the reader's terms. */}
         <Figure
           label="runs recorded"
           value={count(r.runs_recorded)} absent="not recorded"
           counts="Completed runs this system has a record of for this map. The figures below describe the most recent one, not the map's whole life."
-          moves="Mapping the term again. A map built from the command line has none, and every figure below then reads not recorded."
+          moves="Mapping the term again. A map the team built directly, rather than through a request on this site, has no run record, and every figure below then reads not recorded."
           others={others((m) => m.runs_recorded, count)}
         />
         <Figure
@@ -693,7 +733,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           value={r.run_wall_clock === null ? null : duration(r.run_wall_clock)}
           absent="not recorded"
           counts="From the run starting to the run finishing, for the most recent completed run."
-          moves="How many papers the run had to read, and how many of them this system had already read for an earlier map."
+          moves="How many papers the run had to read, and how many of those this system had already read for an earlier map."
           others={rest.map((m) => ({
             concept: m.concept,
             value: m.run_wall_clock === null ? null : duration(m.run_wall_clock),
@@ -730,14 +770,16 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <ul style={{ ...prose, paddingLeft: "1.1rem", margin: ".2rem 0 0" }}>
           <li style={{ margin: ".4rem 0" }}>
             <strong>How many candidate links were considered and dropped, and why.</strong>{" "}
-            The classification discards candidate pairs for several different reasons
-            and counts none of them, so the amount of evidence that did not reach the
-            map is not knowable from here. Counting it has not been built yet.
+            When the map was built, many possible links between papers were considered
+            and rejected, for several different reasons. Nothing counts them, so this
+            page cannot say how much evidence never reached the map. Counting it has
+            not been built yet.
           </li>
           <li style={{ margin: ".4rem 0" }}>
             <strong>What the map cost and how long it took, when it was not built
             from a request.</strong>{" "}
-            A map built from the command line leaves no run record, and nothing
+            A map built directly by the team, rather than through a request on this
+            site, leaves no run record, and nothing
             else in this system holds either figure. {runRecordSentence}
           </li>
           <li style={{ margin: ".4rem 0" }}>
@@ -751,9 +793,9 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
 
       <p style={{ ...mono, fontSize: ".68rem", color: "var(--ink-faint)", lineHeight: 1.8,
         marginTop: "2.4rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>
-        Counted from the map itself when you loaded the page. Nothing on it is
-        stored, so a change to the map changes these figures immediately and no figure
-        here can outlive what it describes.
+        Every figure here was counted from the map when you loaded this page. None of
+        them is stored, so an edit to the map changes them at once, and nothing here
+        can be out of date.
       </p>
     </main>
   );

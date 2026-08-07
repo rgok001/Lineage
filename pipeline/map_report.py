@@ -185,8 +185,8 @@ def duration(v) -> str | None:
 # wherever both surfaces print a figure. It is deliberately weaker than the
 # equality it replaces: a figure dropped from this list is still a defect.
 SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
-    ("Coverage of the reading", [
-        ("papers with a reading", "papers_with_a_reading", count, "not recorded"),
+    ("How much was read", [
+        ("papers read", "papers_with_a_reading", count, "not recorded"),
         ("papers that define the term", "papers_defining", count, "not recorded"),
         ("papers that do not define the term", "papers_not_defining", count, "not recorded"),
     ]),
@@ -203,13 +203,15 @@ SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
         ("relationships inferred", "edges_inferred", count, "not recorded"),
         ("relationships not re-checked", "edges_stale", count, "not recorded"),
     ]),
-    ("Quote reuse", [
+    ("The evidence behind the map", [
         ("quote slots", "quote_slots", count, "no relationships"),
         ("quote slots holding no text", "quote_slots_empty", count, "no relationships"),
-        ("distinct quote strings", "distinct_quote_strings", count, "no quotes"),
-        ("distinct papers on relationships", "distinct_papers_on_edges", count,
+        ("different quotes the map stands on", "distinct_quote_strings", count,
+         "no quotes"),
+        ("different papers on relationships", "distinct_papers_on_edges", count,
          "no relationships"),
-        ("most reused quote, uses", "most_repeated_quote_uses", count, "no quotes"),
+        ("times the most reused quote appears", "most_repeated_quote_uses", count,
+         "no quotes"),
     ]),
     ("Shape", [
         ("meanings", "nodes_total", count, "not recorded"),
@@ -232,7 +234,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
          share, "no relationships"),
         ("relationships inside one meaning", "edges_within_one_node", count, "not recorded"),
     ]),
-    ("Corpus age", [
+    ("When the papers were written", [
         ("earliest year", "year_min", year, "no years recorded"),
         ("lower quartile", "year_p25", year, "no years recorded"),
         ("median year", "year_median", year, "no years recorded"),
@@ -289,7 +291,11 @@ def render(row: dict, others: list[dict], buckets: list[dict], n: int) -> list[s
                     out.append(f"  {unit:<12}{b['source']:<36}{int(b['total']):>8}"
                                f"{int(b['verified']):>10}{int(b['inferred']):>10}"
                                f"{int(b['stale']):>16}")
-        if title == "Corpus age":
+        # Two section titles are load-bearing here and nothing else reads them:
+        # rename one in SECTIONS without renaming it below and the By source
+        # table or the year histogram silently stops printing. Issue #124
+        # renamed three of the six.
+        if title == "When the papers were written":
             out += ["", "  papers per year"]
             counts = row["year_counts"] or {}
             if not counts:

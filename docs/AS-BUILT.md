@@ -682,11 +682,13 @@ was a back-link in whatever corner each page happened to use.
   one column, no interactivity, every figure selected from migration 016's two
   views by `lib/report.ts` and computed nowhere else, so this page and
   `pipeline/map_report.py` cannot disagree about a figure they both print (which
-  is no longer every figure: see the subset invariant below). Sections: coverage
-  of the reading, evidence (the three stamp states for definitions and for
-  relationships), the same counts split by source, shape, corpus age with a
-  per-year histogram, quote reuse, the run, and a closing list of the three
-  things the page cannot tell you. **Quote reuse sits below Corpus age, not
+  is no longer every figure: see the subset invariant below). Sections: how much
+  was read, evidence (the three stamp states for definitions and for
+  relationships), the same counts split by source, shape, when the papers were
+  written with a per-year histogram, the evidence behind the map, the run, and a
+  closing list of the three
+  things the page cannot tell you. **The evidence behind the map sits below the
+  years section, not
   fourth from the top** (issue #108): it stood between the reader and the
   sections they came for, and it answered a question nobody asked in a word only
   the team knows. The two rows built on that word ("quote slots", "quote slots
@@ -718,8 +720,8 @@ was a back-link in whatever corner each page happened to use.
   it non-zero is the run that makes it appear. The derived sentence beside it
   lost its unreachable branch with the change: it is only ever rendered on a map
   that has at least one, so "no map in this system has one" could not be shown.
-  **Corpus age leads with the papers-per-year chart, and the three quantile rows
-  are cut** (issue #113). Lower quartile, median and upper quartile were a
+  **The years section leads with the papers-per-year chart, and the three
+  quantile rows are cut** (issue #113). Lower quartile, median and upper quartile were a
   harder-to-read summary of the distribution the chart draws directly, in
   statistician's words. The median was offered as a sentence under the chart and
   was declined: `percentile_cont` interpolates, so a map can have a median of
@@ -729,6 +731,34 @@ was a back-link in whatever corner each page happened to use.
   year" stays below the chart**, because undated papers appear nowhere in it and
   a chart that silently omits them is the blank-reads-as-zero defect in picture
   form. All three quantiles still print in `pipeline/map_report.py`.
+  **The plain-language recalibration reached the whole page** (issue #124, after
+  41ebb00 applied it to the Shape section and stopped). Every "what moves this
+  figure" note now names who does the moving in the reader's words ("the map
+  being rebuilt", "someone editing the map", "the check being run again") instead
+  of naming the classification, the grouping or the workbench. Four other things
+  went with it. **"Reading" carried two meanings four inches apart** — the header
+  calls the shape "this tool's reading", a judgement, and the first section
+  called a paper's extracted text a reading too, on the page that turns on
+  keeping those apart; the mechanical sense is now "read" everywhere ("How much
+  was read", "papers read"). **The six sentences carrying the verification claim
+  say who did the extracting**: "the text extracted from each paper" and
+  "string-matched" are now "the text this system pulled out of each paper" and
+  "matched word for word". The claim is unchanged: still mechanical, still word
+  for word, still against this system's own copy and never against the published
+  PDF. **"Corpus", "denominator" and "a map built from the command line" (three
+  times) are gone**, the last replaced by "built directly by the team, rather
+  than through a request on this site". **The sub-link said "the evidence and
+  workbench" to every reader**, which is the promise #118 scoped on the
+  front-door card and the evidence banner and missed here; it is now viewer-
+  scoped like the other two.
+  **"Quote reuse" was retitled "The evidence behind the map"** (owner, 2026-08-07,
+  on #124: the title "does not make sense, or it is not intuitive as to what the
+  measure is alluding to"). The title named the mechanism; the reader's question
+  is how much genuinely different evidence stands behind the map, so the title,
+  the lede and the figure labels lead with that and the mechanism follows as the
+  explanation. No figure and no claim changed. It sits beside the "Evidence"
+  section, which counts verification rather than distinctness, and the two ledes
+  are what tell them apart.
   Together the page went from 39 figure rows to 29, measured on the harness.
   **The page opens with one paragraph, not three**
   (issue #106, the UX review of #104): roughly 170 words of what the page is not
