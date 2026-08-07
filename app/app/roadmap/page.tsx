@@ -2,9 +2,27 @@ import Link from "next/link";
 
 export const metadata = { title: "Roadmap — Lineage" };
 
-/** What is built, what is being worked on, and what is deliberately not planned.
- *  Written so a researcher can judge whether the gap between what this does now
- *  and what they need is likely to close. */
+/**
+ * What is built, what is being worked on, and what is deliberately not planned.
+ * Written so a researcher can judge whether the gap between what this does now
+ * and what they need is likely to close.
+ *
+ * **These lists are hand-written and nothing recomputes them** (issue #119).
+ * That is a choice, not an oversight, and the page now says so and links to the
+ * live ticket list, because the alternative was worse in two ways. Deriving the
+ * buckets from issue labels was measured and does not work: every open feature
+ * carries the same "planned" label, so the labels cannot tell "working on next"
+ * from "under consideration" and the derivation would invent an order the
+ * tracker does not hold. And prose describing a moving list is exactly the
+ * failure the record's own history warns about, which is why the honest framing
+ * is the fix rather than a syncing mechanism nobody maintains.
+ *
+ * The drift this ticket found: "Bring your own corpus" sat under Under
+ * consideration while issue #37 [F9] is labelled planned, and issues are
+ * canonical. It has moved. "Claim-level verification" was listed as entirely
+ * ahead when Stage H ships it on the thread pages wherever it has run; the entry
+ * now says which part is live and which is not.
+ */
 
 type Item = { title: string; body: string };
 
@@ -26,15 +44,15 @@ const SHIPPED: Item[] = [
 const NEXT: Item[] = [
   { title: "Sources beyond arXiv",
     body: "The single biggest limit on who this is useful to. Resolving open-access copies through DOIs, and biomedical full text, would open fields that do not preprint to arXiv." },
-  { title: "Claim-level verification",
-    body: "Today the verified quote is each paper's definition. The goal is for every assertion in an account to carry its own matched span, so the prose is auditable sentence by sentence rather than paragraph by paragraph." },
+  { title: "Claim-level verification, everywhere",
+    body: "Part of this is already live: on a thread's account, where it has been run, each thing a paper did carries its own quote, matched against that paper's text or plainly marked as unmatched. What is left is doing that for every map and every account, so a whole reading is auditable sentence by sentence rather than paragraph by paragraph." },
+  { title: "Bring your own corpus",
+    body: "Point it at a folder of PDFs or a BibTeX file instead of having it select papers. The pipeline already separates finding papers from reading them, so this is more plumbing than invention." },
   { title: "A preview before a run",
     body: "Showing the candidate papers, the year span and the cost before a map is built, so you can judge the corpus before spending on it." },
 ];
 
 const CONSIDERING: Item[] = [
-  { title: "Bring your own corpus",
-    body: "Point it at a folder of PDFs or a BibTeX file instead of having it select papers. The pipeline already separates finding papers from reading them, so this is more plumbing than invention." },
   { title: "Your own extraction question",
     body: "Today the question each paper is asked is fixed: how do you define this term? Letting a reviewer set that question turns the same machinery into a general extraction tool." },
   { title: "Comparing two maps",
@@ -61,6 +79,13 @@ export default function RoadmapPage() {
           Where this is, where it is going, and what it will not become. If the gap between what it
           does now and what you need sits in the first two lists, it is likely to close. If it sits in
           the last, it will not.
+        </p>
+        <p style={{ color: "var(--ink-faint)", margin: ".7rem 0 0", lineHeight: 1.6, fontSize: ".85rem" }}>
+          This page is the owner&rsquo;s current statement of intent, written by hand and kept up to
+          date by hand. The live list of open work, item by item, is on{" "}
+          <a href="https://github.com/rgok001/Lineage/issues" target="_blank" rel="noopener noreferrer"
+            style={{ color: "var(--edge-extends)" }}>GitHub</a>; where the two disagree, that list is
+          the one to believe.
         </p>
       </header>
 

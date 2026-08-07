@@ -817,6 +817,18 @@ was a back-link in whatever corner each page happened to use.
   so a researcher can judge whether the gap between this and what they need is
   likely to close. "Not planned" is load-bearing: not a recommender, not a
   search engine, not automatically curated.
+  **The buckets are hand-written arrays and the page says so** (issue #119),
+  with a link to the GitHub issue list and the sentence that where the two
+  disagree, the issues are right. It had drifted within a week: "Bring your own
+  corpus" sat under Under consideration while [#37](https://github.com/rgok001/Lineage/issues/37)
+  `[F9]` is labelled planned, and it has moved to Working on next; and
+  "Claim-level verification" was listed as entirely ahead while Stage H ships it
+  on thread accounts wherever it has run, so the entry now names the live part
+  and the remaining part separately. **Deriving the buckets from issue labels
+  was measured and does not work**: every open feature and quality-of-life issue
+  carries `planned`, so labels cannot distinguish "working on next" from "under
+  consideration", and a derivation would invent an ordering the tracker does not
+  hold. The honest framing is the fix; the page remains prose the owner owns.
 - `/api/traces` : read-only JSON: `{ now, rows }`. `now` is Postgres `now()`;
   the client computes its clock skew from it and measures elapsed time and
   heartbeat staleness against database time, never the viewer's clock.
