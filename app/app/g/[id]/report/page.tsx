@@ -35,7 +35,30 @@ function duration(seconds: number): string {
 
 const share = (v: number | null) => (v === null ? null : `${(v * 100).toFixed(1)}%`);
 const count = (v: number | null) => (v === null ? null : v.toLocaleString());
-const money = (v: number | null) => (v === null ? null : `US$${v.toFixed(2)}`);
+
+/**
+ * Money, under one rule: **a cost that is not zero never renders as a zero one.**
+ *
+ * Cents are the readable form and stay the default. But a cached re-trace can
+ * genuinely cost US$0.004, and `toFixed(2)` printed that as "US$0.00" under
+ * "what the run cost" — a figure that reads as free about a run that was not
+ * (issue #87). So: print cents; if cents would round a non-zero amount away to
+ * nothing, print four decimals instead, which is the precision the worker
+ * actually keeps; and if even that is all zeros, say so in words rather than
+ * print a row of them. A recorded zero is a real zero and keeps US$0.00.
+ *
+ * `money()` in `pipeline/map_report.py` is these same branches in the same
+ * order and the two must stay identical: the page and the command publish one
+ * number and a reader who saw both would have no way to tell which was rounded.
+ */
+const money = (v: number | null): string | null => {
+  if (v === null) return null;
+  const cents = v.toFixed(2);
+  if (v === 0 || Number(cents) !== 0) return `US$${cents}`;
+  const fine = v.toFixed(4);
+  return Number(fine) !== 0 ? `US$${fine}` : "less than US$0.0001";
+};
+
 const year = (v: number | null) =>
   v === null ? null : Number.isInteger(v) ? String(v) : v.toFixed(1);
 

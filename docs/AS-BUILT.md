@@ -395,7 +395,15 @@ both live maps, so the view reads `trace_requests.progress->>'spend_usd'` from
 the last completed run and **must never `COALESCE` to that column or to 0** —
 issues #85 and #47), wall clock (recorded for worker runs only, and neither live
 map is one), and Stage D's discarded citation pairs (counted nowhere; issue #86).
-`run_cost_basis` carries which of those two states the cost figure is in.
+`run_cost_basis` carries which of those two states the cost figure is in, and it
+is only as honest as the blob: the test is `jsonb_typeof(...) = 'number'`, so
+whether a run has a recorded cost is decided entirely by whether the worker put a
+number there. It did so unconditionally until issue #87, which is why that fix is
+in the worker rather than in the view. **Rows written before it still hold a
+literal `0.0` for a run that recorded nothing, and the view now truthfully calls
+those recorded-at-zero.** Nothing in the blob distinguishes them from a genuine
+zero, so nothing was rewritten; `RUNBOOK.md` carries the query that finds them
+and the one-row repair.
 
 Both joins from `edges` to `papers` are `LEFT`, for the reason the rest of this
 section gives at length (issues #60, #79, #83): the join must not decide whether
@@ -458,6 +466,14 @@ knowledge condensed:
   once per second. Each flush bumps `updated_at`, which is the heartbeat.
   Spend accounting: stages report cumulatively within themselves, so the
   worker tracks completed-stage spend plus current-stage spend.
+  **`spend_usd` starts as JSON null and becomes a number only once some stage
+  has actually printed a spend line** (issue #87). It used to be minted as
+  `0.0`, which made the report view's `jsonb_typeof(...) = 'number'` test true
+  from the first flush: a fully cached re-trace, which prints no spend line at
+  all, was published as a run whose recorded cost was `US$0.00`. Once one stage
+  has priced itself the figure is a measurement and a later zero is added to it
+  as one. The worker's own completion line says "not recorded" in the null case
+  and prints four decimals otherwise, so the log and the report agree.
 - **Failure paths, all first-class.** Stage exits nonzero: job marked
   `failed` with the message and the last 30 output lines (shown only to the
   owner in the UI). Ctrl-C: job requeued to `approved`, because every
@@ -607,6 +623,14 @@ was a back-link in whatever corner each page happened to use.
   the sharp case: `genealogies.spend_usd` reads `0.0000` on every map and is
   written by nothing, so a `$0.00` there would be the exact defect this page
   exists to avoid; nothing in the path from the view to the page coalesces it.
+  **`money()` prints cents unless cents would round a non-zero cost to nothing**,
+  in which case it prints four decimals, and below that precision it says "less
+  than US$0.0001" rather than a row of zeros (issue #87: a cached re-trace costing
+  `0.004` rendered `US$0.00`, which reads as free). `money()` in
+  `pipeline/map_report.py` is the same branches in the same order, and it rounds
+  a half away from zero to match JavaScript's `toFixed`, which `format(f, '.2f')`
+  does not: measured over 25 values, `US$0.125` printed `US$0.12` in the command
+  and `US$0.13` on the page before that was fixed alongside.
   Pending the owner's answer to the report design's open question 1 — the roadmap
   says a stranger should see what a map cost, this file's copy rules say no cost
   talk aimed at visitors, and the two cannot both hold — the cost figure renders

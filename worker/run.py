@@ -117,9 +117,23 @@ class Progress:
 
     def __init__(self, conn: psycopg.Connection, job_id: int, n_stages: int):
         self.conn, self.job_id, self.n_stages = conn, job_id, n_stages
-        self.state: dict = {"stages": n_stages, "spend_usd": 0.0}
+        # **`spend_usd` starts as null, not 0.0** (issue #87). The report view
+        # asks `jsonb_typeof(progress -> 'spend_usd') = 'number'` to tell a
+        # recorded figure from one nobody took, and minting a 0.0 here made that
+        # test true from the first flush: a completed run that never matched a
+        # spend line reported "from the record kept of the last completed run"
+        # and rendered US$0.00 under what the map cost, which is the
+        # stored-and-aged figure the whole report exists to refuse. A cached
+        # re-trace is exactly the run that prints no spend line, so it was the
+        # common case rather than the corner.
+        self.state: dict = {"stages": n_stages, "spend_usd": None}
         self.base_spend = 0.0   # spend from completed stages
         self.stage_spend = 0.0  # cumulative spend the CURRENT stage has printed
+        # Whether any stage has printed a spend line at all in this job. It is
+        # the only thing that turns spend_usd into a number, and it never goes
+        # back to False: once one stage has priced itself, zero from another
+        # stage is a measurement.
+        self.spend_seen = False
         self._last_flush = 0.0
 
     def start_stage(self, no: int, name: str) -> None:
@@ -136,7 +150,9 @@ class Progress:
         if m := SPEND_RE.search(text):
             # Stages print spend cumulatively within themselves.
             self.stage_spend = float(m.group(1))
-        self.state["spend_usd"] = round(self.base_spend + self.stage_spend, 4)
+            self.spend_seen = True
+        if self.spend_seen:
+            self.state["spend_usd"] = round(self.base_spend + self.stage_spend, 4)
         self.flush()
 
     def flush(self, force: bool = False) -> None:
@@ -243,8 +259,14 @@ def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: i
            WHERE id = %s""",
         (genealogy_id, json.dumps(prog.state), job_id))
     conn.commit()
+    # spend_usd is None on a run where no stage printed a spend line, and the
+    # log must say that rather than "$0.00" — this line is the operator's copy
+    # of the same figure the report publishes, and the two disagreeing is how a
+    # cost defect stays invisible. Four decimals because that is the precision
+    # `Progress.line` keeps, so a 0.4-cent run reads as a cost and not as free.
+    spend = prog.state["spend_usd"]
     print(f"[job {job_id}] complete -> genealogy {genealogy_id}, "
-          f"spend ${prog.state['spend_usd']:.2f}")
+          f"spend {'not recorded (no stage printed one)' if spend is None else f'${spend:.4f}'}")
 
 
 class StageFailed(Exception):

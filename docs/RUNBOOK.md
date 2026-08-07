@@ -224,8 +224,51 @@ do, and that is also correct: `attention` and `embedding` were built from the
 command line and have no run record at all, so run cost and wall clock have
 nothing behind them. **`genealogies.spend_usd` reads `0.0000` on every map and is
 written by nothing** (issue #85); it is not a fallback and nothing in the view,
-the page or the command reads it. If a cost cell ever shows `US$0.00`, something
-has started coalescing it and that is a defect, not a cheap run.
+the page or the command reads it.
+
+**Reading a cost cell.** The figure is scraped by the worker from the `spend $X`
+lines the stages print, kept in `trace_requests.progress`, and published only
+when that key holds a JSON number. There are three things a cost cell can say and
+each means something different:
+
+| The cell says | What it means |
+|---|---|
+| `not recorded` | no completed run, or a completed run in which no stage ever printed a spend line. A fully cached re-trace is exactly that run |
+| `US$0.0040` | a real sub-cent cost. Four decimals appear only where two would round a non-zero amount to `US$0.00`; it is not a display fault (issue #87) |
+| `US$0.00` | the run recorded a spend of zero |
+
+So a `US$0.00` cell now has **two** true causes and the old entry named neither.
+Either every stage that printed a spend line printed zero, or — and this is the
+one to check first until the old rows age out — **the run finished before the
+fix for issue #87 landed**. Until then the worker minted `spend_usd: 0.0` into
+the progress blob at the moment a job was claimed and only ever overwrote it on a
+spend line, so a pre-fix run that printed none is stored as a recorded zero and
+is indistinguishable from a real one. Nothing in the blob separates them, so
+nothing was rewritten: **no data was invented to clean this up.** Count the
+affected rows read-only before believing any zero:
+
+```sql
+SELECT id, concept, finished_at, progress ->> 'spend_usd' AS spend
+FROM trace_requests
+WHERE status = 'complete'
+  AND jsonb_typeof(progress -> 'spend_usd') = 'number'
+  AND (progress ->> 'spend_usd')::numeric = 0
+ORDER BY finished_at;
+```
+
+Any row there with `finished_at` before the #87 deploy is a "not recorded"
+wearing a zero. If you can confirm from that run's own log that no stage printed
+a spend line, the honest repair is one owner statement per row, setting that key
+to JSON null rather than deleting the blob:
+
+```sql
+UPDATE trace_requests SET progress = jsonb_set(progress, '{spend_usd}', 'null')
+WHERE id = <the id you checked>;
+```
+
+A cost cell showing `US$0.00` on a map whose run is known to have called the
+model, with no pre-fix row behind it, is still what the old entry described:
+something has started coalescing the figure, and that is a defect.
 
 **Changing the audit's calibration.** Since migration 014 this needs no clear
 and no ritual: every verdict stores a digest of the calibration that produced it,

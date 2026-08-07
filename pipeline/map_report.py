@@ -33,7 +33,7 @@ Usage:
 import argparse
 import json
 import sys
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 import psycopg
@@ -92,7 +92,49 @@ def share(v) -> str | None:
 
 
 def money(v) -> str | None:
-    return None if v is None else f"US${float(v):.2f}"
+    """Money, under one rule: a cost that is not zero never renders as a zero one.
+
+    Cents are the readable form and stay the default, but a cached re-trace can
+    genuinely cost US$0.004 and `:.2f` printed that as "US$0.00" under what the
+    run cost -- a figure that reads as free about a run that was not (issue
+    #87). So: print cents; if cents would round a non-zero amount away to
+    nothing, print four decimals, which is the precision the worker actually
+    keeps; and if even that is all zeros, say so in words. A recorded zero is a
+    real zero and keeps US$0.00.
+
+    `money()` in app/app/g/[id]/report/page.tsx is these same branches in the
+    same order and the two must stay identical: the page and this command
+    publish one number, and a reader who saw both would have no way to tell
+    which of them had been rounded.
+    """
+    if v is None:
+        return None
+    f = float(v)
+    cents = _fixed(f, 2)
+    if f == 0 or float(cents) != 0:
+        return f"US${cents}"
+    fine = _fixed(f, 4)
+    return f"US${fine}" if float(fine) != 0 else "less than US$0.0001"
+
+
+def _fixed(f: float, places: int) -> str:
+    """`f` to `places` decimals, rounding a half away from zero.
+
+    Not `f"{f:.2f}"`, which rounds a half to even: US$0.125 printed US$0.12 here
+    and US$0.13 on the page, because JavaScript's `toFixed` rounds the half up.
+    Found by running the two functions side by side over a sweep of values while
+    fixing issue #87, not by reading them. One number published twice under two
+    different roundings is the same two-surfaces-disagree defect as #79, in a
+    place nobody would think to look.
+
+    `Decimal(f)` is deliberately the exact double rather than `Decimal(str(f))`:
+    the page is handed this same double by `Number()`, so quantizing the decimal
+    literal instead would round 0.145 to 0.15 here and 0.14 there, which is this
+    defect the other way round. Measured over 25 values including both traps;
+    they now agree on all of them. Costs are never negative (the worker's spend
+    regex has no sign), so the two roundings are untested below zero.
+    """
+    return str(Decimal(f).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP))
 
 
 def year(v) -> str | None:
