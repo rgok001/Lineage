@@ -1394,6 +1394,29 @@ reader lands on the 404 instead of being redirected to `/g/-1/evidence` and
 404ing there. Same page, one round trip fewer. `/g/999999`, the control the
 ticket names, is untouched in both respects.
 
+**The HTTP status cannot answer this question and did not before the fix
+either.** Every route under a map has a `loading.tsx`, so the shell is flushed
+with a 200 long before the page runs, and both the crash and the clean 404
+arrived as `200`. The verdict is in the RSC stream: `NEXT_HTTP_ERROR_FALLBACK;404`
+for a `notFound()`, `NEXT_REDIRECT;replace` for a redirect, and a bare numeric digest for
+a throw. `/g/[id]/export` is the one route that carries its verdict in the status
+line, because a route handler streams nothing. Anyone re-testing B33 by status
+code alone will see 200s and conclude the site is fine.
+
+**After, on the live deploy (2026-08-08), read that way.** All seven malformed
+ids × five page routes: `404` in every one of the 35, against 35 numeric digests
+before. `/g/abc` is 17,955 bytes carrying the site header and "This page could
+not be found", with no digest anywhere in it. `/g/abc/export` is `HTTP/1.1 404`,
+`text/plain`, body `No map with that id.`, against a 500 with `Content-Length: 0`
+before. `/g/abc/river` still 307s to `/g/abc`, which now 404s instead of
+crashing. Controls: `/g/999999` still redirects to its evidence page and 404s
+there, `/g/999999/export` still answers `No map, or no threads generated for it
+yet.`, and `/g/13` and its four sub-routes render at 76 KB, 6.08 MB, 137 KB,
+106 KB and 176 KB with the export unchanged at 59,900 bytes. The boundary itself
+was rendered through `react-dom/server` rather than triggered, since nothing on
+the live site can be made to fail on demand: both branches (digest and no digest)
+draw from the palette tokens only, and neither says the map is missing.
+
 **Server Actions** (`lib/actions.ts`, `lib/trace-actions.ts`): renameNode,
 mergeNode, deleteNode, reclassifyEdge, deleteEdge, deleteGenealogy,
 requestTrace, approveTrace, rejectTrace. Every one authorises itself on its
