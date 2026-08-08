@@ -18,7 +18,8 @@ import type { MouseEvent } from "react";
  *  strip is sticky (a fixed bar on a 39-screen evidence page was refused in
  *  #143), so the tab has to be on screen to be clicked. Doing literally nothing
  *  was the alternative; this is the same thing wherever the reader can see the
- *  tab today, and the right thing if a strip is ever made sticky.
+ *  tab today, and the right thing if a strip is ever made sticky. The scroll is
+ *  instant for the reason given at the call below.
  */
 export function currentTabClick(href: string, path: string) {
   // "Threads" is `/g/{id}#threads`, so on `/g/{id}` it points at this very route
@@ -45,7 +46,15 @@ export function currentTabClick(href: string, path: string) {
     // route out of static rendering and undo the two pages #145 prerendered.
     if (window.location.search) return;
     e.preventDefault();
-    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    window.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
+    // Instant, and never smooth: measured on the live site, a smooth scroll home
+    // from 20000px down the evidence page takes 1494 ms against 4 ms for this,
+    // and a 1.5 s glide is most of the wait this ticket exists to remove. It is
+    // also the same ruling `hash-target.tsx` carries for #150 and #147 — a glide
+    // down the 39-screen evidence page is nauseating — so the two ways of
+    // arriving somewhere on a page now behave identically. Explicit rather than
+    // defaulted, so a stylesheet setting `scroll-behavior: smooth` cannot
+    // reintroduce it. At the distances that are actually reachable today the two
+    // are indistinguishable: the tab has to be on screen to be clicked.
+    window.scrollTo({ top: 0, behavior: "instant" });
   };
 }

@@ -1667,22 +1667,60 @@ fetches nothing.** Doing literally nothing was the alternative, and in practice
 this is that: neither strip is sticky, so the tab has to be on screen to be
 clicked and the reader is already at the top. Going back to the top is the one
 part of the old behaviour worth having, it costs no request, and it is already
-the right behaviour if a strip is ever made sticky. Motion honours
-`prefers-reduced-motion` — instant instead of smooth.
+the right behaviour if a strip is ever made sticky. **The scroll is instant and
+never smooth**, which is a measurement rather than a taste: on the live site a
+smooth scroll home from 20000 px down the evidence page takes **1494 ms** against
+**4 ms** instant, and 1.5 s of glide is most of the wait this ticket exists to
+remove. It is the same ruling `hash-target.tsx` already carries for #150 and
+#147, so the two ways of arriving somewhere on a page behave alike. At the
+distances reachable today the two are indistinguishable anyway, because the tab
+has to be on screen to be clicked; `prefers-reduced-motion` therefore has nothing
+left to switch on and the code does not consult it.
 
 **Whether a click is going anywhere is decided from the href, never from which
 tab is lit**, and that distinction is the whole of the risk here: they are
 different questions. "Concepts" is lit on `/g/13` and goes to `/`; "Threads" is
 lit on a thread page and goes to the map. Suppressing on the lit flag would have
 broken both. A href carrying a hash is never suppressed, so "Threads" on
-`/g/{id}` reaches the router untouched and whatever scrolls it today — the
-router's own same-page hash handling, or the `hashchange` that `hash-target.tsx`
-listens for — keeps doing so. A modifier or middle click is left to the browser,
+`/g/{id}` reaches the router untouched and still scrolls. **What scrolls it is
+the router's own same-page hash handling, not `hashchange`**: measured on the
+live deploy, that click fires `hashchange` **zero** times, and `hash-target.tsx`
+does not remount either, so neither of #150's two paths runs. Anything that
+suppressed this click, or converted the current tab to a non-link, would have
+removed the only mechanism there is. A modifier or middle click is left to the browser,
 which is a real request for a second copy. A click made while a query string is
 present still navigates, because the bare href would clear state — nothing reads
 `searchParams` today, and the location is read in the handler rather than through
 `useSearchParams()`, which in the root layout's nav would opt every route out of
 static rendering and undo #145.
+
+**After, measured on the live deploy**, same vantage and method as the tables
+above — real clicks, headless Chrome 1440×900, a `MutationObserver` watching for
+the first DOM change:
+
+| clicked while already on it | before | after |
+|---|---|---|
+| The map, on `/g/13` | 2.8 s | **no DOM change at all in 3 s** |
+| The evidence, on `/g/13/evidence` | 3.7 s | **no DOM change at all in 3 s** |
+| What this map is made of, on `/g/13/report` | 1.5 s | **no DOM change at all in 3 s** |
+| How it works, on `/about` | — | **no DOM change at all in 3 s** |
+
+Nothing is fetched: zero `?_rsc=` requests in the three seconds after each click,
+once the page's own in-viewport prefetching has quiesced, and zero document
+navigations. The `<body>` and both `<nav>` elements are the same DOM nodes
+before and after, marked with a `data-mark` attribute React knows nothing about.
+No skeleton paints. On the evidence page, 38609 px tall, **two relationships
+opened before the click are still open after it** and the page's text is the same
+92315 characters. Every one of the four ends at scroll 0.
+
+**The clicks that are meant to go somewhere still do**, all in 20–27 ms with the
+first DOM change at 14–23 ms: the map to the evidence page, the evidence page to
+the report, the report to the map, `/about` to `/roadmap`, and — the case the
+href-not-lit-flag rule exists for — "Concepts" from `/g/13`, where the tab is lit
+and the destination is `/`. Threads from `/g/13` lands with the URL at
+`/g/13#threads`, the thread list 315 px down the viewport with its first card
+whole, and the map not thrown away; the document is 1469 px against a 900 px
+viewport, so 569 px is the whole scroll there is and the page took all of it.
 
 **`/about` and `/roadmap` are now prerendered, and every other route on the site
 stopped waiting for a session** (issue #145). This is the only one of the three
