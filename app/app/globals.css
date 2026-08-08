@@ -73,7 +73,15 @@ input, select, textarea {
 }
 
 /* A pulsing page is a migraine trigger and this one covers the whole viewport.
-   The shapes still say "not here yet"; they just stop moving. */
+   The shapes still say "not here yet"; they just stop moving.
+
+   They did not. `opacity: .65` composited --card back towards --paper and took
+   the bars from 1.06 : 1 to 1.04 : 1 (issue #147, measured with reduced motion
+   emulated on the live site): a reader who switches animation off because it
+   makes them ill got a blank screen with one line of text on it. Raising them to
+   --card-2 instead is 1.14 : 1 and, more to the point, holds still at the top of
+   the range rather than fading out of it. Never lower a still shape whose whole
+   job is to be seen without moving. */
 @media (prefers-reduced-motion: reduce) {
-  .skeleton { animation: none; opacity: .65; }
+  .skeleton { animation: none; background: var(--card-2); }
 }

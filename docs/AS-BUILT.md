@@ -1274,6 +1274,23 @@ it is on screen (rule 4), and the only words on them are words about loading.
 The pulse is one keyframe in `globals.css` and it stops under
 `prefers-reduced-motion`.
 
+**Both halves of the skeleton were then made legible** (issue #147, found by the
+UX review of #140). The loading note — the only sentence on the screen and the
+only element not `aria-hidden`, so the only thing a screen reader is given — was
+`--ink-faint` at .68 rem, uppercase, .14 em tracked: **3.33 : 1 at 10.88 px**,
+under WCAG AA's 4.5 : 1 and the least legible text in the product. It is now
+`--ink-soft` at .8 rem in sentence case, **6.45 : 1**, with the words unchanged
+and `role="status"` untouched. And under `prefers-reduced-motion` the rule used
+to apply `opacity: .65`, which composited `--card` back towards `--paper` and
+took the bars from 1.06 : 1 to **1.04 : 1** — a reader who switches animation off
+because it makes them ill was shown a blank screen with one line of text on it.
+The rule now raises them to `--card-2` instead, **1.14 : 1**, still and at the
+top of the range rather than fading out of it. Contrast figures computed from the
+tokens in `globals.css` rather than transcribed; the check is a render of every
+boundary that asserts on the `role="status"` element's own style attribute, and
+it was run against the pre-change source first and failed there on all four
+counts.
+
 **And four call sites each read the same `genealogies` row twice.** `getRiver`
 selected `concept, streams`, and every caller then issued a second statement
 against that same row for `prompt_version` — the key it needs to look up

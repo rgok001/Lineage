@@ -75,6 +75,13 @@ export function Panel({
  * here is `aria-hidden`, because announcing a dozen empty boxes is worse than
  * announcing nothing. A reader who cannot see the pulse still hears that the
  * click was received.
+ *
+ * It used to be `--ink-faint` at .68rem, uppercase, .14em tracked — 3.33 : 1 at
+ * 10.88 px, which made the only sentence on the screen the least legible text
+ * in the product and put it under WCAG AA's 4.5 : 1 (issue #147, measured on the
+ * live loading state). `--ink-soft` at .8rem is 6.45 : 1 and still quiet. The
+ * words are unchanged; dropping `textTransform` is what makes them sentence
+ * case, which is how each note is written at its call site anyway.
  */
 export function LoadingNote({ children }: { children: React.ReactNode }) {
   return (
@@ -82,10 +89,8 @@ export function LoadingNote({ children }: { children: React.ReactNode }) {
       role="status"
       style={{
         fontFamily: "var(--font-mono)",
-        fontSize: ".68rem",
-        letterSpacing: ".14em",
-        textTransform: "uppercase",
-        color: "var(--ink-faint)",
+        fontSize: ".8rem",
+        color: "var(--ink-soft)",
         margin: "0 0 1rem",
       }}
     >
