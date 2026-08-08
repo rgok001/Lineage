@@ -790,6 +790,22 @@ The why behind the load-bearing choices, in one place:
     never all three families. This corrects the type line of decision 32; the
     palette and everything else in decision 32 stand.
 
+36. **All of arXiv, every field: the ML/CS restriction is lifted** (2026-08-08,
+    issue 161, Product Owner: "we should not discriminate"). The F7 design
+    (issue 35) measured what the scope law was holding shut: the trace form's
+    field picker, `isKnownField()`, and `corpus_select.py --field` already
+    carry any arXiv field end to end — the capability shipped, only the law
+    forbade it. arXiv holds 3,208,161 works of which Computer Science is 24%;
+    the largest audience expansion available cost a decision, not a build.
+    Quality in new fields is read per map on the shipped report at the moment
+    a map is judged — deliberately no pre-approval gate and no threshold,
+    consistent with decisions 24 and 25 (n=2 baselines are a reference, not a
+    bar). The architect's two calibration traces (economics, physics — issue
+    164) remain worth running as measurement, but they gate nothing: the
+    owner opened the door on principle, and the instrument exists to see what
+    walks through it. Non-arXiv sources remain sequenced behind the field
+    widening and F10 (issue 165) per the design on issue 35.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record

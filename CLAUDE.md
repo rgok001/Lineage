@@ -63,7 +63,7 @@ machine learning and adjacent preprint fields and not yet for anything else.
 extends · contests · narrows · renames · merges · migrates
 
 ## Scope: IN
-- arXiv ML/CS papers only, English only
+- All arXiv papers, every field, English only (owner decision 36, 2026-08-08, issue 161: "we should not discriminate" — the ML/CS restriction is lifted; quality per field is measured on each map's report after it builds, not gated before)
 - One showcase concept pre-built: "attention"
 - Custom trace builds (async job, live progress feed)
 - Timeline genealogy UI, evidence panel, workbench editing
