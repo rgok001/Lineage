@@ -136,6 +136,9 @@ app/                 Next.js app (Vercel root directory is app/)
                      /g/[id]/evidence (the old detailed view + workbench),
                      /api/traces, /api/auth
                      layout.tsx + nav.tsx hold the one tab bar
+                     skeleton.tsx holds the loading shapes every boundary shares
+                     (concepts)/ is a route group, not a URL segment: it exists
+                     so / can have a loading.tsx that /about does not get
   lib/               db.ts, authz.ts, genealogy.ts, traces.ts, actions
 data/                DATA_DIR (gitignored): raw papers, texts, exports, models
 ```
@@ -1267,7 +1270,8 @@ Two things were wrong and both are fixed. **There was no `loading.tsx` anywhere
 in `app/`**, so the router held the previous page on screen, unchanged, for the
 whole wait — the click was not acknowledged at all. There are now boundaries at
 `/g/[id]` and at each of `evidence`, `report`, `river/[sid]` and `p/[arxiv]`,
-sharing the shapes in `app/g/[id]/skeleton.tsx`. They render **shapes and never
+and (since #144, below) at `/` and `/trace`, sharing the shapes in
+`app/app/skeleton.tsx`. They render **shapes and never
 content**: no counts, no titles, no quotes, not even plausible ones, because a
 skeleton that guesses a number is a fabricated claim about a map for as long as
 it is on screen (rule 4), and the only words on them are words about loading.
@@ -1343,10 +1347,37 @@ papers grouped into meanings, 287 typed relationships, 286 verified, 1 inferred)
 
 What is deliberately **not** here: caching and PPR. The report is computed on
 read and never stored (decision 30), so any caching of it needs design before
-code, and the ticket says so. Nor is there a boundary on `/` or `/trace`: a root
-`loading.tsx` is the only way to scope one to them and it would also cover the
-static `/about` and `/roadmap`, so whether those flash a skeleton on an already
-instant navigation is a judgement for the UX review rather than a guess here.
+code, and the ticket says so.
+
+**`/` and `/trace` now have boundaries too, scoped by a route group** (issue
+#144). After #140 those were the two longest unacknowledged clicks left in the
+product, and they are the two tabs on every page: measured on the live site from
+Sydney, clicking the global nav from `/g/13`, **1143 ms to `/` and 1347 ms to
+`/trace`** with the old page whole and unchanged for the whole of it. The trade
+recorded here previously — that a root `loading.tsx` would also wrap `/about`
+and `/roadmap`, which navigate instantly — was not real: `/about` takes 591 ms,
+because the root layout renders `<SignInButton />` and that makes every route in
+the app dynamic. That cause is issue #145 and is design-pending; it removes the
+wait rather than covering it, and nothing here anticipates it.
+
+The scoping is `app/app/(concepts)/`, a route group holding the home page and
+its `loading.tsx`. A route group changes no URL, so `/` still resolves to
+`app/(concepts)/page` in the app-paths manifest. `/trace` needs no group — it
+already has its own directory, so its boundary sits in it. Verified from the
+build's own route tree rather than by reading the docs: `/(concepts)/page` binds
+`(concepts)/loading.tsx`, `/trace/page` binds `trace/loading.tsx`, and
+`about/page.js` and `roadmap/page.js` contain no loading module at all. One
+boundary per route and none nested, so neither route can flash the other's note.
+
+The shared shapes moved from `app/g/[id]/skeleton.tsx` to `app/app/skeleton.tsx`
+in the same change: the home page reaching into a map's directory for them would
+be the wrong dependency, and one file is what keeps every skeleton in the app on
+one palette and one pulse. `Panel` gained `pad`, `radius` and `grow`, because the
+cards on `/` and `/trace` are roomier than the ones inside a map and a skeleton
+whose padding is off moves the page when the content lands. Neither new skeleton
+draws the trace queue or the sign-in state, and neither claims a map count: those
+are exactly what the page has gone to the database to find out, and they append
+below what is already drawn, which shifts nothing.
 
 **Progress transport is polling, not SSE**, a deliberate deviation from the
 original plan: progress lives in Postgres anyway, serverless cannot hold

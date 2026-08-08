@@ -1,5 +1,10 @@
 /**
- * The shapes a /g/[id] route shows while its data is in flight (issue #140).
+ * The shapes a route shows while its data is in flight (issue #140).
+ *
+ * It lived under `g/[id]/` until #144 gave `/` and `/trace` boundaries of their
+ * own; the home page reaching into a map's directory for them would have been
+ * the wrong shape of dependency, and one file is what keeps every skeleton in
+ * the app on one palette and one pulse.
  *
  * The Product Owner reported lag clicking into evidence, threads and tabs.
  * Measured before any fix, from Sydney against the iad1 functions: 2.1 s to
@@ -40,25 +45,37 @@ export function Bar({
 }
 
 /** A card-shaped placeholder: the border and ground of a real panel, holding
- *  bars instead of the panel's contents. */
+ *  bars instead of the panel's contents.
+ *
+ *  `pad` and `radius` are overridable because the cards on `/` and `/trace` are
+ *  roomier than the ones inside a map, and a skeleton whose padding is off by
+ *  a few pixels moves the page under the reader when the content lands — which
+ *  is the jank these exist to remove rather than relocate. */
 export function Panel({
   children,
   h,
   mt = ".6rem",
+  pad = ".8rem .9rem",
+  radius = 8,
+  grow,
 }: {
   children?: React.ReactNode;
   h?: number;
-  mt?: string;
+  mt?: number | string;
+  pad?: string;
+  radius?: number;
+  grow?: string;
 }) {
   return (
     <div
       style={{
         background: "var(--card)",
         border: "1px solid var(--line)",
-        borderRadius: 8,
-        padding: ".8rem .9rem",
+        borderRadius: radius,
+        padding: pad,
         marginTop: mt,
         height: h,
+        flex: grow,
       }}
       aria-hidden="true"
     >

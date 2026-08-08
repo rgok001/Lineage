@@ -1,4 +1,4 @@
-import { Bar, LoadingNote, Panel } from "../../skeleton";
+import { Bar, LoadingNote, Panel } from "../../../../skeleton";
 
 /**
  * A paper's dossier, while it loads (issue #140).

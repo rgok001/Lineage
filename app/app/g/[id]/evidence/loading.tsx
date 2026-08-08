@@ -1,4 +1,4 @@
-import { Bar, LoadingNote, Panel } from "../skeleton";
+import { Bar, LoadingNote, Panel } from "../../../skeleton";
 
 /**
  * The evidence page, while it loads (issue #140).

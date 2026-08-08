@@ -1,4 +1,4 @@
-import { Bar, LoadingNote } from "../skeleton";
+import { Bar, LoadingNote } from "../../../skeleton";
 
 /**
  * "What this map is made of", while it loads (issue #140).

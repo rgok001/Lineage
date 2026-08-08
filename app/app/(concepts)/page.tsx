@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { getViewer, isOwner } from "../lib/authz";
-import { listGenealogies } from "../lib/genealogy";
-import { getArxivFields } from "../lib/openalex";
-import { dbNow, listTraceRequests } from "../lib/traces";
+import { getViewer, isOwner } from "../../lib/authz";
+import { listGenealogies } from "../../lib/genealogy";
+import { getArxivFields } from "../../lib/openalex";
+import { dbNow, listTraceRequests } from "../../lib/traces";
 
 export const dynamic = "force-dynamic"; // always read live DB state
 

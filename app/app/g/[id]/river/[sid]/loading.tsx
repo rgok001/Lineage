@@ -1,4 +1,4 @@
-import { Bar, LoadingNote, Panel } from "../../skeleton";
+import { Bar, LoadingNote, Panel } from "../../../../skeleton";
 
 /**
  * One thread, read as an account, while it loads (issue #140).

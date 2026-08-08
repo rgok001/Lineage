@@ -1,4 +1,4 @@
-import { Bar, LoadingNote, Panel } from "./skeleton";
+import { Bar, LoadingNote, Panel } from "../../skeleton";
 
 /**
  * The map's front door, while it loads (issue #140).
