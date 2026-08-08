@@ -1,10 +1,12 @@
 import { sql } from "./db";
 
 /**
- * The map report (issue #30, `[F2]`), read from migration 016's two views.
+ * The map report (issue #30, `[F2]`), read from migration 016's two views and
+ * migration 017's third (`map_report_by_type`, issue #162).
  *
- * Nothing here computes a figure. Every number is selected from `map_report` or
- * `map_report_by_source`, which is the whole point of the ticket: the app and
+ * Nothing here computes a figure. Every number is selected from `map_report`,
+ * `map_report_by_source` or `map_report_by_type`, which is the whole point of
+ * the ticket: the app and
  * `pipeline/map_report.py` read one expression, so the page and the shell cannot
  * disagree about the same map, and nothing is stored, so a figure cannot survive
  * the curatorial edit that invalidates it.
@@ -41,6 +43,22 @@ export type ReportBucket = {
   verified: number;
   inferred: number;
   stale: number;
+};
+
+/** One kind of link and how many of the map's relationships were given it
+ *  (migration 017, issue #162).
+ *
+ *  `taxonomy_rank` is the kind's position in the six CLAUDE.md names, and
+ *  **NULL means the taxonomy does not contain this kind**. The view emits a row
+ *  for every one of the six even when a map has none of it, plus a row for any
+ *  kind actually present that is not among them, so the rows always sum to the
+ *  map's relationship count. The app therefore never writes the six names down:
+ *  it renders whatever rows it is handed, in the order it is handed them. */
+export type ReportTypeCount = {
+  edge_type: string;
+  taxonomy_rank: number | null;
+  edges: number;
+  edges_share: number | null;
 };
 
 export type MapReport = {
@@ -99,6 +117,12 @@ export type MapReport = {
   requester_wait: number | null;
 
   buckets: ReportBucket[];
+  /** **NULL is not an empty mix.** It means migration 017 has not landed on this
+   *  deployment yet and the counts could not be read at all; an empty array
+   *  would be a map with no kinds of link, which is a different claim and one
+   *  the view never makes (it emits six rows for a map with no relationships,
+   *  each reading zero). The page prints words for the NULL and never a zero. */
+  types: ReportTypeCount[] | null;
 };
 
 /** Named, in the view's own order, so the shape of this list and the shape of
@@ -120,7 +144,8 @@ const COLUMNS = `genealogy_id, concept, prompt_version, status,
   papers_with_no_year,
   runs_recorded, run_cost_usd, run_cost_basis, run_wall_clock, requester_wait`;
 
-function shape(r: Record<string, unknown>, buckets: ReportBucket[]): MapReport {
+function shape(r: Record<string, unknown>, buckets: ReportBucket[],
+               types: ReportTypeCount[] | null): MapReport {
   const n = (k: string) => num(r[k]) ?? 0;      // counts: the view coalesces these
   const m = (k: string) => num(r[k]);           // measurements: absence is meaningful
   return {
@@ -174,6 +199,7 @@ function shape(r: Record<string, unknown>, buckets: ReportBucket[]): MapReport {
     run_wall_clock: m("run_wall_clock"),
     requester_wait: m("requester_wait"),
     buckets,
+    types,
   };
 }
 
@@ -202,6 +228,63 @@ async function bucketsFor(ids: number[]): Promise<Map<number, ReportBucket[]>> {
 }
 
 /**
+ * The mix of kinds of link, per map (migration 017, issue #162).
+ *
+ * **Guarded, because this migration lands after the app that reads it.** A push
+ * to `master` deploys Vercel and Render at once and Render's pre-deploy is what
+ * runs the migration, so for a few minutes the app is live against a schema one
+ * migration behind — which CLAUDE.md requires it to tolerate and RUNBOOK.md says
+ * to handle with #92's fallback. Without the probe, Postgres raises
+ * `UndefinedTable` for a statement naming a relation that is not there and the
+ * whole report page 500s, taking every figure with it to add one.
+ *
+ * **The probe is unqualified, and that is the correction #92 earned.**
+ * `listGenealogies` asks `to_regclass('public.map_report')` while its query says
+ * `FROM map_report`, so the probe is more specific than the thing it guards: any
+ * schema arrangement it does not name reads as absence, and the page would then
+ * print words about a view that is right there. Written unqualified, the probe
+ * resolves the name against the same `search_path` the next statement does, so
+ * the two agree by construction rather than under the deployment we happened to
+ * test.
+ *
+ * **Its answer is a snapshot and the race is a known residue, not an oversight.**
+ * Two statements on an HTTP driver are two transactions, so a view dropped
+ * between them still raises. That is acceptable here for the same reason it was
+ * in #92: the alternative is a hard 500 on the ordinary path, and dropping a view
+ * under a running deployment is not something this system does to itself.
+ */
+async function typesFor(ids: number[]): Promise<Map<number, ReportTypeCount[]> | null> {
+  const [probe] = (await sql`
+    SELECT to_regclass('map_report_by_type') IS NOT NULL AS reported
+  `) as { reported: boolean }[];
+  if (!probe?.reported) return null;
+  if (!ids.length) return new Map();
+  // Ordered by the view's own rank, so the order of the six lives in the
+  // migration and nowhere else. NULLS LAST puts a kind the taxonomy does not
+  // contain after the ones it does, which is where a reader expects it.
+  const rows = (await sql`
+    SELECT genealogy_id, edge_type, taxonomy_rank, edges, edges_share
+    FROM map_report_by_type
+    WHERE genealogy_id = ANY(${ids})
+    ORDER BY genealogy_id, taxonomy_rank NULLS LAST, edge_type
+  `) as Record<string, unknown>[];
+  const out = new Map<number, ReportTypeCount[]>();
+  for (const r of rows) {
+    const id = Number(r.genealogy_id);
+    if (!out.has(id)) out.set(id, []);
+    out.get(id)!.push({
+      edge_type: String(r.edge_type),
+      taxonomy_rank: num(r.taxonomy_rank),
+      edges: num(r.edges) ?? 0,
+      // A measurement, not a count: the view returns NULL when the map has no
+      // relationships to be a share of, and the page prints words for it.
+      edges_share: num(r.edges_share),
+    });
+  }
+  return out;
+}
+
+/**
  * Every map's report, newest map first.
  *
  * The page needs all of them rather than one, because each figure is published
@@ -219,6 +302,16 @@ export async function listMapReports(): Promise<MapReport[]> {
   const rows = (await sql`
     SELECT ${sql.unsafe(COLUMNS)} FROM map_report ORDER BY genealogy_id DESC
   `) as Record<string, unknown>[];
-  const buckets = await bucketsFor(rows.map((r) => Number(r.genealogy_id)));
-  return rows.map((r) => shape(r, buckets.get(Number(r.genealogy_id)) ?? []));
+  const ids = rows.map((r) => Number(r.genealogy_id));
+  // In parallel, so #162's two extra round trips cost one wait rather than two
+  // on a page already taking most of a second.
+  const [buckets, types] = await Promise.all([bucketsFor(ids), typesFor(ids)]);
+  return rows.map((r) => {
+    const id = Number(r.genealogy_id);
+    // `?? []` for the buckets and `?? null` for the types, and the difference is
+    // the point: a map with no definitions and no relationships genuinely has no
+    // bucket rows, while the view emits six type rows for every map that exists,
+    // so a map missing from `types` means the read did not happen.
+    return shape(r, buckets.get(id) ?? [], types === null ? null : types.get(id) ?? null);
+  });
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer, isOwner } from "../../../../lib/authz";
 import { parseMapId } from "../../../../lib/map-id";
+import { EDGE_MEANING } from "../../../../lib/genealogy";
 import { listMapReports, type MapReport } from "../../../../lib/report";
 
 export const dynamic = "force-dynamic"; // computed on read, never stored
@@ -10,7 +11,8 @@ export const dynamic = "force-dynamic"; // computed on read, never stored
  * What this map is made of (issue #30, `[F2]`).
  *
  * One screen, one column, no interactivity. Every number is selected from
- * migration 016's views, so this page and `pipeline/map_report.py` read one
+ * migration 016's two views and migration 017's third (the mix of kinds of
+ * link, issue #162), so this page and `pipeline/map_report.py` read one
  * expression and cannot disagree about the same map, and nothing is stored, so
  * no figure here can survive the curatorial edit that invalidates it.
  *
@@ -356,6 +358,44 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         `${count(r.most_repeated_quote_uses)} of them, so the number of relationships ` +
         `is not a count of separate pieces of evidence.`
       : null;
+
+  /**
+   * The mix of kinds of link (issue #162, designing #35).
+   *
+   * **The gap this fills.** Until now nothing on any surface said how a map's
+   * relationships divide across the six kinds. A map whose 300 relationships are
+   * 290 "extends" and 10 everything else reads as an excellent map on every
+   * other figure here — definitions verified, relationships verified, evidence
+   * all present — while a classification that returns one label out of six is
+   * not classifying, and the map is a fan of arrows saying "came after". That is
+   * the shape a literature which does not move the way these six kinds assume
+   * would produce, and every figure above it would stay green while it happened.
+   *
+   * **A table rather than six figures.** The page's own history is a fight
+   * against rendering everything at one weight (#104, #107 to #113), and six
+   * more full-width rows each with an explainer, a note and a comparison line
+   * would have added a third of a screen to say one thing. The comparison the
+   * figures make in prose is made here by a column per map, this map first,
+   * which is the same claim in the shape a table already makes.
+   *
+   * **Nothing here decides anything.** No kind is better than another, there is
+   * no expected mix and no share is marked (decisions 24 and 25). The reader is
+   * given the counts and the sentence that says what they add up to.
+   *
+   * The six names are not written down in this file. They arrive as rows from
+   * `map_report_by_type` in the view's own order, so a seventh kind would appear
+   * here as a seventh row rather than going missing from a hardcoded six, and
+   * the columns would still add up to the total below.
+   */
+  const typeTable = r.types;
+  const typeCell = (t: { edges: number; edges_share: number | null } | undefined) => {
+    // A kind with no row on another map is a real zero rather than an absence:
+    // the view emits all six for every map and emits a seventh kind only where
+    // one exists, so "no row" means "that map has none of these".
+    if (!t) return "0";
+    const s = share(t.edges_share);
+    return s === null ? count(t.edges)! : `${count(t.edges)} (${s})`;
+  };
 
   const noRunMaps = all.filter((m) => m.runs_recorded === 0).length;
   const runRecordSentence =
@@ -703,6 +743,94 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             others={others((m) => m.edges_within_one_node, count)}
           />
         )}
+
+        {/* Placed last in Shape, and immediately after the row about pairs
+            linked in more than one way, because that row is where the page
+            first says "kind of link" to a reader. Set like the papers-per-year
+            block above it: its own quiet label, its own paragraph naming what
+            it counts, its own note answering what would change it. */}
+        <div style={{ padding: ".85rem 0", borderTop: "1px solid var(--line-soft)" }}>
+          <div style={{ ...mono, fontSize: ".68rem", letterSpacing: ".08em",
+            textTransform: "uppercase", color: "var(--ink-faint)" }}>
+            kinds of link
+          </div>
+          <p style={{ fontFamily: "var(--font-display)", fontSize: ".92rem",
+            lineHeight: 1.55, color: "var(--ink-soft)", margin: ".35rem 0 0",
+            maxWidth: "44rem" }}>
+            Every one of this map’s {count(r.edges_total)} typed relationships, counted
+            by which kind of link it was given. A relationship carries exactly one kind,
+            so these add up to that total. A kind no relationship was given reads 0
+            rather than being left out: having none of a kind is a finding, and a
+            missing line is not.
+          </p>
+          <p style={{ fontFamily: "var(--font-display)", fontSize: ".92rem",
+            lineHeight: 1.55, color: "var(--ink-faint)", margin: ".15rem 0 0",
+            maxWidth: "44rem" }}>
+            <span style={{ fontStyle: "italic" }}>What would change this:</span>{" "}
+            The map being rebuilt, or someone editing the map changing what kind a
+            relationship is, or deleting one.
+          </p>
+          {typeTable === null ? (
+            /* Migration 017 has not landed on this deployment yet
+               (`lib/report.ts` explains the guard). Words, never a zero and never
+               a blank: a table of noughts here would say this map has no links of
+               any kind, over a map holding hundreds. */
+            <p style={{ ...mono, fontSize: ".78rem", color: "var(--ink-soft)",
+              fontStyle: "italic", marginTop: ".6rem" }}>
+              not counted on this page at the moment, which is this page’s reach and
+              not a fact about the map
+            </p>
+          ) : r.edges_total === 0 ? (
+            <p style={{ ...mono, fontSize: ".78rem", color: "var(--ink-soft)",
+              fontStyle: "italic", marginTop: ".6rem" }}>
+              this map holds no relationships, so there is no mix of kinds to count
+            </p>
+          ) : (
+            <table style={{ ...mono, fontSize: ".78rem", borderCollapse: "collapse",
+              width: "100%", marginTop: ".6rem" }}>
+              <thead>
+                <tr style={{ color: "var(--ink-faint)", textAlign: "left" }}>
+                  {["kind", "what it means", "this map",
+                    ...rest.map((m) => m.concept)].map((h) => (
+                    <th key={h} style={{ padding: ".35rem .6rem",
+                      borderBottom: "1px solid var(--line)", fontWeight: 400 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {typeTable.map((t) => (
+                  <tr key={t.edge_type}>
+                    <td style={{ padding: ".3rem .6rem", color: "var(--ink)" }}>
+                      {t.edge_type}
+                    </td>
+                    {/* `EDGE_MEANING`, which `/about` and the evidence page
+                        already read, so this adds no home for the six sentences.
+                        It is not the only one: `/g/[id]`'s legend has a shorter
+                        `GLOSS` of its own, which is a second wording of the same
+                        six and is out of this ticket's scope. A kind the taxonomy
+                        does not contain is named as such from the view's own rank
+                        rather than inferred from the gloss being missing, so the
+                        two facts stay independent. */}
+                    <td style={{ padding: ".3rem .6rem", color: "var(--ink-faint)" }}>
+                      {t.taxonomy_rank === null
+                        ? "not one of the six kinds this tool uses"
+                        : EDGE_MEANING[t.edge_type] ?? ""}
+                    </td>
+                    <td style={{ padding: ".3rem .6rem" }}>{typeCell(t)}</td>
+                    {rest.map((m) => (
+                      <td key={m.genealogy_id} style={{ padding: ".3rem .6rem",
+                        color: "var(--ink-soft)" }}>
+                        {m.types === null
+                          ? "not counted"
+                          : typeCell(m.types.find((o) => o.edge_type === t.edge_type))}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </Section>
 
       {/* "Corpus" was the team's word and this heading was its last appearance

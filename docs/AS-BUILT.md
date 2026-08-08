@@ -475,7 +475,8 @@ partial unique index allows only one open request per concept, enforced at the
 database level because app-level checks can be raced by simultaneous submits.
 
 **map_report_by_source and map_report** (016, `016_map_report.sql`): the map
-report (issue #30, `[F2]`), and the only two views in the schema. They store
+report (issue #30, `[F2]`), two of the three views in the schema (the third is
+`map_report_by_type`, below). They store
 nothing. `CREATE VIEW` writes no row, takes no rewrite lock and is reversed by
 `DROP VIEW map_report; DROP VIEW map_report_by_source;`, and the whole point of
 computing rather than storing is that a quality figure written to a column
@@ -517,6 +518,38 @@ that can fail rather than one that cannot; F7's migration replaces it with
 `p.source` in the same migration that creates the column. An edge is grouped by
 the pair of its two endpoint labels, sorted and joined, so every edge lands in
 exactly one bucket and the buckets sum to the edge count.
+
+**map_report_by_type** (017, `017_map_report_by_type.sql`): the mix of kinds of
+link, one row per (map, kind), issue #162. Until it shipped, nothing on any
+surface said how a map's relationships divide across the six kinds — `016`
+touches `edge_type` exactly once, as `count(DISTINCT edge_type)` inside the
+multi-linked-pair test — so a map whose 300 relationships were 290 `extends` and
+10 everything else read as an excellent map on every figure the report published,
+while a classification returning one label out of six is not classifying. It is
+the figure a map built outside the field the taxonomy was written against fails
+first, which is why it is a prerequisite of #164's calibration maps.
+
+The view carries `edge_type`, `taxonomy_rank`, `edges` and `edges_share`. It
+crosses every map with the six kinds, so **a kind no relationship was given is a
+row reading zero rather than a row that is not there**, and it `UNION ALL`s a row
+for any kind actually present that is not among the six, so **the rows always sum
+to the map's relationship count**: a kind the `edges.edge_type` CHECK permits and
+this view forgot cannot go missing. `taxonomy_rank` is `WITH ORDINALITY` over the
+six, and NULL is what says the taxonomy does not contain that kind; both
+consumers sort `NULLS LAST` and neither writes the six names down. `edges_share`
+divides by the sum of this view's own rows for the map, taken as a window rather
+than as a second count of `edges`, so the identity holds inside the view rather
+than between two expressions; `NULLIF` makes the share absent, never 0%, on a map
+with no relationships. Its numeric literals are `{0, 1}` — the `NULLIF`
+denominator and `SELECT 1 FROM pg_roles` in the `GRANT` — and it carries `016`'s
+two header checks over its own text.
+
+Measured against a real PostgreSQL with `001`-`017` applied and four fixture
+maps (a lopsided mix, one kind only, no edges, a single edge): the kinds sum to
+`map_report.edges_total` on all four, every map appears on the view, a map with
+no edges reports six zeros with an absent share, and after the CHECK constraint
+was dropped and a `supersedes` edge inserted, that kind appeared as a seventh row
+with a NULL rank and the sum still matched.
 
 Three figures the report is asked for have no input in this database and each
 renders as an explicit "not recorded", never a zero and never a blank: run cost
@@ -1018,13 +1051,50 @@ fetches nothing. The reasoning is with the other navigation costs, below.
   map's papers".
 - `/g/[id]/report` : what this map is made of (issue #30, `[F2]`). One screen,
   one column, no interactivity, every figure selected from migration 016's two
-  views by `lib/report.ts` and computed nowhere else, so this page and
+  views and migration 017's third by `lib/report.ts` and computed nowhere else,
+  so this page and
   `pipeline/map_report.py` cannot disagree about a figure they both print (which
   is no longer every figure: see the subset invariant below). Sections: how much
   was read, evidence (the three stamp states for definitions and for
   relationships), the same counts split by source, shape, when the papers were
   written with a per-year histogram, the run, and a closing list of the three
   things the page cannot tell you.
+  **Shape ends with the mix of kinds of link** (issue #162), the figure that says
+  whether the taxonomy described this literature at all. It is a small table
+  rather than six more figures — the page's history is a fight against rendering
+  everything at one weight, and six full rows each with an explainer, a note and
+  a comparison line would have added a third of a screen to say one thing. Rows
+  are the kinds in the view's order, columns are `kind`, `what it means`, `this
+  map`, then one column per other map in the system, each cell a count and its
+  share. The gloss column reads `EDGE_MEANING` in `lib/genealogy.ts`, which
+  `/about` and the evidence page (the edge label and the reclassify dropdown)
+  also read, so it gains no new home here. It is not the only home: the map at
+  `/g/[id]` builds its legend from a shorter `GLOSS` of its own ("built on",
+  "pushed back", "specialised"), which predates this and is untouched by it, so a
+  reader moving between the map and the report meets two wordings of the same six
+  kinds. A kind whose
+  `taxonomy_rank` is NULL is labelled "not one of the six kinds this tool uses"
+  from the view rather than inferred from a missing gloss. The paragraph above
+  the table names the population and states the identity a reader can check
+  ("Every one of this map's N typed relationships ... these add up to that
+  total"), which is the falsifier for the whole figure. Nothing is graded, no
+  mix is expected and no share is marked (decisions 24 and 25). Two states print
+  words instead of the table: a map with no relationships says so, and a
+  deployment whose schema is one migration behind says "not counted on this page
+  at the moment, which is this page's reach and not a fact about the map".
+  **That last state is the #92 fallback, applied where it had been declined.**
+  `RUNBOOK.md` leads the 016 entry with migration-before-deploy precisely because
+  this page had no fallback and none would have been honest for its core figures;
+  017 is different, because the app tolerating its absence costs one figure rather
+  than fabricating any, and CLAUDE.md requires the app to tolerate a schema one
+  migration behind. `lib/report.ts` probes `to_regclass('map_report_by_type')`
+  in its own statement, **unqualified**, which is the correction #92 earned: that
+  probe schema-qualifies while its query does not, so any schema arrangement it
+  does not name reads as absence. The probe's answer is a snapshot and the race
+  is a known residue. `types: null` in `MapReport` means the read did not happen
+  and is deliberately not an empty array, which would mean a map with no kinds of
+  link; the view never says that, since it emits six rows for a map with no
+  relationships.
   **The By source table renders only when the rows carry more than one label**
   (issue #109). While there is one source, the six-column table restated the
   Evidence totals split by nothing a reader can see, under a lede explaining

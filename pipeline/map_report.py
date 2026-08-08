@@ -1,7 +1,8 @@
 """Print what a map is made of, from the map's own rows, storing nothing.
 
 Ticket #30 ([F2]); the design is docs/design/f2-map-report.md. The figures come
-from migration 016's two views and are computed nowhere else, so this command and
+from migration 016's two views and migration 017's third (the mix of kinds of
+link, issue #162) and are computed nowhere else, so this command and
 `/g/<id>/report` read one expression and cannot disagree about the same map.
 
 **It reads LINEAGE_READ_URL and never DATABASE_URL, and it issues no statement
@@ -13,9 +14,10 @@ a view holds no data.
 
 It does, however, COMMIT. `with psycopg.connect(...)` commits on the way out of
 the block -- that is what psycopg's connection context manager does, and nothing
-here suppresses it -- so a statement counter watching this command sees two
-SELECTs and one commit, not two SELECTs and nothing (issue #93). The commit
-carries no change, because the only statements in the transaction are those two
+here suppresses it -- so a statement counter watching this command sees three
+SELECTs and one commit, not three SELECTs and nothing (issue #93; it was two
+before #162 added the kinds of link). The commit carries no change, because the
+only statements in the transaction are those three
 SELECTs, and it is left alone rather than turned into a rollback: what makes this
 command safe to point at production is the read-only role and the statements it
 issues, and rearranging the transaction to make a sentence true would be
@@ -90,6 +92,22 @@ BUCKETS = """
 SELECT genealogy_id, unit, source, total, verified, inferred, stale
 FROM map_report_by_source
 ORDER BY genealogy_id, unit, source
+"""
+
+# The mix of kinds of link (migration 017, issue #162). Unguarded on purpose,
+# unlike the app's read of the same view: this command is run by the Operator
+# against a database whose migrations have been applied, and a missing view here
+# should stop the command loudly rather than quietly print a report with a grain
+# missing. The app carries a fallback because it is live to strangers during the
+# few minutes between the Vercel deploy and Render's pre-deploy migration.
+#
+# Ordered by the view's own rank, so the order of the six lives in the migration
+# and nowhere else; NULLS LAST puts a kind the taxonomy does not contain after
+# the ones it does.
+TYPES = """
+SELECT genealogy_id, edge_type, taxonomy_rank, edges, edges_share
+FROM map_report_by_type
+ORDER BY genealogy_id, taxonomy_rank NULLS LAST, edge_type
 """
 
 
@@ -263,7 +281,8 @@ SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
 LABEL_WIDTH = max(len(label) for _s, figs in SECTIONS for label, *_ in figs)
 
 
-def render(row: dict, others: list[dict], buckets: list[dict], n: int) -> list[str]:
+def render(row: dict, others: list[dict], buckets: list[dict], types: list[dict],
+           n: int) -> list[str]:
     out = [f'What "{row["concept"]}" is made of  (prompt {row["prompt_version"]}, '
            f'map {row["genealogy_id"]}, {row["status"]})', ""]
     out.append("Counted from this map's own rows just now. Nothing here is stored, so a")
@@ -297,10 +316,45 @@ def render(row: dict, others: list[dict], buckets: list[dict], n: int) -> list[s
                     out.append(f"  {unit:<12}{b['source']:<36}{int(b['total']):>8}"
                                f"{int(b['verified']):>10}{int(b['inferred']):>10}"
                                f"{int(b['stale']):>16}")
-        # Two section titles are load-bearing here and nothing else reads them:
+        # The mix of kinds of link (issue #162), under Shape, where the page puts
+        # it. Every kind the view returns is printed in the view's own order, so
+        # the six names are not written down in this file either and a seventh
+        # would print as a seventh line rather than going missing.
+        if title == "Shape":
+            out += ["", "  Kinds of link", "  -------------"]
+            mine = [t for t in types if t["genealogy_id"] == row["genealogy_id"]]
+            # The zero branch is on the map's relationship count and not on
+            # `mine`, because the view emits all six kinds for every map: a map
+            # with no relationships has six rows, each reading 0 with an absent
+            # share, and printing them gave six lines of "0no relationships"
+            # where the absent words overran a ten-column field. The page says
+            # one sentence in that state and so does this. `not mine` stays as
+            # its own branch: it means the view returned nothing for this map,
+            # which is a different claim from the map having no relationships.
+            if not mine:
+                out.append("  nothing to count: this map has no rows on the view")
+            elif int(row["edges_total"]) == 0:
+                out.append("  this map holds no relationships, so there is no mix "
+                           "of kinds to count")
+            else:
+                out.append(f"  {'kind':<14}{'relationships':>14}{'share':>10}"
+                           f"   {'in the taxonomy':<16}")
+                for t in mine:
+                    out.append(f"  {t['edge_type']:<14}{count(t['edges']):>14}"
+                               f"{share(t['edges_share']) or 'no relationships':>10}"
+                               f"   {'yes' if t['taxonomy_rank'] is not None else 'NO':<16}")
+                # The falsifier, printed rather than assumed: these must add up to
+                # `typed relationships` above, and a reader of this command should
+                # not have to add six numbers to find out that they do not.
+                total = sum(int(t["edges"]) for t in mine)
+                line = f"  {'total':<14}{count(total):>14}"
+                if total != int(row["edges_total"]):
+                    line += "   <- DOES NOT MATCH typed relationships above"
+                out.append(line)
+        # Three section titles are load-bearing here and nothing else reads them:
         # rename one in SECTIONS without renaming it below and the By source
-        # table or the year histogram silently stops printing. Issue #124
-        # renamed three of the six.
+        # table, the kinds-of-link table or the year histogram silently stops
+        # printing. Issue #124 renamed three of the six.
         if title == "When the papers were written":
             out += ["", "  papers per year"]
             counts = row["year_counts"] or {}
@@ -323,7 +377,7 @@ def render(row: dict, others: list[dict], buckets: list[dict], n: int) -> list[s
     return out
 
 
-def as_json(row: dict, buckets: list[dict]) -> str:
+def as_json(row: dict, buckets: list[dict], types: list[dict]) -> str:
     """The row and its buckets, to stdout, in the view's own column names.
 
     `Decimal` is serialised as a string rather than a float: these are exact
@@ -337,6 +391,8 @@ def as_json(row: dict, buckets: list[dict]) -> str:
         **{k: plain(v) for k, v in row.items()},
         "by_source": [{k: plain(v) for k, v in b.items()}
                       for b in buckets if b["genealogy_id"] == row["genealogy_id"]],
+        "by_type": [{k: plain(v) for k, v in t.items()}
+                    for t in types if t["genealogy_id"] == row["genealogy_id"]],
     }, indent=2, default=str)
 
 
@@ -364,6 +420,9 @@ def main() -> None:
         cur = conn.execute(BUCKETS)
         bnames = [d.name for d in cur.description]
         buckets = [dict(zip(bnames, r)) for r in cur.fetchall()]
+        cur = conn.execute(TYPES)
+        tnames = [d.name for d in cur.description]
+        types = [dict(zip(tnames, r)) for r in cur.fetchall()]
 
     if not rows:
         sys.exit("No maps in this database, so there is nothing to report on.")
@@ -393,16 +452,17 @@ def main() -> None:
         # array, of one if that is all there is; a named concept is always an
         # object.
         if args.all:
-            print(json.dumps([json.loads(as_json(r, buckets)) for r in chosen], indent=2))
+            print(json.dumps([json.loads(as_json(r, buckets, types)) for r in chosen],
+                             indent=2))
         else:
-            print(as_json(chosen[0], buckets))
+            print(as_json(chosen[0], buckets, types))
         return
 
     for i, row in enumerate(chosen):
         if i:
             print("\n" + "=" * 78)
         others = [r for r in rows if r["genealogy_id"] != row["genealogy_id"]]
-        print("\n".join(render(row, others, buckets, n)))
+        print("\n".join(render(row, others, buckets, types, n)))
 
 
 if __name__ == "__main__":

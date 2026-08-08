@@ -705,6 +705,7 @@ write. Ever.
 (`map_report.py <concept> [--prompt-version PV] [--all] [--json]`): what a map is
 made of, from the map's own rows (issue #30, `[F2]`). Every figure is selected
 from migration `016`'s two views, `map_report` and `map_report_by_source`, and
+from migration `017`'s `map_report_by_type`, and
 computed here not at all, so this command and `/g/<id>/report` read one
 expression and cannot disagree about the same map. **It reads `LINEAGE_READ_URL`
 and never `DATABASE_URL`, and issues no statement but `SELECT`** — the second
@@ -714,7 +715,8 @@ a report, which is only safe if it structurally cannot write. It does not repair
 and there is nothing to refresh, because a view holds no data.
 It commits, and the docstring says so. `with psycopg.connect(...)` commits on the
 way out of the block, which is what psycopg's context manager does; the commit
-carries nothing because the transaction holds two `SELECT`s, and it is left alone
+carries nothing because the transaction holds three `SELECT`s (two before #162
+added the kinds of link), and it is left alone
 rather than rewritten into a rollback, because the guarantee rests on the
 read-only role and the statements issued rather than on the transaction's shape
 (issue #93). `recheck_stamp.py` does the same.
@@ -747,9 +749,19 @@ cutting "pairs of meanings that are linked" and "pairs carrying more than one
 kind of link" from the page and renaming the two that survive to "relationships
 between meanings linked in more than one way" and its share, here and on the page
 together. That rename widens `LABEL_WIDTH` from 52 to 70, which is computed and
-not written down. **Two section titles are read back by `render()`** to decide
-whether to print the By source table and the papers-per-year histogram, so a
+not written down. **Three section titles are read back by `render()`** to decide
+whether to print the By source table, the Kinds of link table and the
+papers-per-year histogram, so a
 rename in `SECTIONS` that is not made there too loses a whole block in silence.
+The Kinds of link block (issue #162) sits under Shape, where the page puts it,
+and prints every kind the view returns in the view's own order with a `total`
+line beneath, so the identity the page states in a sentence is arithmetic an
+Operator can see: the total carries `<- DOES NOT MATCH typed relationships above`
+when it does not. A map with no relationships prints one sentence instead of six
+zero rows, and that branch is on the map's relationship count rather than on
+whether the view returned rows, because the view returns six either way and
+printing them put the absent words "no relationships" through a ten-column field
+as `0no relationships` on the first run of it.
 The absent words are the same on both surfaces as well — "not recorded" when
 nothing in the system
 holds the figure, and the name of the empty population ("no relationships", "no
