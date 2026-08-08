@@ -140,6 +140,8 @@ app/                 Next.js app (Vercel root directory is app/)
                      holds the two Server Actions it submits
                      g/[id]/layout.tsx + tabs.tsx hold the second one, the four
                      places inside a map; it fetches nothing, on purpose
+                     current-tab-click.ts is the one behaviour both strips share
+                     for a click on the tab you are already on
                      skeleton.tsx holds the loading shapes every boundary shares
                      (concepts)/ is a route group, not a URL segment: it exists
                      so / can have a loading.tsx that /about does not get
@@ -618,7 +620,9 @@ was a back-link in whatever corner each page happened to use.
 The map · Threads · The evidence · What this map is made of. Same pattern one
 step smaller, and it is where the sideways navigation now lives; the mechanism
 and the reason it fetches nothing are in section 6 under the loading
-boundaries.
+boundaries. Both strips share one answer to a click on the tab for the page you
+are already on (`current-tab-click.ts`, issue #151): it scrolls to the top and
+fetches nothing. The reasoning is with the other navigation costs, below.
 
 **Routes.**
 - `/` : the map list, with a link to `/trace` showing how many runs are in
@@ -1541,11 +1545,6 @@ reader already on the map. Filed as issue #150 rather than improvised inside
 anchors #146 is designing a scheme for, and because it is general: every in-page
 anchor into a route with a `loading.tsx` has it.
 
-Also observed and left alone: clicking the tab you are already on refetches that
-route (2.8 s on the map, 1.6 s on the report). `nav.tsx` has done the same on
-the global tabs since it shipped; it is one behaviour in two places and should
-be decided in one. It now has its own ticket, issue #151.
-
 **A hash anchor into a streamed route scrolls, and the mechanism is the mount**
 (issue #150). `app/app/hash-target.tsx` is a client component of about twenty
 lines with no props. On mount, and on `hashchange`, it reads `location.hash`,
@@ -1604,6 +1603,39 @@ re-scrolls to that anchor rather than restoring the reader's previous position;
 Back to a URL with no hash is untouched, which is the journey EVE measured.
 Without JavaScript the anchor lands wherever the browser puts it and nothing
 else changes: degraded, not broken.
+
+**Clicking the tab you are already on no longer refetches that route** (issue
+#151). It was one behaviour in two files — `nav.tsx` since it shipped, `tabs.tsx`
+inheriting the pattern for #143 — and it had become the three longest waits in
+the product, each of them returning exactly what was already on screen. Measured
+on the live deploy before the fix, headless Chrome 1440×900 from Sydney: 2.8 s
+clicking "The map" on `/g/13`, **3.7 s** clicking "The evidence" on
+`/g/13/evidence`, 1.5 s clicking "What this map is made of" on `/g/13/report`.
+Each threw the page away, and on the evidence page it also closed every
+relationship the reader had opened.
+
+`app/app/current-tab-click.ts` holds the one answer both strips now call, so a
+third strip cannot inherit the old one. **The click scrolls to the top and
+fetches nothing.** Doing literally nothing was the alternative, and in practice
+this is that: neither strip is sticky, so the tab has to be on screen to be
+clicked and the reader is already at the top. Going back to the top is the one
+part of the old behaviour worth having, it costs no request, and it is already
+the right behaviour if a strip is ever made sticky. Motion honours
+`prefers-reduced-motion` — instant instead of smooth.
+
+**Whether a click is going anywhere is decided from the href, never from which
+tab is lit**, and that distinction is the whole of the risk here: they are
+different questions. "Concepts" is lit on `/g/13` and goes to `/`; "Threads" is
+lit on a thread page and goes to the map. Suppressing on the lit flag would have
+broken both. A href carrying a hash is never suppressed, so "Threads" on
+`/g/{id}` reaches the router untouched and whatever scrolls it today — the
+router's own same-page hash handling, or the `hashchange` that `hash-target.tsx`
+listens for — keeps doing so. A modifier or middle click is left to the browser,
+which is a real request for a second copy. A click made while a query string is
+present still navigates, because the bare href would clear state — nothing reads
+`searchParams` today, and the location is read in the handler rather than through
+`useSearchParams()`, which in the root layout's nav would opt every route out of
+static rendering and undo #145.
 
 **`/about` and `/roadmap` are now prerendered, and every other route on the site
 stopped waiting for a session** (issue #145). This is the only one of the three

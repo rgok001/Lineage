@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { currentTabClick } from "../../current-tab-click";
 
 /** The four places inside one map (issue #143).
  *
@@ -15,6 +16,11 @@ import { usePathname } from "next/navigation";
  *  On `/g/{id}/p/{arxiv}` no tab is current. A dossier is a place, not a
  *  section, and lighting "The map" would be a small lie about where the reader
  *  is. Do not invent an active state for it.
+ *
+ *  `on` says which tab is lit and nothing else. It cannot say whether a click
+ *  is going anywhere — Threads is lit on a thread page and goes to the map, and
+ *  is unlit on the map itself where it still has a thread list to jump to. That
+ *  question belongs to `currentTabClick`, which asks it of the href (#151).
  */
 export default function MapTabs({ id }: { id: string }) {
   const path = usePathname() ?? "";
@@ -36,6 +42,7 @@ export default function MapTabs({ id }: { id: string }) {
         borderBottom: "1px solid var(--line-soft)" }}>
         {tabs.map((t) => (
           <Link key={t.label} href={t.href} aria-current={t.on ? "page" : undefined}
+            onClick={currentTabClick(t.href, path)}
             style={{
               textDecoration: "none", fontFamily: "var(--font-ui)", fontSize: ".8rem",
               padding: ".45rem .75rem",
