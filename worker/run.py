@@ -561,7 +561,11 @@ def main() -> None:
             # deploy path: it has a grace window measured in tens of seconds and
             # spends it on one UPDATE.
             except (Shutdown, KeyboardInterrupt) as e:
-                print(f"\n[job {job_id}] interrupted ({e or 'Ctrl-C'}) — requeueing as 'approved'")
+                # str(e), not e: an exception object is always truthy, so
+                # `e or 'Ctrl-C'` prints an empty pair of brackets for a bare
+                # KeyboardInterrupt, which carries no message.
+                print(f"\n[job {job_id}] interrupted ({str(e) or 'Ctrl-C'}) — "
+                      f"requeueing as 'approved'")
                 requeue_job(conn, job_id)
                 return
             except Exception as e:  # worker bug or DB hiccup: fail loud, keep living
@@ -571,7 +575,7 @@ def main() -> None:
             if args.once:
                 return
     except (Shutdown, KeyboardInterrupt) as e:
-        print(f"\n[worker] stopping ({e or 'Ctrl-C'}). No job in hand to requeue.")
+        print(f"\n[worker] stopping ({str(e) or 'Ctrl-C'}). No job in hand to requeue.")
 
 
 if __name__ == "__main__":
