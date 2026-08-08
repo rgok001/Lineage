@@ -77,9 +77,10 @@ function tidyActorName(raw: string): string {
 /** `user_edits` is JSONB, so a field the types call a string can hold a number,
  *  a boolean, an array or null. Anything that is not a usable string is absent:
  *  junk degrades to "actor not recorded" and can never be upgraded into an
- *  authenticated claim. It must not throw either — `app/` has no error.tsx, so
- *  one TypeError inside a server component turns the evidence page and the
- *  export into a 500 for that map until the row is edited by hand. */
+ *  authenticated claim. It must not throw either: one TypeError inside a server
+ *  component loses the evidence page and the export for that map until the row
+ *  is edited by hand. Since #159 that is a styled apology rather than the raw
+ *  global-error shell, which is a better failure and still a failure. */
 const actorName = (v: unknown): string => (typeof v === "string" ? tidyActorName(v) : "");
 
 /**
@@ -603,7 +604,8 @@ export async function getMapRow(id: number): Promise<MapRow | null> {
   const r = rows[0];
   // Same guard `getGenealogy` gives at length: `user_edits` is JSONB and a
   // stored string has a `.length` but no `.map`, which throws inside AuditTrail
-  // and 500s the page, because `app/` still has no error.tsx.
+  // and loses the page: `app/error.tsx` catches it as of #159, so the reader
+  // gets an apology instead of a digest, but they still do not get the map.
   return {
     concept: r.concept,
     prompt_version: r.prompt_version,
@@ -690,9 +692,10 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
     nodes: (g.nodes as Node[]).slice().sort((a, b) => a.year_start - b.year_start),
     // Array.isArray, not `?? []`: a JSONB string has a `.length` and no `.map`,
     // so it satisfies the page's `user_edits.length > 0` guard and then throws
-    // inside AuditTrail. There is still no error.tsx, so that is a 500 on the
-    // whole evidence page. Nothing writes a non-array today; the guard costs a
-    // call.
+    // inside AuditTrail, which loses the whole evidence page — since #159 into
+    // `app/error.tsx` rather than into Next's unstyled shell, which changes what
+    // the reader sees and not whether they see the map. Nothing writes a
+    // non-array today; the guard costs a call.
     user_edits: (Array.isArray(g.user_edits) ? g.user_edits : []) as UserEdit[],
     has_river: Boolean(g.has_river),
     edges: edges.map((e) => ({

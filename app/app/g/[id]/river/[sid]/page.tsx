@@ -3,15 +3,19 @@ import { notFound } from "next/navigation";
 import { paperAnchor } from "../../../../../lib/anchors";
 import { sql } from "../../../../../lib/db";
 import { getMapRow, readableQuote } from "../../../../../lib/genealogy";
+import { parseMapId } from "../../../../../lib/map-id";
 import { STAMP_COLOR, STAMP_LABEL, stampOf } from "../../../../../lib/stamp";
 
 export const dynamic = "force-dynamic";
 
 export default async function DivePage({ params }: { params: Promise<{ id: string; sid: string }> }) {
   const { id, sid } = await params;
+  // The id is checked before either query can bind it (issue #159).
+  const gid = parseMapId(id);
+  if (gid === null) notFound();
   // One row read, where this was `getRiver` and then a second SELECT on the same
   // `genealogies` row for the prompt version (issue #140).
-  const data = await getMapRow(Number(id));
+  const data = await getMapRow(gid);
   if (!data?.river) notFound();
   const s = data.river.streams.find((x) => x.id === sid);
   if (!s) notFound();
@@ -33,7 +37,7 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
         SELECT p.arxiv_id AS arxiv, d.verbatim_quote AS quote, d.quote_verified AS verified,
                d.quote_text_digest, p.extracted_text_digest,
                EXISTS (SELECT 1 FROM edges e
-                        WHERE e.genealogy_id = ${Number(id)}
+                        WHERE e.genealogy_id = ${gid}
                           AND (e.source_paper_id = p.id OR e.target_paper_id = p.id)) AS in_evidence
         FROM definitions d JOIN papers p ON p.id = d.paper_id
         WHERE p.arxiv_id = ANY(${arxivs}) AND d.concept = ${data.concept}

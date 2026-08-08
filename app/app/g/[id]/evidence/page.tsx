@@ -5,6 +5,7 @@ import { JUMP_INDEX_ANCHOR, edgeAnchors, paperAnchor } from "../../../../lib/anc
 import { deleteEdge, deleteGenealogy, reclassifyEdge } from "../../../../lib/actions";
 import { getViewer, isOwner } from "../../../../lib/authz";
 import { EDGE_MEANING, EDGE_TYPES, editActor, editOp, editWhen, getGenealogy, readableQuote, type Edge, type RankedPaper, type Genealogy, type UserEdit } from "../../../../lib/genealogy";
+import { parseMapId } from "../../../../lib/map-id";
 import { STAMP_COLOR, STAMP_LABEL, stampOf } from "../../../../lib/stamp";
 
 export const dynamic = "force-dynamic";
@@ -25,18 +26,25 @@ const EDGE_COLORS: Record<string, string> = {
 
 export default async function EvidencePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // An id that is not an id 404s here rather than throwing inside the query
+  // (issue #159); `if (!g)` below is about a map that is absent, which is a
+  // different question and cannot answer this one.
+  const gid = parseMapId(id);
+  if (gid === null) notFound();
   // The session read does not depend on the map and the map does not depend on
   // the session, so they were two waits for no reason (issue #140). Same shape
   // as the map page and the report page, which already do this.
-  const [g, viewer] = await Promise.all([getGenealogy(Number(id)), getViewer()]);
+  const [g, viewer] = await Promise.all([getGenealogy(gid), getViewer()]);
   if (!g) notFound();
   const canEdit = isOwner(viewer);
 
   // A relationship whose paper row is gone still appears here (issue #79), so
   // both of these take null. `titleOf` used to fall back to the arXiv id, which
-  // is null in that case, and `PaperTag` then read `.length` off it: a 500 on
-  // the whole page, and there is still no error.tsx. The fallback says what is
-  // true instead of naming a paper we cannot describe (CLAUDE.md rule 4).
+  // is null in that case, and `PaperTag` then read `.length` off it: the whole
+  // page lost to one missing row. #159 gave that throw a boundary to land in,
+  // which makes the failure legible and does not make it less of one. The
+  // fallback says what is true instead of naming a paper we cannot describe
+  // (CLAUDE.md rule 4).
   const MISSING_PAPER = "this paper is no longer in our records";
   const yearOf = (p: string | null) =>
     g.nodes.flatMap((n) => n.members).find((m) => m.arxiv_id === p)?.year ?? 0;

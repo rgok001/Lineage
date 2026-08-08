@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getViewer, isOwner } from "../../../lib/authz";
 import { getInfluenceMap } from "../../../lib/genealogy";
+import { parseMapId } from "../../../lib/map-id";
 import HashTarget from "../../hash-target";
 import InfluenceMap from "./InfluenceMap";
 
@@ -9,7 +10,12 @@ export const dynamic = "force-dynamic";
 
 export default async function GenealogyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [data, viewer] = await Promise.all([getInfluenceMap(Number(id)), getViewer()]);
+  // Before the query, not after it (issue #159). `if (!data)` below guards a map
+  // that is absent; an id that is not an id never reaches it, because the query
+  // throws first. `lib/map-id.ts` says why this is a parse and not a try/catch.
+  const gid = parseMapId(id);
+  if (gid === null) notFound();
+  const [data, viewer] = await Promise.all([getInfluenceMap(gid), getViewer()]);
   if (!data) redirect(`/g/${id}/evidence`); // maps without a generated river fall back to the evidence view
   // Only to decide what the evidence door may promise (issue #118). The
   // workbench is gated inside the evidence page and inside every action; this
@@ -105,7 +111,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
         </div>
       </header>
 
-      <InfluenceMap id={Number(id)} data={data} />
+      <InfluenceMap id={gid} data={data} />
 
       {/* The tab strip's "Threads" is an anchor here, not a menu (issue #143).
           It is mounted beside the section it lands on, and this page streams, so

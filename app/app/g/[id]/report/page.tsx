@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer, isOwner } from "../../../../lib/authz";
+import { parseMapId } from "../../../../lib/map-id";
 import { listMapReports, type MapReport } from "../../../../lib/report";
 
 export const dynamic = "force-dynamic"; // computed on read, never stored
@@ -234,8 +235,15 @@ function Section({ title, lede, children }: {
 
 export default async function ReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // This page never survived a bad id on purpose: it selects every map and
+  // matches in memory, so `Number("abc")` matched nothing and 404'd by luck
+  // (issue #100 hardened the empty state, not the id). It parses like its
+  // siblings now so that one rule covers the whole subtree and nobody reading
+  // one route has to work out why the next one is different (issue #159).
+  const gid = parseMapId(id);
+  if (gid === null) notFound();
   const [all, viewer] = await Promise.all([listMapReports(), getViewer()]);
-  const r = all.find((m) => m.genealogy_id === Number(id));
+  const r = all.find((m) => m.genealogy_id === gid);
   if (!r) notFound();
   const rest = all.filter((m) => m.genealogy_id !== r.genealogy_id);
   const owner = isOwner(viewer);

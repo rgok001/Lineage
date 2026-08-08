@@ -1328,6 +1328,72 @@ fetches nothing. The reasoning is with the other navigation costs, below.
   only lock.
 - `/api/auth/*` : Auth.js GitHub OAuth.
 
+**The `[id]` in a map URL is parsed once, before it can reach a query**
+(`lib/map-id.ts`, issue #159, `[B33]`). Every route under `/g/[id]` used to
+write `Number(id)` straight into its SQL and guard only the result with
+`if (!g) notFound()`. That guards a map that is absent and nothing else:
+`Number("abc")` is NaN, `Number("13.5")` is a float, `Number("1e999")` is
+Infinity and `Number("9999999999999999999999")` is past what the driver can bind
+to a bigint column, so each of those made the **query throw** and no null ever
+existed for the guard to catch. There was no error boundary anywhere under
+`app/`, so the reader got Next's global-error shell, unstyled, reading
+"Application error: a server-side exception has occurred" with a digest;
+`/g/abc/export`, a route handler with no boundary at all, answered a download
+with a bare HTTP 500 and an empty body. Marvin found it on the live site on
+2026-08-08 across `/g/[id]`, `/evidence`, `/river/[sid]`, `/p/[arxiv]` and
+`/export`; `/report` survived only because it selects every map and matches in
+memory, so nothing was bound to a column.
+
+`parseMapId(raw)` returns a number or null: digits and nothing else, at least 1,
+no larger than `Number.MAX_SAFE_INTEGER`. That is what `genealogies.id` can hold
+(BIGSERIAL, so positive) intersected with what JavaScript can carry without
+rounding — `Number("9007199254740993")` is 9007199254740992, a **different map**
+than the URL names. Everything `Number()` used to accept quietly is refused:
+sign, exponent, `0x`, `_`, surrounding space, each of which is a second URL for a
+map that already has one. Pages call `notFound()` on null, the export handler
+returns its own 404 with a body, and `/report` parses too, so one rule covers the
+whole subtree rather than one route being polite for a reason nobody can find.
+
+**Parsed rather than caught, deliberately.** A `try/catch` per route would fix
+the same symptom, but it cannot tell a malformed id from Postgres being
+unreachable, and it would report an outage as "no such map" — a silent 404 on a
+map that exists is a worse defect than the one being fixed. It also would not
+reach the export handler, which has no `notFound()` boundary to fall into. Held
+by the harness below: with the data layer replaced by one that throws
+`Error connecting to database: fetch failed`, all six routes on a valid id still
+raise rather than 404.
+
+**`app/error.tsx` is the app's only error boundary**, added with it. It sits at
+the root of `app/` rather than under `g/[id]/`, so the front door and `/trace`
+get it too; the build binds it to all eleven page routes and, as expected, to no
+route handler (`grep error.tsx .next/server/app/**/page.js`). It says a page
+could not be loaded, that the failure is ours and that nothing was lost, and
+prints the digest as the reference to quote. **It never says the map is
+missing** — that would be the tool lying about its own state on behalf of a map
+that exists, which is exactly what parsing the id first is there to avoid. It
+cannot catch a throw in the root layout; nothing there does I/O, and that would
+need `global-error.tsx` carrying its own `<html>`.
+
+Checked before the push, since the fix is a negative and the routes cannot be
+run against the database from here. `parseMapId` on 32 constructed strings, the
+ticket's seven crashers and its four controls among them, each printed beside
+what `Number()` would have given: 32/32 as intended. Then the five page
+components and the export handler were compiled and **called directly against a
+data layer that refuses to answer** — every function records its call and returns
+null, so "the query was never reached" is an assertion rather than an
+inference. All seven malformed ids: `NEXT_HTTP_ERROR_FALLBACK;404` on the five
+pages and HTTP 404 with a body on `/export`, with **zero** calls recorded on all
+36 combinations. Controls: `999999` still reaches the database on every route and
+still 404s on absence, and `/g/999999` still redirects to its evidence page
+first.
+
+**One control moved, and it is the redirect rather than the status.** `/g/-1`,
+`/g/13e1` and `/g/0x10` used to be coerced to 130, 16 and -1, queried, found
+absent and 404'd; they now 404 without a query, and on `/g/[id]` that means the
+reader lands on the 404 instead of being redirected to `/g/-1/evidence` and
+404ing there. Same page, one round trip fewer. `/g/999999`, the control the
+ticket names, is untouched in both respects.
+
 **Server Actions** (`lib/actions.ts`, `lib/trace-actions.ts`): renameNode,
 mergeNode, deleteNode, reclassifyEdge, deleteEdge, deleteGenealogy,
 requestTrace, approveTrace, rejectTrace. Every one authorises itself on its

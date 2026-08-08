@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { edgeAnchor } from "../../../../../lib/anchors";
 import { sql } from "../../../../../lib/db";
 import { getMapRow, readableQuote, TURNING_QUANTILE } from "../../../../../lib/genealogy";
+import { parseMapId } from "../../../../../lib/map-id";
 import { STAMP_COLOR, STAMP_LABEL, edgeStampOf, stampOf } from "../../../../../lib/stamp";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +15,11 @@ export const dynamic = "force-dynamic";
 export default async function PaperPage({ params }: { params: Promise<{ id: string; arxiv: string }> }) {
   const { id, arxiv: raw } = await params;
   const arxiv = decodeURIComponent(raw);
+  // The map id is checked before any of the three rounds below (issue #159).
+  // The arXiv id needs no equivalent: it binds to a text column, so a nonsense
+  // one selects nothing and `if (!defs.length)` already turns that into a 404.
+  const gid = parseMapId(id);
+  if (gid === null) notFound();
 
   /**
    * Six queries used to run one after another here, and the Neon HTTP driver
@@ -32,7 +38,7 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
     // The river is on this row too, and this page tolerates its absence: a map
     // whose streams job has not run still has papers, and the breadcrumb simply
     // does not name a thread.
-    getMapRow(Number(id)),
+    getMapRow(gid),
     // Asked separately, and allowed to fail. The app deploys the moment master
     // moves, and migration 013 is applied by hand against a different endpoint, so
     // there is a window where this column does not exist yet. Folding it into the
@@ -86,7 +92,7 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
            tp.extracted_text_digest AS target_current_digest
     FROM edges e JOIN papers sp ON sp.id = e.source_paper_id
                  JOIN papers tp ON tp.id = e.target_paper_id
-    WHERE e.genealogy_id = ${Number(id)} AND (e.source_paper_id = ${d.pid} OR e.target_paper_id = ${d.pid})
+    WHERE e.genealogy_id = ${gid} AND (e.source_paper_id = ${d.pid} OR e.target_paper_id = ${d.pid})
     ORDER BY e.confidence DESC
   `) as { src: string; src_title: string; src_year: number; dst: string; dst_title: string; dst_year: number;
           edge_type: string; rationale: string | null; verified: boolean;
