@@ -1863,6 +1863,32 @@ and the destination is `/`. Threads from `/g/13` lands with the URL at
 whole, and the map not thrown away; the document is 1469 px against a 900 px
 viewport, so 569 px is the whole scroll there is and the page took all of it.
 
+**"Read the dossier →" is a link, and it was the last unacknowledged click in
+the product** (issue #154). Measured on the live deploy before the fix, three
+trials from the same panel: **279, 282, 288 ms** with the map unchanged on screen
+and no `role="status"` anywhere, sampled at 50 ms and 150 ms after the click,
+against 6–8 ms for the button directly beneath it. The two were written the same
+way, `router.push` from `InfluenceMap.tsx`, so the difference is not the call: it
+is that **no `<a href>` anywhere in the product pointed at `/g/{id}/p/…`** —
+counted across all four map routes, 0 on `/g/13`, `/g/13/evidence`,
+`/g/13/river/s3` and `/g/13/report` — so the router had never prefetched the one
+route that button serves. This is #143's finding arriving in reverse: a route
+nothing links to is a route nothing prefetches.
+
+It is now a `<Link>` styled exactly as the button was, which also gives the
+middle-click and the new tab a reader comparing two papers wants, and announces
+itself to a screen reader as navigation rather than as a control. **Prefetch is
+scoped to the pinned paper** rather than left on the default: the panel's
+contents follow the pointer, so an in-viewport link whose `href` changes on every
+hover would fetch a route per dot swept over, and none of those is reachable —
+leaving a dot clears the hover and the panel falls back to the pinned paper, so
+the only dossier the button can open is that one. The head start is therefore the
+time between clicking a dot and crossing to the panel.
+
+Not done here, and named because the ticket raises it: the thread page still
+offers no way into a dossier. That is a change to what the thread page lists, not
+a link, and belongs to the Architect.
+
 **`/about` and `/roadmap` are now prerendered, and every other route on the site
 stopped waiting for a session** (issue #145). This is the only one of the three
 performance tickets that removes time rather than covering it. `layout.tsx`

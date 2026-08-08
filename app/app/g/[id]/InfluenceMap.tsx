@@ -1,5 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { paperAnchor } from "../../../lib/anchors";
 import type { InfluenceMapData, MapPaper } from "../../../lib/genealogy";
@@ -360,12 +361,28 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
                 </div>
               );
             })()}
-            <button onClick={() => router.push(`/g/${id}/p/${encodeURIComponent(shown.arxiv)}`)}
-              style={{ font: "inherit", fontSize: ".85rem", cursor: "pointer", marginTop: "1rem",
+            {/* A link, not a button, because it is navigation (issue #154). As a
+                `router.push` this was the last unacknowledged click in the
+                product at 280 ms, while the button beside it answered in 6 ms:
+                nothing anywhere pointed an `<a href>` at `/g/{id}/p/…`, so the
+                router had never prefetched the one route it serves. A link also
+                buys the middle-click and the new tab a reader comparing two
+                papers wants, and announces itself as a link.
+
+                Prefetch is scoped to the pinned paper. `shown` follows the
+                pointer, so with the default it would fetch a route for every dot
+                swept over, and none of those is reachable: leaving a dot clears
+                `hot` and the panel falls back to `sel`, so the only dossier this
+                button can ever open is the pinned one. `undefined` is "whatever
+                Next does by default", which is what we want when it is pinned. */}
+            <Link href={`/g/${id}/p/${encodeURIComponent(shown.arxiv)}`}
+              prefetch={sel?.arxiv === shown.arxiv ? undefined : false}
+              style={{ font: "inherit", fontSize: ".85rem", lineHeight: "normal",
+                display: "block", textAlign: "center", textDecoration: "none", marginTop: "1rem",
                 background: "#1d3b31", color: "#bfe6d4", border: "1px solid #2f5f4d",
                 borderRadius: 8, padding: ".5rem .95rem", width: "100%" }}>
               Read the dossier →
-            </button>
+            </Link>
             {/* Into this paper's own place in the evidence, not the top of it
                 (issue #146). Paper-level rather than per-relationship, which is
                 a deviation from that ticket's design: this panel deliberately
