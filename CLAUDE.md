@@ -41,7 +41,8 @@ what makes it worth having. A reader who doubts a claim can verify it in seconds
 rather than taking it on trust.
 
 **What is guaranteed and what is not.** A quote carrying the verified stamp is
-string-matched against that paper's own extracted text. That is mechanical and it
+checked word for word against this system's own extraction of that paper's
+text. That is mechanical and it
 holds. The shape — which papers cluster together, which relationships exist and
 in which direction, which papers matter most — is the tool's reading, and is
 labelled as such wherever it appears. See `docs/ROADMAP.md` for why that
@@ -53,8 +54,8 @@ expertise in any field a map covers. It reads arXiv only, so it is useful for
 machine learning and adjacent preprint fields and not yet for anything else.
 
 ## Core product rules (do not violate)
-1. Every edge displayed carries verbatim evidence quotes from both papers.
-2. GROUNDING CHECK is mandatory: every quote must be string-verified against the extracted source text. Verified edges render solid; failed/inferred edges render dotted and are labelled "inferred". Never display an unverified quote as verified.
+1. Every edge displayed carries evidence quotes from both papers, shown word for word as the papers wrote them.
+2. GROUNDING CHECK is mandatory: every quote must be checked word for word against this system's own extraction of the paper's text. Verified edges render solid; failed/inferred edges render dotted and are labelled "inferred". Never display an unverified quote as verified. (Wording aligned with the shipped copy on the owner's instruction, 2026-08-08, after issue 135: "verbatim" describes a passage, never a check, and the check is named as running against our own extraction, not "the source".)
 3. The product is a workbench, not an oracle: users can split, merge, rename, delete nodes and reclassify/delete edges. UI copy never claims the map is "the" history.
 4. Never fabricate paper metadata, quotes, or citations in any output, including the export.
 
