@@ -287,23 +287,35 @@ export type InfluenceMapData = {
  *  plus the strongest movers (displacement, gated by uptake so outliers stay
  *  out). The magnitude scores select and size; they are never displayed. */
 export async function getInfluenceMap(id: number): Promise<InfluenceMapData | null> {
-  const riverData = await getRiver(id);
-  if (!riverData) return null;
-  const { concept, river } = riverData;
+  // Was two statements against the same `genealogies` row — `getRiver` for the
+  // streams, then a second SELECT for `prompt_version` and `user_edits`. One
+  // now (issue #140). The null test is unchanged: a map with no generated
+  // river has no front door and the page redirects to the evidence view.
+  const g = await getMapRow(id);
+  if (!g?.river) return null;
+  const { concept, river } = g;
 
-  const g = (await sql`
-    SELECT concept, prompt_version,
-           COALESCE(user_edits, '[]'::jsonb) AS user_edits
-    FROM genealogies WHERE id = ${id}
-  `) as { concept: string; prompt_version: string; user_edits: UserEdit[] }[];
-  if (!g.length) return null;
-
-  const rows = (await sql`
-    SELECT p.arxiv_id AS arxiv, p.year, p.title, d.attention, d.displacement, d.novelty_claims AS novelty
-    FROM definitions d JOIN papers p ON p.id = d.paper_id
-    WHERE d.concept = ${g[0].concept} AND d.prompt_version = ${g[0].prompt_version}
-      AND d.defines_concept = true AND d.attention IS NOT NULL
-  `) as { arxiv: string; year: number; title: string; attention: number; displacement: number | null; novelty: string[] | null }[];
+  // Independent, so asked together. `rows` is keyed on the concept and prompt
+  // version; `total_edges` is keyed on the genealogy id alone and needs nothing
+  // this function computes. It used to be asked last, after the edge query,
+  // purely because that is where the number is used — a serial round trip for a
+  // question that could have been in flight the whole time.
+  const [rows, totals] = (await Promise.all([
+    sql`
+      SELECT p.arxiv_id AS arxiv, p.year, p.title, d.attention, d.displacement, d.novelty_claims AS novelty
+      FROM definitions d JOIN papers p ON p.id = d.paper_id
+      WHERE d.concept = ${g.concept} AND d.prompt_version = ${g.prompt_version}
+        AND d.defines_concept = true AND d.attention IS NOT NULL
+    `,
+    // Counted, never inferred from what the canvas drew. `COUNT(*)` on the map's
+    // edges is exactly the population the evidence page lists, so the badge's
+    // "the full N are in the evidence" is a promise the next page keeps.
+    sql`SELECT COUNT(*) AS total FROM edges WHERE genealogy_id = ${id}`,
+  ])) as [
+    { arxiv: string; year: number; title: string; attention: number; displacement: number | null; novelty: string[] | null }[],
+    { total: number | string }[],
+  ];
+  const total_edges = Number(totals[0]?.total ?? 0);
 
   const streamOf = new Map<string, { id: string; name: string; color: string }>();
   for (const s of river.streams)
@@ -367,14 +379,6 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
     source_current_digest: string | null; target_current_digest: string | null;
   })[];
 
-  // Counted, never inferred from what the canvas drew. `COUNT(*)` on the map's
-  // edges is exactly the population the evidence page lists, so the badge's
-  // "the full N are in the evidence" is a promise the next page keeps.
-  const totals = (await sql`
-    SELECT COUNT(*) AS total FROM edges WHERE genealogy_id = ${id}
-  `) as { total: number | string }[];
-  const total_edges = Number(totals[0]?.total ?? 0);
-
   // An edge means "the newer paper did X to the older one's concept", so a link
   // pointing backwards in time is a data error: arXiv revisions let two papers
   // cite each other, and the stored year is the v1 date. Drop the reverse leg
@@ -412,7 +416,7 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
     streams: river.streams.map((s) => ({ id: s.id, name: s.name, color: s.color, count: s.papers.length })),
     total_papers: rows.length,
     total_edges,
-    curation: curationSentence(g[0].user_edits),
+    curation: curationSentence(g.user_edits),
   };
 }
 
@@ -554,14 +558,47 @@ export type RiverStream = {
 export type RiverCross = { from: string; to: string; year: number | null; label: string };
 export type River = { through_line: string; streams: RiverStream[]; cross_currents: RiverCross[] };
 
-/** The generated river for a map: conceptual streams + per-stream grounded dive
- *  accounts. Read-only render artifact (migration 012); null until the streams
- *  job has run for this genealogy. */
-export async function getRiver(id: number): Promise<{ concept: string; river: River } | null> {
-  const rows = (await sql`SELECT concept, streams FROM genealogies WHERE id = ${id}`) as
-    { concept: string; streams: River | null }[];
-  if (!rows.length || !rows[0].streams) return null;
-  return { concept: rows[0].concept, river: rows[0].streams };
+/** A map's identity row: the two keys every other query about this map needs,
+ *  its generated river, and its edit log. `river` is null until the streams job
+ *  has run for this genealogy (migration 012), which is a real state — /g/10
+ *  had none — so callers that can live without it must not treat null as "no
+ *  such map". */
+export type MapRow = {
+  concept: string;
+  prompt_version: string;
+  river: River | null;
+  user_edits: UserEdit[];
+};
+
+/**
+ * One SELECT for the four columns of `genealogies` the app ever wants.
+ *
+ * This replaced `getRiver`, which selected `concept, streams` and left every
+ * caller to fetch `prompt_version` — the key it needs to look up anything else
+ * about the map — in a second statement against the same row. Four call sites
+ * did exactly that: the influence map, the export builder, the thread page and
+ * the paper dossier. The Neon HTTP driver makes every query a separate fetch
+ * (see lib/db.ts), and the functions run in `iad1`, so asking one row twice
+ * bought a whole network round trip for columns that were already on the wire.
+ * Measured from the map's front door before and after, issue #140.
+ */
+export async function getMapRow(id: number): Promise<MapRow | null> {
+  const rows = (await sql`
+    SELECT concept, prompt_version, streams,
+           COALESCE(user_edits, '[]'::jsonb) AS user_edits
+    FROM genealogies WHERE id = ${id}
+  `) as { concept: string; prompt_version: string; streams: River | null; user_edits: unknown }[];
+  if (!rows.length) return null;
+  const r = rows[0];
+  // Same guard `getGenealogy` gives at length: `user_edits` is JSONB and a
+  // stored string has a `.length` but no `.map`, which throws inside AuditTrail
+  // and 500s the page, because `app/` still has no error.tsx.
+  return {
+    concept: r.concept,
+    prompt_version: r.prompt_version,
+    river: r.streams,
+    user_edits: (Array.isArray(r.user_edits) ? r.user_edits : []) as UserEdit[],
+  };
 }
 
 export async function getGenealogy(id: number): Promise<Genealogy | null> {
@@ -586,7 +623,13 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
   // with NULL digests, which is exactly what `edgeStampOf` is handed for a paper
   // with no digest, so it resolves stale on the page as it counts stale on the
   // card. `source_paper` and `target_paper` arrive NULL with it; see the type.
-  const edges = (await sql`
+  //
+  // Asked alongside the paper query below, not before it (issue #140). Both are
+  // keyed on nothing but `g`, neither reads the other's result, and this is the
+  // evidence page's whole cost: two large statements that were serialised for no
+  // reason beyond the order they were written in.
+  const [edges, paperRows] = (await Promise.all([
+    sql`
     SELECT e.id, e.source_node, e.target_node, e.edge_type, e.confidence, e.verified,
            sp.arxiv_id AS source_paper, tp.arxiv_id AS target_paper,
            e.source_quote, e.target_quote, e.rationale, e.citation_context,
@@ -604,17 +647,20 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
       AND dt.concept = ${g.concept} AND dt.prompt_version = ${g.prompt_version} AND dt.defines_concept = true
     WHERE e.genealogy_id = ${id}
     ORDER BY e.id
-  `) as (Edge & {
-    source_text_digest: string | null; target_text_digest: string | null;
-    source_current_digest: string | null; target_current_digest: string | null;
-  })[];
-
-  const paperRows = (await sql`
+  `,
+    sql`
     SELECT p.arxiv_id AS arxiv, p.year, p.title, d.attention, d.displacement, d.novelty_claims AS novelty
     FROM definitions d JOIN papers p ON p.id = d.paper_id
     WHERE d.concept = ${g.concept} AND d.prompt_version = ${g.prompt_version} AND d.defines_concept = true
     ORDER BY d.attention DESC NULLS LAST
-  `) as Omit<RankedPaper, "node_id">[];
+  `,
+  ])) as [
+    (Edge & {
+      source_text_digest: string | null; target_text_digest: string | null;
+      source_current_digest: string | null; target_current_digest: string | null;
+    })[],
+    Omit<RankedPaper, "node_id">[],
+  ];
 
   const nodeOf = new Map<string, string>();
   for (const n of g.nodes as Node[]) for (const m of n.members) nodeOf.set(m.arxiv_id, n.node_id);

@@ -875,7 +875,9 @@ was a back-link in whatever corner each page happened to use.
   **The page's banner and the door into it are scoped to the viewer** (issue
   #118). The banner said "Evidence & workbench" and the front door's card
   promised "the curation tools" to everyone, while every one of those tools is
-  behind `canEdit = isOwner(await getViewer())`. A reader told there are tools
+  behind `canEdit = isOwner(viewer)`, where the viewer comes from the same
+  `Promise.all` that fetches the map (issue #140; it was a second `await` on
+  `getViewer()` after the map had already come back). A reader told there are tools
   and finds none concludes "broken" or "oversold", not "owner-only". The banner
   now reads "Evidence" and the door "The evidence → every typed relationship and
   the proof behind each" unless the viewer is the owner, in which case both say
@@ -1249,6 +1251,49 @@ argument and a filename), refuses already-traced concepts for everyone
 it server-side, nulls `trace_requests.genealogy_id` (trace history outlives
 the map), and lets edges cascade; papers and definitions survive, so deletion
 re-opens the concept for cheap re-tracing.
+
+**Every route is dynamic, so every route pays a round trip, and the reader is
+told the click landed** (issue #140). Nothing under `/g/[id]` is prerendered:
+each is `force-dynamic`, so a click costs a serverless invocation plus its
+database queries before anything reaches the browser. Measured on the live site
+from Sydney against the `iad1` functions, before any change (median of 9,
+brotli, warm): `/g/13` 2.03 s to first byte, `/g/13/evidence` 3.06 s and 4.32 s
+complete, `/g/13/p/1706.03762` 2.49 s, a thread 1.39–1.62 s, the report 0.78 s.
+The `/g/13/river` redirect answers in 0.33 s and does no database work at all,
+which is the network floor from that vantage point; the rest of each figure is
+server work.
+
+Two things were wrong and both are fixed. **There was no `loading.tsx` anywhere
+in `app/`**, so the router held the previous page on screen, unchanged, for the
+whole wait — the click was not acknowledged at all. There are now boundaries at
+`/g/[id]` and at each of `evidence`, `report`, `river/[sid]` and `p/[arxiv]`,
+sharing the shapes in `app/g/[id]/skeleton.tsx`. They render **shapes and never
+content**: no counts, no titles, no quotes, not even plausible ones, because a
+skeleton that guesses a number is a fabricated claim about a map for as long as
+it is on screen (rule 4), and the only words on them are words about loading.
+The pulse is one keyframe in `globals.css` and it stops under
+`prefers-reduced-motion`.
+
+**And four call sites each read the same `genealogies` row twice.** `getRiver`
+selected `concept, streams`, and every caller then issued a second statement
+against that same row for `prompt_version` — the key it needs to look up
+anything else. The Neon HTTP driver makes every query a separate fetch, so that
+bought a whole round trip for columns already on the wire. `getRiver` is
+replaced by `getMapRow`, one SELECT returning concept, prompt version, river and
+edit log, used by `getInfluenceMap`, `buildExport`, the thread page and the
+paper dossier. Independent queries then went into `Promise.all`: the definitions
+and the edge `COUNT(*)` in `getInfluenceMap`, the edges and the papers in
+`getGenealogy`, the map and the session on the evidence page. `getInfluenceMap`
+went from five statements in five rounds to four in three; `getGenealogy` from
+three rounds to two; the paper dossier from six serial queries to three rounds.
+Verified by differential harness rather than by inspection — old and new loaders
+against one stubbed database returned identical JSON on the full map, the map
+with no river, the missing row, a JSONB string where `user_edits` should be an
+array, and an edge whose paper row is gone.
+
+What is deliberately **not** here: caching and PPR. The report is computed on
+read and never stored (decision 30), so any caching of it needs design before
+code, and the ticket says so.
 
 **Progress transport is polling, not SSE**, a deliberate deviation from the
 original plan: progress lives in Postgres anyway, serverless cannot hold

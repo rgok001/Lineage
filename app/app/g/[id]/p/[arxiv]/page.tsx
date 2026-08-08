@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "../../../../../lib/db";
-import { getRiver, readableQuote, TURNING_QUANTILE } from "../../../../../lib/genealogy";
+import { getMapRow, readableQuote, TURNING_QUANTILE } from "../../../../../lib/genealogy";
 import { STAMP_COLOR, STAMP_LABEL, edgeStampOf, stampOf } from "../../../../../lib/stamp";
 
 export const dynamic = "force-dynamic";
@@ -14,20 +14,60 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
   const { id, arxiv: raw } = await params;
   const arxiv = decodeURIComponent(raw);
 
-  const g = (await sql`SELECT concept, prompt_version FROM genealogies WHERE id = ${Number(id)}`) as
-    { concept: string; prompt_version: string }[];
-  if (!g.length) notFound();
+  /**
+   * Six queries used to run one after another here, and the Neon HTTP driver
+   * charges a round trip for each (issue #140). Measured at 2.5 s to first
+   * byte, the second slowest route on the site. They are now three rounds, set
+   * by what genuinely depends on what:
+   *
+   *   1. the map's row, the extraction verdict, — none of these needs anything
+   *   2. the definition and the displacement cut — both need only the row
+   *   3. the typed links                        — needs the paper's id
+   *
+   * The dependency chain is three deep and cannot be shortened further without
+   * merging statements, which is a bigger change than this ticket wanted.
+   */
+  const [g, quality] = await Promise.all([
+    // The river is on this row too, and this page tolerates its absence: a map
+    // whose streams job has not run still has papers, and the breadcrumb simply
+    // does not name a thread.
+    getMapRow(Number(id)),
+    // Asked separately, and allowed to fail. The app deploys the moment master
+    // moves, and migration 013 is applied by hand against a different endpoint, so
+    // there is a window where this column does not exist yet. Folding it into the
+    // definition query would turn that window into a broken page for every paper.
+    // Failing to unknown is honest as well as safe: this note only ever appears
+    // when a scan found something, and no scan has run means nothing to say.
+    sql`SELECT extraction_verdict FROM papers WHERE arxiv_id = ${arxiv}`
+      .then((r) => (r as { extraction_verdict: string | null }[])[0]?.extraction_verdict ?? null)
+      .catch(() => null),
+  ]);
+  if (!g) notFound();
 
-  const defs = (await sql`
-    SELECT p.id AS pid, p.year, p.title, d.definition, d.verbatim_quote, d.quote_verified,
-           d.section, d.novelty_claims AS novelty, d.displacement,
-           d.quote_text_digest, p.extracted_text_digest
-    FROM definitions d JOIN papers p ON p.id = d.paper_id
-    WHERE p.arxiv_id = ${arxiv} AND d.concept = ${g[0].concept}
-      AND d.prompt_version = ${g[0].prompt_version} AND d.defines_concept = true
-  `) as { pid: number; year: number; title: string; definition: string | null; verbatim_quote: string | null;
-          quote_verified: boolean | null; section: string | null; novelty: string[] | null; displacement: number | null;
-          quote_text_digest: string | null; extracted_text_digest: string | null }[];
+  const [defs, cut] = (await Promise.all([
+    sql`
+      SELECT p.id AS pid, p.year, p.title, d.definition, d.verbatim_quote, d.quote_verified,
+             d.section, d.novelty_claims AS novelty, d.displacement,
+             d.quote_text_digest, p.extracted_text_digest
+      FROM definitions d JOIN papers p ON p.id = d.paper_id
+      WHERE p.arxiv_id = ${arxiv} AND d.concept = ${g.concept}
+        AND d.prompt_version = ${g.prompt_version} AND d.defines_concept = true
+    `,
+    // Judged against this concept's own spread, not a fixed number: displacement
+    // is a distance from a moving centroid, so a cut that marks a tenth of one
+    // corpus marks half of another (lib/genealogy.ts, TURNING_QUANTILE).
+    sql`
+      SELECT percentile_cont(${TURNING_QUANTILE}) WITHIN GROUP (ORDER BY displacement) AS c
+      FROM definitions
+      WHERE concept = ${g.concept} AND prompt_version = ${g.prompt_version}
+        AND defines_concept = true AND displacement > 0
+    `,
+  ])) as [
+    { pid: number; year: number; title: string; definition: string | null; verbatim_quote: string | null;
+      quote_verified: boolean | null; section: string | null; novelty: string[] | null; displacement: number | null;
+      quote_text_digest: string | null; extracted_text_digest: string | null }[],
+    { c: number | null }[],
+  ];
   if (!defs.length) notFound();
   const d = defs[0];
   // The stamp on this page's one quote, resolved the same way every other
@@ -35,17 +75,6 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
   // the only qualifier here, which meant a NULL read as verified and a stamp
   // taken against text that has since been replaced read as verified too.
   const quoteStamp = stampOf(d.quote_verified, d.quote_text_digest, d.extracted_text_digest);
-
-  // Asked separately, and allowed to fail. The app deploys the moment master
-  // moves, and migration 013 is applied by hand against a different endpoint, so
-  // there is a window where this column does not exist yet. Folding it into the
-  // query above would turn that window into a broken page for every paper.
-  // Failing to unknown is honest as well as safe: this note only ever appears
-  // when a scan found something, and no scan has run means nothing to say.
-  const quality = await sql`
-    SELECT extraction_verdict FROM papers WHERE arxiv_id = ${arxiv}
-  `.then((r) => (r as { extraction_verdict: string | null }[])[0]?.extraction_verdict ?? null)
-   .catch(() => null);
 
   const linkRows = (await sql`
     SELECT sp.arxiv_id AS src, sp.title AS src_title, sp.year AS src_year,
@@ -70,18 +99,8 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
   const drew = links.filter((l) => l.dst === arxiv);   // what this paper drew from
   const fed = links.filter((l) => l.src === arxiv);    // what drew from this paper
 
-  const river = await getRiver(Number(id));
-  const stream = river?.river.streams.find((s) => s.papers.some((p) => p.arxiv === arxiv));
+  const stream = g.river?.streams.find((s) => s.papers.some((p) => p.arxiv === arxiv));
   const claims = (d.novelty ?? []).filter((c) => c && c.trim());
-  // Judged against this concept's own spread, not a fixed number: displacement
-  // is a distance from a moving centroid, so a cut that marks a tenth of one
-  // corpus marks half of another (lib/genealogy.ts, TURNING_QUANTILE).
-  const cut = (await sql`
-    SELECT percentile_cont(${TURNING_QUANTILE}) WITHIN GROUP (ORDER BY displacement) AS c
-    FROM definitions
-    WHERE concept = ${g[0].concept} AND prompt_version = ${g[0].prompt_version}
-      AND defines_concept = true AND displacement > 0
-  `) as { c: number | null }[];
   const turning = cut[0]?.c != null && (d.displacement ?? 0) >= Number(cut[0].c);
 
   const EdgeLine = ({ l, dir }: { l: (typeof links)[number]; dir: "in" | "out" }) => {
@@ -167,7 +186,7 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
           <section style={{ marginBottom: "1.6rem" }}>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", letterSpacing: ".12em",
               textTransform: "uppercase", color: "var(--ink-faint)", marginBottom: ".4rem" }}>
-              How it defines “{g[0].concept}”{d.section ? ` · §${d.section}` : ""}
+              How it defines “{g.concept}”{d.section ? ` · §${d.section}` : ""}
             </div>
             <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontStyle: "italic",
               fontSize: ".95rem", lineHeight: 1.55, borderLeft: `2px solid ${STAMP_COLOR[quoteStamp]}`,

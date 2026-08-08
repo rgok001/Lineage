@@ -50,3 +50,30 @@ input, select, textarea {
 ::selection {
   background: #2c4a5c;
 }
+
+/* Loading shapes (issue #140). Every route under /g/[id] is force-dynamic, so a
+   click used to leave the previous page on screen, unchanged, for the 2–3 s a
+   serverless invocation plus its database round trips takes. These give the
+   click somewhere to land.
+
+   The pulse lives here rather than inline because a keyframe cannot be written
+   in a style attribute, and because one definition is what keeps every skeleton
+   in the app breathing at the same rate. Colours are the tokens above: a
+   skeleton that flashes a palette the page does not use reads as a broken page
+   rather than as a loading one. */
+@keyframes lineage-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .45; }
+}
+
+.skeleton {
+  background: var(--card);
+  border-radius: 6px;
+  animation: lineage-pulse 1.5s ease-in-out infinite;
+}
+
+/* A pulsing page is a migraine trigger and this one covers the whole viewport.
+   The shapes still say "not here yet"; they just stop moving. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; opacity: .65; }
+}

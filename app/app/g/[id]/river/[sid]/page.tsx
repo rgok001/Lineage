@@ -1,15 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "../../../../../lib/db";
-import { getRiver, readableQuote } from "../../../../../lib/genealogy";
+import { getMapRow, readableQuote } from "../../../../../lib/genealogy";
 import { STAMP_COLOR, STAMP_LABEL, stampOf } from "../../../../../lib/stamp";
 
 export const dynamic = "force-dynamic";
 
 export default async function DivePage({ params }: { params: Promise<{ id: string; sid: string }> }) {
   const { id, sid } = await params;
-  const data = await getRiver(Number(id));
-  if (!data) notFound();
+  // One row read, where this was `getRiver` and then a second SELECT on the same
+  // `genealogies` row for the prompt version (issue #140).
+  const data = await getMapRow(Number(id));
+  if (!data?.river) notFound();
   const s = data.river.streams.find((x) => x.id === sid);
   if (!s) notFound();
   const c = s.color;
@@ -19,16 +21,14 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
      shown: it is a summary of the paper, not a passage from it, and rendering
      it under a verified stamp claimed a grounding it never had. Same source as
      the dossier route, so a reader meets one quote per paper, not two. */
-  const g = (await sql`SELECT concept, prompt_version FROM genealogies WHERE id = ${Number(id)}`) as
-    { concept: string; prompt_version: string }[];
   const arxivs = s.papers.map((p) => p.arxiv);
-  const quoteRows = (arxivs.length && g.length
+  const quoteRows = (arxivs.length
     ? await sql`
         SELECT p.arxiv_id AS arxiv, d.verbatim_quote AS quote, d.quote_verified AS verified,
                d.quote_text_digest, p.extracted_text_digest
         FROM definitions d JOIN papers p ON p.id = d.paper_id
-        WHERE p.arxiv_id = ANY(${arxivs}) AND d.concept = ${g[0].concept}
-          AND d.prompt_version = ${g[0].prompt_version} AND d.defines_concept = true
+        WHERE p.arxiv_id = ANY(${arxivs}) AND d.concept = ${data.concept}
+          AND d.prompt_version = ${data.prompt_version} AND d.defines_concept = true
       `
     : []) as { arxiv: string; quote: string | null; verified: boolean | null;
                quote_text_digest: string | null; extracted_text_digest: string | null }[];

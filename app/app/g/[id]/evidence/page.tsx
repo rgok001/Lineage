@@ -18,9 +18,12 @@ const EDGE_COLORS: Record<string, string> = {
 
 export default async function EvidencePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const g = await getGenealogy(Number(id));
+  // The session read does not depend on the map and the map does not depend on
+  // the session, so they were two waits for no reason (issue #140). Same shape
+  // as the map page and the report page, which already do this.
+  const [g, viewer] = await Promise.all([getGenealogy(Number(id)), getViewer()]);
   if (!g) notFound();
-  const canEdit = isOwner(await getViewer());
+  const canEdit = isOwner(viewer);
 
   // A relationship whose paper row is gone still appears here (issue #79), so
   // both of these take null. `titleOf` used to fall back to the arXiv id, which

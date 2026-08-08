@@ -1,5 +1,5 @@
 import { sql } from "./db";
-import { actorTally, curatorialEdits, getRiver, readableQuote, type River, type RiverStream, type UserEdit } from "./genealogy";
+import { actorTally, curatorialEdits, getMapRow, readableQuote, type River, type RiverStream, type UserEdit } from "./genealogy";
 import { stampOf, type StampState } from "./stamp";
 
 /**
@@ -148,16 +148,14 @@ export type ExportResult = { markdown: string; bibtex: string; basename: string 
  * condition that sends /g/[id] to the evidence view.
  */
 export async function buildExport(id: number, threadId?: string): Promise<ExportResult | null> {
-  const data = await getRiver(id);
-  if (!data) return null;
-  const { concept, river } = data;
-
-  const g = (await sql`
-    SELECT concept, prompt_version, COALESCE(user_edits, '[]'::jsonb) AS edits
-    FROM genealogies WHERE id = ${id}
-  `) as { concept: string; prompt_version: string; edits: UserEdit[] }[];
-  if (!g.length) return null;
-  const pv = g[0].prompt_version;
+  // One SELECT for the row, where this was `getRiver` followed by a second
+  // statement against the same row for `prompt_version` and the edit log
+  // (issue #140). Both null tests survive as one: no map, or a map whose
+  // streams job has not run, and the caller 404s either way.
+  const g = await getMapRow(id);
+  if (!g?.river) return null;
+  const { concept, river } = g;
+  const pv = g.prompt_version;
 
   const scope: RiverStream[] = threadId
     ? river.streams.filter((s) => s.id === threadId)
@@ -172,7 +170,7 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
            d.quote_text_digest, p.extracted_text_digest
     FROM papers p
     LEFT JOIN definitions d ON d.paper_id = p.id
-      AND d.concept = ${g[0].concept} AND d.prompt_version = ${pv} AND d.defines_concept = true
+      AND d.concept = ${concept} AND d.prompt_version = ${pv} AND d.defines_concept = true
     WHERE p.arxiv_id = ANY(${arxivs})
   `) as { arxiv: string; title: string; year: number | null; authors: string[] | null;
           verbatim_quote: string | null; quote_verified: boolean | null;
@@ -261,7 +259,7 @@ export async function buildExport(id: number, threadId?: string): Promise<Export
       "> **This is a scaffold, not prose.** The citations, quotes and structure are\n" +
       "> real; the argument is yours to write.",
   );
-  const note = curationNote(g[0].edits);
+  const note = curationNote(g.user_edits);
   if (note) md.push(`>\n${note}`);
   md.push("");
 
