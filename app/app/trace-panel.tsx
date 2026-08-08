@@ -101,6 +101,23 @@ export default function TracePanel({
           : "Someone reviews each request before it runs."}
       </p>
 
+      {/* Above the branch, not inside the form, so the signed-out reader deciding
+          whether this tool is for them gets it too — they are the person forming
+          the expectation, and the form they would meet it in is behind a sign-in.
+          The picker offers all 26 fields OpenAlex finds arXiv work in, which is
+          the owner's decision 36 ("we should not discriminate"). What varies is
+          the share, by three orders of magnitude: measured 2026-08-08, arXiv is
+          21.6% of mathematics and 20.6% of physics against 0.13% of medicine and
+          0.04% of arts and humanities. Stage A has no corpus floor, so a thin
+          field yields a small map wearing the same stamps as a good one rather
+          than a refusal, which is why this sits at the control and not only on
+          /about (issue #175). /about's "Coverage is arXiv-only" wording,
+          deliberately: one fact, one phrasing. */}
+      <p style={{ fontSize: ".85rem", color: "var(--ink-soft)", margin: "0 0 .9rem", lineHeight: 1.55 }}>
+        Lineage reads arXiv only, so fields that publish mainly through journals, conferences or
+        books are thin here or missing. If yours does not preprint, this is not the right tool yet.
+      </p>
+
       {signedIn ? (
         <form
           action={formAction}
@@ -123,22 +140,6 @@ export default function TracePanel({
               <option key={f.id} value={f.id}>{f.name}</option>
             ))}
           </select>
-          {/* The picker offers all 26 fields OpenAlex finds arXiv work in, which
-              is the owner's decision 36 ("we should not discriminate"). But the
-              share varies by three orders of magnitude: measured 2026-08-08,
-              arXiv is 21.6% of mathematics and 20.6% of physics, against 0.13%
-              of medicine and 0.04% of arts and humanities. Stage A has no corpus
-              floor, so a thin field yields a small map wearing the same stamps
-              as a good one rather than a refusal — which is why this sits at the
-              control instead of only on /about (issue #175). Same wording as
-              /about's "Coverage is arXiv-only" limitation, deliberately: one
-              fact, one phrasing. */}
-          <p style={{ flexBasis: "100%", margin: 0, fontSize: ".78rem",
-            lineHeight: 1.5, color: "var(--ink-soft)" }}>
-            Lineage reads arXiv only, so fields that publish mainly through journals, conferences
-            or books are thin here or missing. If yours does not preprint, this is not the right
-            tool yet.
-          </p>
           <input
             name="gloss"
             placeholder="Which sense? e.g. “kernel methods in SVMs” (optional)"
