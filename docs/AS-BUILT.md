@@ -136,6 +136,8 @@ app/                 Next.js app (Vercel root directory is app/)
                      /g/[id]/evidence (the old detailed view + workbench),
                      /api/traces, /api/auth
                      layout.tsx + nav.tsx hold the one tab bar
+                     g/[id]/layout.tsx + tabs.tsx hold the second one, the four
+                     places inside a map; it fetches nothing, on purpose
                      skeleton.tsx holds the loading shapes every boundary shares
                      (concepts)/ is a route group, not a URL segment: it exists
                      so / can have a loading.tsx that /about does not get
@@ -609,6 +611,12 @@ One tab bar lives in `layout.tsx` (`nav.tsx`): Concepts, Map a new concept, How
 it works, Roadmap. A map, a thread and a paper all keep Concepts lit, so a
 reader deep in the evidence still knows where they are. Before it, navigation
 was a back-link in whatever corner each page happened to use.
+
+**A second strip sits under it on every route inside a map** (issue #143):
+The map · Threads · The evidence · What this map is made of. Same pattern one
+step smaller, and it is where the sideways navigation now lives; the mechanism
+and the reason it fetches nothing are in section 6 under the loading
+boundaries.
 
 **Routes.**
 - `/` : the map list, with a link to `/trace` showing how many runs are in
@@ -1419,6 +1427,51 @@ complete time did not move (0.79 → 0.74), which is the same separation of the 
 levers #140 recorded — the click is answered, the data is not faster. `/trace`
 answers at 0.33 s and completes at 0.54. The `/g/13/river` redirect, which does
 no database work, is 0.31 s and is the network floor from here.
+
+**Inside a map, the sideways links are now permanently in the viewport** (issue
+#143). #140 and #144 bought a skeleton on every click, and #143 is the same
+lever applied to the links themselves: Next prefetches a route's loading
+boundary only while the link is on screen, so on `/g/13` the first thread card
+answered a click in **5 ms** at y=871 while "The evidence →" at y=1135 took
+**349 ms** and "What this map is made of →" at y=1185 took **325 ms**. The same
+evidence link, same page, same session, answered in **14 ms** once it had been
+scrolled into view. The two most important links on the map were the only two
+that never got prefetched. A thread page carried no sideways link at all — its
+only outbound was `‹ the map` — so moving between two threads was two waits and
+a scroll hunt, and a reader on a thread had no way of knowing the evidence page
+existed.
+
+`app/app/g/[id]/layout.tsx` renders `tabs.tsx` above `{children}` on every route
+under a map: **The map** (`/g/{id}`), **Threads** (`/g/{id}#threads`), **The
+evidence**, **What this map is made of**. Four links, always above the fold,
+always prefetched. On `/g/{id}/p/{arxiv}` no tab is marked current — a dossier
+is a place, not a section, and lighting "The map" would be a small lie about
+where the reader is.
+
+**The layout awaits nothing, and that is the whole design rather than an
+economy.** `loading.js` nests *inside* `layout.js`, so a boundary cannot cover
+its own parent: any data read in this layout would block every navigation under
+a map above the skeleton #140 bought, and would read as #140 regressing with no
+visible cause. That is why "Threads" is an anchor to the map's thread list
+rather than a menu of the five thread names, and why the strip does not carry
+the map's name — both need the `genealogies` row. `await params` is routing,
+not I/O, and is the only await in the file. The constraint arrives a second time
+from the billing side: four extra prefetch requests per map page view are four
+function invocations, and each must touch no database.
+
+Verified from the build's own route tree rather than from the docs, the method
+#144 established: every route under `/g/[id]` now carries
+`layout: app/g/[id]/layout.tsx` at the `[id]` segment, with its leaf's own
+`loading.tsx` at a segment *below* it — so `/g/13/evidence` binds
+`evidence/loading.tsx` under the strip, and a tab click swaps the content inside
+the map frame instead of re-skeletoning the page. The four existing skeletons
+are unchanged and must not grow a strip of their own. The one edit to
+`g/[id]/page.tsx` is `id="threads"` on the thread-list section.
+
+Deliberately not done: no sticky positioning (a fixed bar on a 39-screen
+evidence page is the wrong answer to a problem an index should solve), the
+`‹ the map` breadcrumbs and the two bottom cards on the map page stay, and no
+export control in the strip.
 
 **Progress transport is polling, not SSE**, a deliberate deviation from the
 original plan: progress lives in Postgres anyway, serverless cannot hold

@@ -106,7 +106,8 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
 
       <InfluenceMap id={Number(id)} data={data} />
 
-      <section style={{ marginTop: "1.6rem" }}>
+      {/* The tab strip's "Threads" is an anchor here, not a menu (issue #143). */}
+      <section id="threads" style={{ marginTop: "1.6rem" }}>
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", letterSpacing: ".14em",
           textTransform: "uppercase", color: "var(--ink-faint)", margin: "0 0 .6rem" }}>
           Read a thread as an account
