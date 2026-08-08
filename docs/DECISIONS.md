@@ -806,6 +806,15 @@ The why behind the load-bearing choices, in one place:
     walks through it. Non-arXiv sources remain sequenced behind the field
     widening and F10 (issue 165) per the design on issue 35.
 
+37. **Correction to decision 36** (2026-08-08, same day, issue 175). Decision 36
+    says the field picker, `isKnownField()`, and `corpus_select.py --field`
+    "carry any arXiv field end to end". The middle claim is false: the #175
+    investigation grepped the call sites and `isKnownField()` is called from
+    nowhere — the submit path validates shape only (`/^fields\/\d{1,4}$/`),
+    so the picker was never the allow-list and crafted field ids pass through.
+    The decision itself stands unchanged; only its supporting description of
+    the mechanism was wrong. Real membership validation ships under issue 175.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record
