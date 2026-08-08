@@ -1295,6 +1295,20 @@ boundary that asserts on the `role="status"` element's own style attribute, and
 it was run against the pre-change source first and failed there on all four
 counts.
 
+**Confirmed after deploy in a real browser with `prefers-reduced-motion`
+emulated**, reading computed styles off a skeleton that was on screen — the
+served CSS being right is necessary and was not sufficient, since the old rule
+was also "right" in the bundle and still produced a blank screen:
+
+| | before | after |
+|---|---|---|
+| note colour / size | `rgb(90,106,114)` at 10.88 px, uppercase, 1.52 px tracked | `rgb(139,154,162)` at 12.8 px, `text-transform: none`, `letter-spacing: normal` |
+| note contrast | 3.33 : 1 | **6.45 : 1** |
+| bar under reduced motion | `--card` at `opacity: .65`, 1.04 : 1 | `rgb(24,33,38)` at `opacity: 1`, `animation-name: none`, **1.14 : 1** |
+
+Sixteen bars on `/` and twenty-eight on `/trace` are present and still under
+reduced motion, where before they were present and invisible.
+
 **And four call sites each read the same `genealogies` row twice.** `getRiver`
 selected `concept, streams`, and every caller then issued a second statement
 against that same row for `prompt_version` — the key it needs to look up
@@ -1378,6 +1392,33 @@ whose padding is off moves the page when the content lands. Neither new skeleton
 draws the trace queue or the sign-in state, and neither claims a map count: those
 are exactly what the page has gone to the database to find out, and they append
 below what is already drawn, which shifts nothing.
+
+**After, measured on the live site the way the ticket was measured** — headless
+Chrome at 1440×900, real clicks on the global nav from `/g/13`, time from click
+until anything at all changes on screen:
+
+| clicked | nothing on screen, before | skeleton on screen, after | content arrives | CLS |
+|---|---|---|---|---|
+| **Concepts** (`/`) | 1143 ms | **7 ms** | 1392 ms | 0.0000 |
+| **Map a new concept** (`/trace`) | 1347 ms | **15 ms** | 999 ms | 0.0001 |
+| How it works (`/about`) — control, untouched | 591 ms | *no skeleton, by design* | 578 ms | 0.0000 |
+
+`/about` is the control and it is the one that matters here: it did not move and
+it draws no skeleton, which is the route group doing its job on a live click
+rather than only in the build manifest. The nav links are above the fold, so the
+router prefetches the new boundaries — that is why 1143 ms becomes 7 ms rather
+than merely becoming a faster paint, and it is the same effect #140 bought on the
+links a reader can see. The wait itself has not shortened and is not claimed to
+have: content still arrives at 1392 ms and 999 ms. The `/trace` figure of 0.0001
+is two shifts at 7.2 s and 8.2 s, long after arrival, from the panel that polls
+every 3 s; nothing shifts at the skeleton-to-content swap on either route.
+
+By `curl`, median of 9 warm brotli requests from the same vantage, comparable
+with the table above this section: `/` first byte **0.79 → 0.31 s** while its
+complete time did not move (0.79 → 0.74), which is the same separation of the two
+levers #140 recorded — the click is answered, the data is not faster. `/trace`
+answers at 0.33 s and completes at 0.54. The `/g/13/river` redirect, which does
+no database work, is 0.31 s and is the network floor from here.
 
 **Progress transport is polling, not SSE**, a deliberate deviation from the
 original plan: progress lives in Postgres anyway, serverless cannot hold
