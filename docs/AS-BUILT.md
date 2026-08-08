@@ -1816,6 +1816,18 @@ ellipsised — the truncation followed the block, which is the thing that could
 quietly have been lost. No hover or focus background: the index is a list of
 names, not a set of buttons.
 
+**After, on the live deploy**, the same three widths: 79 links, **24.77 px tall
+on a 27.16 px pitch at 1440, 768 and 390**, against 17.0 / 21.2 before — the
+harness's prediction to the hundredth. Columns 3 / 2 / 1 as before, index block
+836 / 1189 / 2286 px, and the page **55 850 → 56 371 px** at 1440, which is
++521 px for all four of these tickets together, under 1%.
+
+**CLS is still 0.0000** on a plain hard load of `/g/13/evidence` and of `/g/13`,
+sampled for four seconds past arrival. That is the check these four owed: the
+group heads each grew by a mark's worth of line, the index by 6 px per entry,
+and the standfirst by two sentences, all of it below the fold and none of it
+moving anything a reader is looking at.
+
 **The mark explainer is a definition list, and the instruction comes first**
 (issue #157). It was four sentences of unbroken prose, one of them 44 words,
 sitting between the reader and the only instrument this page has, with "Click a
@@ -1845,6 +1857,11 @@ the passage and that precision is the whole of #135's work; and the ticket's
 "76 words" does not reproduce — its own proposed wording counts 100 by the rule
 above, so the shape is the win here and the length is a smaller one than claimed.
 
+**After, read back off the live deploy**: 98 words, the same figure the file's
+own text gave, with the lede reading "Each row is a typed relationship between
+two papers. Click a row to see the evidence.", the three clauses in `● ○ ◌`
+order, and the scope sentence last.
+
 **The two verification marks are the same size, which is also the answer to the
 design question #146 left open** (issue #156). Counted on the live page, every
 mark element on `/g/13/evidence`: 78 group-head marks (one paper's own passage)
@@ -1866,6 +1883,11 @@ head's stamp and nothing else. No new form, no new colour, no second scale
 (decisions 24 and 25), and the three strings are byte-identical. The uppercase
 caption above it stays at `.62rem`, a label sitting under the claim.
 
+**After, counted on the live deploy**: **78 group-head marks at 12.48 px** in
+`rgb(92,179,137)` and **287 row marks at 12.48 px**, 286 of them the same green
+and one `rgb(240,96,95)`. One size and two colours across all 365, which is what
+"the same check, two scopes" should look like.
+
 **The page now says, above the fold, that it has a way in** (issue #155). #146
 built the index and nothing on the first screen named it: measured on the live
 page at 1440×900, `nav[aria-label="Jump to a paper"]` starts at **y = 2152**, 2.4
@@ -1883,6 +1905,14 @@ link stops resolving without anyone noticing. The `<nav>` takes the same
 `scroll-margin-top` every other target on this page has, so it lands 1.2 rem
 below the top of the window rather than flush against it, and `hash-target.tsx`
 already handles the click through its `hashchange` listener.
+
+**After, on the live deploy** at 1440×900: the link sits at **y = 312**, whole
+and on the first screen; its `href` is `#the-index`; the id resolves, and the
+element it resolves to is the index `<nav>` itself. Clicked, the page lands at
+`scrollY` 2192 with the nav **19 px below the top of the window** — the
+`scroll-margin-top` this page sets, 1.2 rem — and the hash reads `#the-index`.
+The index's own top is at y = 2211, which is what the sentence exists to
+shorten.
 
 Deliberately not done, and both refusals are inherited: the index is not sticky
 and has not moved above the ranked list. #143 refused a fixed bar on this page,
@@ -1983,6 +2013,34 @@ hover would fetch a route per dot swept over, and none of those is reachable —
 leaving a dot clears the hover and the panel falls back to the pinned paper, so
 the only dossier the button can open is that one. The head start is therefore the
 time between clicking a dot and crossing to the panel.
+
+**After, measured on the live deploy**, same vantage and method as the tables
+above — fresh page each trial, a real click at the centre of a dot to pin a
+paper, then the link, with a `MutationObserver` for the first DOM change:
+
+| the click | before | after |
+|---|---|---|
+| "Read the dossier →", **0.7 s after pinning** | 279, 282, 288 ms | **6.2, 5.1, 4.6 ms** |
+| the same click, **fired immediately after pinning** | — | 297, 291, 259 ms |
+
+Both rows are the answer, and the second is the boundary this fix has. The head
+start is the walk from the dot to the panel, so a click that lands before the
+prefetch returns still waits for it: 0.7 s of pause is enough and 0 ms is not.
+A reader cannot produce the second row — the panel offers no button until a paper
+is pinned, and the button is 250 px from the dot — but a harness can, so it is
+recorded rather than left for someone to rediscover as a regression. All six
+trials land on `/g/13/p/1706.03762` with the skeleton up.
+
+**The box is pixel-identical to the button it replaced**: 36 × 230.81 px live,
+and the same 36 × 230.81 for both when the old button and the new link are
+rendered side by side, at the same 13.6 px, colour, background, radius and
+padding. `line-height: normal` is explicit on the link because a button gets it
+from the user agent and an anchor would have inherited the body's.
+
+There is now exactly **one `<a href>` in the DOM pointing at `/g/13/p/…`**, and
+still none in the served HTML: the panel is client-rendered, so a `curl`-based
+link count reports zero here and that means "I could not see it", never "there is
+none".
 
 Not done here, and named because the ticket raises it: the thread page still
 offers no way into a dossier. That is a change to what the thread page lists, not
