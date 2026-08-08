@@ -1636,15 +1636,30 @@ its targets inside a nested `<Suspense>`, the component goes inside that boundar
 with them: a sibling of the content, never an ancestor of the wait.
 
 It is mounted in exactly two places: `g/[id]/page.tsx`, beside the thread-list
-section, and — since #146 — `g/[id]/evidence/page.tsx`, beside the paper groups,
-which is where it matters most and which withdrew its own `open-target.tsx` in
-favour of this one. A page with no anchor targets does not mount it, and no
-layout does. When only the map mounted it, that was verified from the build's
-route tree rather than from the source: `.next/server/app/g/[id]/page.js`
-referenced `hash-target` and `g/[id]/layout.js`, `g/[id]/evidence/page.js` and
-`g/[id]/report/page.js` referenced it zero times. The evidence page's client
-bundle went from 177 B to 454 B with the mount, which is the same fact from the
-other side.
+section, which is #150, and — since #146 — `g/[id]/evidence/page.tsx`, beside the
+paper groups, which is where it matters most and which withdrew its own
+`open-target.tsx` in favour of this one. A page with no anchor targets does not
+mount it, and no layout does. The evidence page's client bundle went from 177 B
+to 454 B with the mount, which is the same fact from the other side.
+
+**Verified from the deployed artefact, not from the source.** Counting the
+component's `hashchange` listener across the client chunks each live route
+actually loads: `app/g/[id]/page-*.js` one, `app/g/[id]/evidence/page-*.js` one,
+and zero in `app/g/[id]/layout-*.js`, in the root `app/layout-*.js`, and in the
+report and thread page chunks. When only the map mounted it, the same negative
+was taken from the server route tree — `.next/server/app/g/[id]/page.js` named
+`hash-target` and the layout, evidence and report entries named it zero times —
+and **that method stopped working the moment #146 gave the component a second
+importer**, because webpack then hoisted it into a shared server chunk that no
+page entry names. The client chunk graph survives that and the server one does
+not.
+
+It had to be taken from an artefact either way: **a behavioural probe cannot
+prove it.** Adding an element to `/g/13/report` and setting `location.hash`
+scrolls the page whether or not this component is mounted, because a
+same-document fragment change scrolls natively once the element exists —
+measured, and it "passed" on all three routes including the two that do not
+mount it. Only the chunk graph separates the two explanations.
 
 `instant` is explicit rather than left to the default, so that a stylesheet later
 setting `scroll-behavior: smooth` cannot turn an anchor into a glide down the
@@ -1660,14 +1675,55 @@ both ancestors and itself opened; `#r-cs%2F0501001` resolves to the literal id
 need; a malformed escape such as `#100%off` does not throw; a `hashchange` after
 mount re-runs it; and the effect's cleanup removes the listener.
 
+**After, measured on the live deploy**, headless Chrome 1440×900 from Sydney,
+same vantage and method as #143's table above, so the columns mean the same
+thing. The three rows the ticket filed:
+
+| | scrollY, after #143 | scrollY, now | `#threads` |
+|---|---|---|---|
+| Threads, from `/g/13/river/s0` | 150 | **569** | 315 px down the viewport |
+| Threads, from `/g/13/evidence` | 150 | **569** | 315 px down the viewport |
+| **hard load** of `/g/13#threads` | 0 | **569** | 315 px down the viewport |
+
+The thread list is at y=884 in all three, and 569 is the page's maximum scroll at
+this viewport, so the section lands as far up the screen as the document allows.
+
+**The scroll arrives with the content, which is the check that says the mechanism
+is the mount and not luck.** Sampling a hard load at the ticket's own intervals:
+no `#threads` and `scrollY` 0 at 500 ms, 1 s and 2 s; at 4 s the element is
+present at 884 and `scrollY` is already 569. Sampled every 25 ms instead, the
+element is first observed at **3728 ms** and `scrollY` first goes non-zero at
+**3728 ms** — the same sample, a gap of 0 ms.
+
+**It does nothing when it is not asked.** `/g/13` with no hash and
+`/g/13#nosuchthing` both hold `scrollY` at a maximum of **0** over seven seconds
+of polling, spanning the content's arrival, with no page error and nothing
+logged to the console on either.
+
+**Reduced motion sees no scrolling to reduce.** With `prefers-reduced-motion:
+reduce` emulated, sampling `scrollY` every animation frame across a hash change
+gives 241 frames holding exactly two distinct values, 0 for the 42 frames before
+the hash was set and 569 after — **zero intermediate positions**, so there is no
+glide to interrupt. The computed `scroll-behavior` on `<html>` is `auto`.
+
+**The long case, which is what #146 needed this for.** A hard load of
+`/g/13/evidence#r-1905.04899-2105.03404`, one of 287 anchors and 41,375 px down
+an unscrolled page: it lands at `scrollY` 41,356 with the row 19 px below the top
+of the viewport, the row itself open and every ancestor `<details>` open.
+
 **Known behaviour, recorded rather than discovered later.** Resolution is on the
 decoded id only, so an element whose id contains a literal `%` will not be found
 where a browser's own fragment matching would also try the raw string. Nothing
-in the product generates such an id. And Back to a URL that carries a hash
-re-scrolls to that anchor rather than restoring the reader's previous position;
-Back to a URL with no hash is untouched, which is the journey EVE measured.
-Without JavaScript the anchor lands wherever the browser puts it and nothing
-else changes: degraded, not broken.
+in the product generates such an id. **Back to a URL with no hash restores the
+reader's position** — left at 300 on `/g/13`, out to the evidence page, Back
+returns to exactly 300, which is the journey EVE measured. **Back to an anchored
+URL re-scrolls to the anchor** rather than restoring: the reader who lands at 569
+via `#threads`, scrolls to 0 and leaves is returned to 569. Judged correct —
+following an anchor link is the reader asking to be moved — and recorded so it is
+a known behaviour rather than a surprise. **Without JavaScript** `/g/13#threads`
+returns 200, the thread list is in the served markup, and the page does not
+scroll: the anchor lands wherever the browser puts it and nothing breaks.
+Degraded, not broken.
 
 **The evidence page's anchors, measured on the deploy** (issue #146; headless
 Chrome 1440×900, hard loads only, because the defect #150 diagnosed is invisible
