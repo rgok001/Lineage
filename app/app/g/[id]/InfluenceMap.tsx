@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { paperAnchor } from "../../../lib/anchors";
 import type { InfluenceMapData, MapPaper } from "../../../lib/genealogy";
+// A value import, so it may not come from `lib/genealogy`: that module reaches
+// `lib/db.ts`, whose module-level throw would then run in the browser. The file
+// says so at length.
+import { readingMarks } from "../../../lib/reading-window";
 
 /** The influence map: every dot a paper, size = how much later work built on it
  *  for this term, a ring = it moved the term's meaning. Papers ride in visible
@@ -26,7 +30,7 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
   };
   const EDGE_KINDS = Object.keys(EC);
 
-  const { bands, placed, tallest, yr0, yr1 } = useMemo(() => {
+  const { bands, placed, tallest, yr0, yr1, marks } = useMemo(() => {
     const byStream = new Map<string, MapPaper[]>();
     for (const p of data.papers) {
       if (!byStream.has(p.stream_id)) byStream.set(p.stream_id, []);
@@ -39,7 +43,19 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
       }))
       .sort((a, b) => a.minY - b.minY || b.maxY - a.maxY);
     const years = data.papers.map((p) => p.year);
-    const yr0 = Math.min(...years) - 0.6, yr1 = Math.max(...years) + 0.8;
+    /* The axis spans the map's whole reading, not only the dots it drew (issue
+       #44). On the dark energy map the newest pivotal paper is 2011 and the
+       newest paper the map read is 2016, and a horizon ruled at 2016 on an axis
+       that stops at 2011 would sit off the canvas, or worse, at an x the year
+       labels below it say is 2011. Widening the domain is what makes the five
+       empty years visible, which is the honest picture: the map read that far
+       and nothing it read there was pivotal enough to draw. Every marked year is
+       outside or on the drawn range by construction, because the horizon is
+       taken over the defining papers and the dots are a subset of them; the
+       min/max here does not rely on that. */
+    const marks = readingMarks(data.reading_from, data.reading_to);
+    const marked = marks.map((k) => k.year);
+    const yr0 = Math.min(...years, ...marked) - 0.6, yr1 = Math.max(...years, ...marked) + 0.8;
     // spread same (stream, year) papers vertically so they never overlap
     const groups = new Map<string, MapPaper[]>();
     for (const p of data.papers) {
@@ -54,7 +70,7 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
       const sid = g[0].stream_id;
       tallest.set(sid, Math.max(tallest.get(sid) ?? 1, g.length));
     }
-    return { bands, placed, tallest, yr0, yr1 };
+    return { bands, placed, tallest, yr0, yr1, marks };
   }, [data]);
 
   /** Channel names wrap rather than truncate: SVG text has no wrapping, so the
@@ -232,6 +248,26 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
                 <text x={x(y)} y={H - m.b + 18} textAnchor="middle" fill="var(--ink-faint)"
                   fontSize={12} fontFamily="var(--font-mono)">{y}</text>
               )}
+            </g>
+          ))}
+
+          {/* The horizons of what this map read (issue #44, `[Q7]`). Drawn over
+              the year rules and under everything else, so a dot sitting on a
+              horizon is still a dot first. Dashed and in ink-faint because it is
+              a statement about the map rather than a thing in the data: it is
+              the quietest mark on the canvas that a reader can still see, and
+              the sentence under the canvas is what carries the claim. The label
+              is placed inward from its own end, so the newest-paper label can
+              never run off the right edge. */}
+          {marks.map((k) => (
+            <g key={k.side} style={{ pointerEvents: "none" }}>
+              <line x1={x(k.year)} y1={m.t - 8} x2={x(k.year)} y2={H - m.b + 4}
+                stroke="var(--ink-faint)" strokeWidth={1} strokeDasharray="2 4" />
+              <text x={k.side === "start" ? x(k.year) + 6 : x(k.year) - 6} y={m.t - 12}
+                textAnchor={k.side === "start" ? "start" : "end"} fill="var(--ink-faint)"
+                fontSize={10.5} fontFamily="var(--font-mono)">
+                {k.label}
+              </text>
             </g>
           ))}
 

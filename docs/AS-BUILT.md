@@ -797,6 +797,41 @@ fetches nothing. The reasoning is with the other navigation costs, below.
   arXiv revisions let two papers cite each other and the stored year is the v1
   date, so a reverse leg is a data artefact, not a lineage. Below the map: the
   through-line, the thread list, and a link into the evidence layer.
+  **The timeline is ruled off at both ends of what the map read** (issue #44,
+  `[Q7]`). The Product Owner opened the first physics map, `/g/17` (dark
+  energy), on 2026-08-08, saw the dots stop at 2011 and asked whether the tool
+  was claiming nothing had been added to the topic since. It was not, and it had
+  no way of saying so: the right-hand end of a timeline reads as the end of the
+  story unless the page says otherwise. Two dashed ink-faint rules now mark the
+  oldest and the newest **defining** paper in the map, labelled "this map's
+  reading starts · 1988" and "this map's reading stops · 2016", and a mono
+  ink-faint caption under the canvas says what they mean: "Marked at both ends of
+  the timeline: the oldest and the newest paper in this map that defines the
+  term, 1988 and 2016. That is where this map's reading stops, not where the
+  term's story does. Work outside those years may exist, and this map has not
+  read it." The claim is about the map and never about the field. A map whose
+  reading is one year wide gets one rule; a map whose years cannot be read gets
+  neither rule nor sentence, because a horizon nobody can place is worse than no
+  horizon. **The axis spans the reading, not the dots**: on `/g/17` the newest
+  drawn paper is 2011 and the newest read is 2016, so the domain widens to 2016
+  and the five empty years are the picture of the gap. This is a stopgap for the
+  under-sampling of recent years (`[F5]`, issue #33), not a fix for it.
+  The two years are `year_min`/`year_max` from `map_report`, the same expression
+  the report page prints as "earliest year" and "latest year", so the two pages
+  cannot disagree about one map; they ride on the statement that already counted
+  the map's relationships, so `getInfluenceMap` is still four statements in three
+  rounds. That statement `LEFT JOIN`s the view from a one-row anchor and is
+  wrapped in a fallback rather than guarded by a `to_regclass` probe: the probe
+  costs a round trip to ask about a name while the query resolves that name
+  against a search path (issue #92), and the fallback asks the real question and
+  answers with the count alone, logging the driver's message, if the view is not
+  there. `readingWindowSentence` and `readingMarks` live in `lib/reading-window.ts`
+  and not in `lib/genealogy.ts`, because `InfluenceMap` is a client component: a
+  value import from `lib/genealogy` puts `lib/db.ts` in the browser bundle, where
+  its module-level `throw` on a missing `DATABASE_URL` runs on load. Measured on
+  the build that made that mistake: `/g/[id]` first load 154 kB with
+  "DATABASE_URL is not set" in `.next/static/chunks/app/g/[id]/page-*.js`, 110 kB
+  and no occurrences after the move.
   **The closing footnote says what it means** (issue #126). "No curatorial
   changes have been made to it since" is `curationSentence` in `lib/genealogy.ts`
   and now reads "Nobody has edited this map by hand since. If anyone does, the

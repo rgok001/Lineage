@@ -293,6 +293,76 @@ export type InfluenceMapData = {
    *  counted. A string rather than the array because this object is serialised
    *  into the client bundle for InfluenceMap. */
   curation: string;
+  /** The two ends of what this map read: the oldest and the newest year among
+   *  the map's DEFINING papers (issue #44, `[Q7]`). A fifth
+   *  population on this page, so it is named here and labelled everywhere it is
+   *  printed (#123's rule): it is wider than `total_papers`, which is the
+   *  defining papers that also carry an uptake score, and wider again than the
+   *  dots the canvas draws.
+   *
+   *  Read from `map_report` rather than computed here, so this and the report
+   *  page's "earliest year"/"latest year" are one expression and cannot disagree
+   *  about one map. NULL means the years could not be read at all (see
+   *  `edgeTotalAndReading`), never "the map has no years": the marker and the
+   *  sentence are then both absent, because a horizon nobody can place is worse
+   *  than no horizon. What is drawn and said from them is in
+   *  `lib/reading-window.ts`, which is a separate module because the canvas is a
+   *  client component and must not import this one for a value. */
+  reading_from: number | null;
+  reading_to: number | null;
+};
+
+type MapTotals = { total: number | string; year_min: unknown; year_max: unknown };
+
+/**
+ * The map's relationship count and the two ends of its reading, in one
+ * statement (issue #44).
+ *
+ * The count was already a statement of its own and the horizon rides on it, so
+ * the front door pays no extra round trip for the caption: #140 spent a ticket
+ * getting this page's serial queries down and a second question about one map is
+ * exactly what it removed. `map_report` is read here, rather than `min`/`max`
+ * being written out again, so this page and the report page print one figure
+ * (report.ts explains why nothing on that page computes anything).
+ *
+ * **A fallback, not a probe.** `listGenealogies` and `typesFor` guard the same
+ * view with `to_regclass`, and both pay a round trip to ask about a *name* while
+ * the query that follows resolves that name against a search path — the two are
+ * the same question only under the deployment we tested (issue #92). Asking the
+ * real query and catching the failure has neither problem: it costs nothing when
+ * the view is there, which is every deployment that has run migration 016, and
+ * when it is not there the page loses a caption instead of the map. The reason
+ * is logged with the driver's own message, because "the horizon is missing" with
+ * no cause in the log is how a transient failure gets read as a schema state.
+ */
+async function edgeTotalAndReading(id: number): Promise<MapTotals[]> {
+  try {
+    return (await sql`
+      SELECT (SELECT count(*) FROM edges WHERE genealogy_id = ${id}) AS total,
+             r.year_min, r.year_max
+      FROM (SELECT 1) AS one
+      LEFT JOIN map_report r ON r.genealogy_id = ${id}
+    `) as MapTotals[];
+  } catch (exc) {
+    console.error(
+      `getInfluenceMap(${id}): could not read the reading horizon from map_report, ` +
+        `falling back to the relationship count alone: ${String(exc)}`,
+    );
+    return (await sql`
+      SELECT count(*) AS total, NULL AS year_min, NULL AS year_max
+      FROM edges WHERE genealogy_id = ${id}
+    `) as MapTotals[];
+  }
+}
+
+/** The driver hands `bigint` back as a string and may hand back nothing at all,
+ *  and this page distinguishes "no year recorded" from a year: same boundary
+ *  rule as `num` in lib/report.ts, and for the same reason — a silent 0 here
+ *  would rule a line off the canvas at the year nought. */
+const yearOrNull = (v: unknown): number | null => {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 };
 
 /** The pivotal papers and the typed links among them: top-N by on-term uptake
@@ -321,11 +391,12 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
     `,
     // Counted, never inferred from what the canvas drew. `COUNT(*)` on the map's
     // edges is exactly the population the evidence page lists, so the badge's
-    // "the full N are in the evidence" is a promise the next page keeps.
-    sql`SELECT COUNT(*) AS total FROM edges WHERE genealogy_id = ${id}`,
+    // "the full N are in the evidence" is a promise the next page keeps. It
+    // carries the reading horizon with it (issue #44); see the function.
+    edgeTotalAndReading(id),
   ])) as [
     { arxiv: string; year: number; title: string; attention: number; displacement: number | null; novelty: string[] | null }[],
-    { total: number | string }[],
+    MapTotals[],
   ];
   const total_edges = Number(totals[0]?.total ?? 0);
 
@@ -429,6 +500,8 @@ export async function getInfluenceMap(id: number): Promise<InfluenceMapData | nu
     total_papers: rows.length,
     total_edges,
     curation: curationSentence(g.user_edits),
+    reading_from: yearOrNull(totals[0]?.year_min),
+    reading_to: yearOrNull(totals[0]?.year_max),
   };
 }
 

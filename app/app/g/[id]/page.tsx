@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { getViewer, isOwner } from "../../../lib/authz";
 import { getInfluenceMap } from "../../../lib/genealogy";
 import { parseMapId } from "../../../lib/map-id";
+import { readingWindowSentence } from "../../../lib/reading-window";
 import HashTarget from "../../hash-target";
 import InfluenceMap from "./InfluenceMap";
 
@@ -23,6 +24,7 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
   const owner = isOwner(viewer);
 
   const verifiedDrawn = data.edges.filter((e) => e.stamp === "verified").length;
+  const readingWindow = readingWindowSentence(data.reading_from, data.reading_to);
 
   /**
    * The legend is derived from the links this canvas actually drew (issue #115).
@@ -112,6 +114,21 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
       </header>
 
       <InfluenceMap id={gid} data={data} />
+
+      {/* What the two ruled-off years on the canvas mean (issue #44, `[Q7]`).
+          It sits under the canvas rather than in the header, because it is a
+          caption for the picture: the owner's question was asked while looking
+          at the right-hand end of the timeline, and an answer three screens away
+          from the thing that prompted it is not an answer. The sentence itself
+          is `readingWindowSentence` in lib/reading-window.ts, beside the marks
+          the canvas draws from the same two numbers. Absent, with no marks on
+          the canvas, when the years could not be read: see the field's note. */}
+      {readingWindow && (
+        <p style={{ fontFamily: "var(--font-mono)", fontSize: ".7rem", color: "var(--ink-faint)",
+          lineHeight: 1.75, margin: ".7rem 0 0", maxWidth: "58rem" }}>
+          {readingWindow}
+        </p>
+      )}
 
       {/* The tab strip's "Threads" is an anchor here, not a menu (issue #143).
           It is mounted beside the section it lands on, and this page streams, so
