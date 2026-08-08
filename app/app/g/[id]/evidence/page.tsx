@@ -374,6 +374,30 @@ type EdgeGroup = {
 };
 
 /**
+ * One entry in the index, sized to be hit (issue #158).
+ *
+ * The links were 17.0 px tall on a 21.2 px pitch at 1440, 768 and 390 — under
+ * WCAG 2.2 AA 2.5.8 by both routes at every width, since neither 24 px targets
+ * nor 24 px between target centres held. `display: block` is the load-bearing
+ * half: vertical padding on an inline element paints a bigger box but leaves the
+ * line box, and so the pitch, exactly where it was. That moves the truncation
+ * here too — `text-overflow` acts on a block's own inline content, and once the
+ * `<a>` is a block the `<li>` has none to ellipsise.
+ *
+ * The padding is in px, not rem, because the standard's threshold is in CSS px:
+ * 12.8 px text × 1.45 = 18.56 px, + 6 = **24.56 px** tall on a **26.96 px**
+ * pitch with the grid's own 2.4 px row gap. Cost is ~6 px × 79 entries ≈ 470 px
+ * on a 55 850 px page.
+ *
+ * No hover or focus background: the index is a list of names, not a set of
+ * buttons, and it should not start competing with the group heads.
+ */
+const INDEX_ENTRY = {
+  display: "block", padding: "3px 0",
+  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+} as const;
+
+/**
  * The only navigation instrument this page has ever had (issue #146). Before it,
  * one element on 39 screens carried an id and nothing could point at a row.
  *
@@ -417,14 +441,15 @@ function JumpIndex({ groups, typeCounts, total }: {
             </>
           );
           return (
-            <li key={gr.arxiv ?? "unrecorded"} style={{ fontSize: ".8rem", lineHeight: 1.45,
-              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <li key={gr.arxiv ?? "unrecorded"} style={{ fontSize: ".8rem", lineHeight: 1.45 }}>
               {/* The group with no paper row has no content-derived anchor, so it
                   is listed and not linked. Inventing one for it is the one thing
-                  lib/anchors.ts refuses to do. */}
+                  lib/anchors.ts refuses to do. It carries the same padding all
+                  the same, so one unlinked entry does not break the rhythm of a
+                  column of 79. */}
               {gr.arxiv
-                ? <a href={`#${paperAnchor(gr.arxiv)}`} style={{ color: "var(--ink)", textDecoration: "none" }}>{label}</a>
-                : <span style={{ color: "var(--ink-soft)" }}>{label}</span>}
+                ? <a href={`#${paperAnchor(gr.arxiv)}`} style={{ ...INDEX_ENTRY, color: "var(--ink)", textDecoration: "none" }}>{label}</a>
+                : <span style={{ ...INDEX_ENTRY, color: "var(--ink-soft)" }}>{label}</span>}
             </li>
           );
         })}

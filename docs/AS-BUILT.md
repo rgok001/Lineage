@@ -1789,6 +1789,33 @@ when in the assembled DOM they are inside one, and the find-in-page property has
 to be measured in a browser. Counted in the DOM it is 78 blockquotes outside any
 `<details>`; counted in the bytes it reads 296.
 
+**The index's links are big enough to hit** (issue #158). Measured on the live
+page at 1440×900, 768×844 and 390×844, the 79 links were **17.0 px tall on a
+21.2 px pitch at all three** — a standards failure at every width, not a mobile
+one, since WCAG 2.2 AA 2.5.8 asks for 24 px targets or 24 px between the centres
+of adjacent ones and neither held. The cost of a mis-click here is unusually
+high: the neighbour is a different paper and following it moves the reader up to
+50 000 px, with no way back but the browser's.
+
+`display: block` with `padding: 3px 0` on the entry. The block is the
+load-bearing half — vertical padding on an *inline* element paints a bigger box
+but leaves the line box, and therefore the pitch, exactly where it was — and it
+moves the truncation onto the `<a>`, because `text-overflow` acts on a block's
+own inline content and the `<li>` no longer has any. px rather than rem, because
+the standard's threshold is in CSS px. The unlinked entry (the group with no
+paper row, which is listed and not linked) takes the same padding so one entry
+does not break the rhythm of a column of 79.
+
+**Checked before the push against constructed markup, in headless Chrome**, at
+all three widths, because the block-versus-inline arithmetic is the whole of the
+fix and getting it wrong costs a deploy. The control is that the harness
+reproduces the live before-numbers exactly: **17.0 px on a 21.16 px pitch** at
+1440, 768 and 390. After: **24.77 px on a 27.16 px pitch** at all three, the
+unlinked entry at 24.77 too, column count unchanged, and 47 of 79 labels still
+ellipsised — the truncation followed the block, which is the thing that could
+quietly have been lost. No hover or focus background: the index is a list of
+names, not a set of buttons.
+
 **The mark explainer is a definition list, and the instruction comes first**
 (issue #157). It was four sentences of unbroken prose, one of them 44 words,
 sitting between the reader and the only instrument this page has, with "Click a
