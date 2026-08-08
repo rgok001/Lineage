@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getViewer, isOwner } from "../../../lib/authz";
 import { getInfluenceMap } from "../../../lib/genealogy";
+import HashTarget from "../../hash-target";
 import InfluenceMap from "./InfluenceMap";
 
 export const dynamic = "force-dynamic";
@@ -106,7 +107,11 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
 
       <InfluenceMap id={Number(id)} data={data} />
 
-      {/* The tab strip's "Threads" is an anchor here, not a menu (issue #143). */}
+      {/* The tab strip's "Threads" is an anchor here, not a menu (issue #143).
+          It is mounted beside the section it lands on, and this page streams, so
+          the mount is the only honest signal that the target exists (issue
+          #150). Do not lift it into `layout.tsx`. */}
+      <HashTarget />
       <section id="threads" style={{ marginTop: "1.6rem" }}>
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", letterSpacing: ".14em",
           textTransform: "uppercase", color: "var(--ink-faint)", margin: "0 0 .6rem" }}>

@@ -1524,26 +1524,86 @@ design budgeted.** Counted as `?_rsc=` resource entries: "Threads" points at
 router does not prefetch the route it is already on. A thread page went from one
 outbound prefetch to three, the evidence page from none in the viewport to two.
 
-**One check from the design fails and is not fixed here: the `#threads` anchor
-does not scroll.** Clicking Threads from the evidence page or a thread page
-lands on `/g/13#threads` with the right page and a scroll offset of 150 px — the
-thread list is at 884 and stays there. The cause is not the anchor: it is that `/g/13`
+**One check from the design failed and was not fixed in #143: the `#threads`
+anchor did not scroll.** It is fixed under #150, below; the diagnosis is kept
+here because it is what the fix is built on. Clicking Threads from the evidence page or a thread page
+landed on `/g/13#threads` with the right page and a scroll offset of 150 px — the
+thread list is at 884 and stayed there. The cause is not the anchor: it is that `/g/13`
 streams behind a `loading.tsx`, so at the moment the router applies the hash the
 `#threads` element does not exist yet, and nothing re-scrolls when the content
-arrives 4 s later. A **hard load** of `/g/13#threads` does not scroll either
+arrives 4 s later. A **hard load** of `/g/13#threads` did not scroll either
 (offset 0), which is what shows this belongs to the streaming boundary rather
 than to the strip. Where the content is already present — clicking Threads while
-on `/g/13` — it scrolls correctly and the list lands on screen. So the strip
-removes the *click* cost everywhere and the *scroll hunt* only for a reader
-already on the map. Filed as issue #150 rather than improvised here, because any fix
-is client-side scroll restoration touching the same anchors #146 is designing a
-scheme for, and because it is general: every in-page anchor into a route with a
-`loading.tsx` has it.
+on `/g/13` — it scrolled correctly and the list landed on screen. So #143 by
+itself removed the *click* cost everywhere and the *scroll hunt* only for a
+reader already on the map. Filed as issue #150 rather than improvised inside
+#143, because any fix is client-side scroll restoration touching the same
+anchors #146 is designing a scheme for, and because it is general: every in-page
+anchor into a route with a `loading.tsx` has it.
 
 Also observed and left alone: clicking the tab you are already on refetches that
 route (2.8 s on the map, 1.6 s on the report). `nav.tsx` has done the same on
 the global tabs since it shipped; it is one behaviour in two places and should
-be decided in one.
+be decided in one. It now has its own ticket, issue #151.
+
+**A hash anchor into a streamed route scrolls, and the mechanism is the mount**
+(issue #150). `app/app/hash-target.tsx` is a client component of about twenty
+lines with no props. On mount, and on `hashchange`, it reads `location.hash`,
+decodes it, and looks the id up. Absent id: it does nothing. Found: it opens
+every ancestor `<details>` and the element itself if it is one, then
+`scrollIntoView({ behavior: "instant" })`.
+
+The whole design is in **who mounts it**. A fragment is applied at a moment the
+*document* defines — parse, load, or the router's navigation commit — while on a
+streamed route the target's existence is defined by the *stream*. Those two
+clocks are unrelated, which is why the browser's own hash scroll cannot be right
+here and why a hard load failed identically to a soft one. This component is
+mounted by **the page that renders the targets**, so its own mount *is* the
+event "the targets now exist", with nothing inferred and nothing timed. That is
+why there is no `MutationObserver`, no poll, no timeout and no retry count:
+each of those infers an event that can be observed directly, and none works
+without a deadline, which is a number nobody can measure on a page whose arrival
+time is a network variable.
+
+**It must never be mounted by a layout**, or by any wrapper above the streaming
+boundary — anything already on screen while the reader waits fires early by
+construction, which is the bug as filed. `g/[id]/layout.tsx` therefore stays free
+of data *and* of page-specific behaviour, which is the same rule the layout
+already carries for fetching, pointed one step further. If a future page renders
+its targets inside a nested `<Suspense>`, the component goes inside that boundary
+with them: a sibling of the content, never an ancestor of the wait.
+
+Today it is mounted in exactly one place, `g/[id]/page.tsx`, beside the
+thread-list section — the second and last edit that file has taken for the tab
+strip. The evidence page gets it under #146, which is where it matters most and
+which withdrew its own `open-target.tsx` in favour of this one. A page with no
+anchor targets does not mount it. Verified from the build's route tree rather
+than from the source: `.next/server/app/g/[id]/page.js` references
+`hash-target`, and `g/[id]/layout.js`, `g/[id]/evidence/page.js` and
+`g/[id]/report/page.js` reference it zero times.
+
+`instant` is explicit rather than left to the default, so that a stylesheet later
+setting `scroll-behavior: smooth` cannot turn an anchor into a glide down the
+39-screen evidence page — nauseating, and against the `prefers-reduced-motion`
+work in #147.
+
+**Twenty assertions against the compiled component in a real DOM, all passing**,
+before any deploy: `#threads` scrolls to `#threads` and passes
+`{behavior:"instant"}`; no hash, a bare `#`, and `#nosuchthing` each scroll
+nothing and throw nothing; a row nested two `<details>` deep is scrolled to with
+both ancestors and itself opened; `#r-cs%2F0501001` resolves to the literal id
+`r-cs/0501001`, which is the case an old-style arXiv id in an #146 anchor will
+need; a malformed escape such as `#100%off` does not throw; a `hashchange` after
+mount re-runs it; and the effect's cleanup removes the listener.
+
+**Known behaviour, recorded rather than discovered later.** Resolution is on the
+decoded id only, so an element whose id contains a literal `%` will not be found
+where a browser's own fragment matching would also try the raw string. Nothing
+in the product generates such an id. And Back to a URL that carries a hash
+re-scrolls to that anchor rather than restoring the reader's previous position;
+Back to a URL with no hash is untouched, which is the journey EVE measured.
+Without JavaScript the anchor lands wherever the browser puts it and nothing
+else changes: degraded, not broken.
 
 **`/about` and `/roadmap` are now prerendered, and every other route on the site
 stopped waiting for a session** (issue #145). This is the only one of the three
