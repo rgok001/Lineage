@@ -832,6 +832,15 @@ fetches nothing. The reasoning is with the other navigation costs, below.
   the build that made that mistake: `/g/[id]` first load 154 kB with
   "DATABASE_URL is not set" in `.next/static/chunks/app/g/[id]/page-*.js`, 110 kB
   and no occurrences after the move.
+  **Live on the deploy** (Chrome at 1440x1000, hard load, cache off): `/g/17`
+  marks 1988 and 2016, `/g/13` 2012 and 2021, `/g/10` 2011 and 2023, each rule
+  landing on the same x the axis prints that year at, to the pixel, and `/g/17`'s
+  axis now labels up to 2016 where it stopped at 2010 before. **CLS is 0.0000
+  with zero layout-shift entries on all three**, the same as the reading taken on
+  the previous deploy: the caption is server-rendered inside the streamed
+  content, so nothing arrives late to push anything down. The canvas still
+  hydrates (the side panel answers a hover); the only failing request on the page
+  is `/favicon.ico`, which is issue #153 and predates this.
   **The closing footnote says what it means** (issue #126). "No curatorial
   changes have been made to it since" is `curationSentence` in `lib/genealogy.ts`
   and now reads "Nobody has edited this map by hand since. If anyone does, the
