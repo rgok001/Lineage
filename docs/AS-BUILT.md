@@ -1789,6 +1789,27 @@ when in the assembled DOM they are inside one, and the find-in-page property has
 to be measured in a browser. Counted in the DOM it is 78 blockquotes outside any
 `<details>`; counted in the bytes it reads 296.
 
+**The two verification marks are the same size, which is also the answer to the
+design question #146 left open** (issue #156). Counted on the live page, every
+mark element on `/g/13/evidence`: 78 group-head marks (one paper's own passage)
+at **9.92 px**, 287 row marks (a pair) at **12.48 px**, all `--verified` green
+but one `--inferred`. The group head's was the smallest text on the page and the
+page's central claim, 0.96 px under the loading note #147 raised for being the
+least legible text in the product; contrast was never the problem, green on paper
+is 7.36 : 1.
+
+The open question was whether the two scopes need visibly different forms. They
+do not, and must not: the mark means the identical thing in both places — this
+quote was found word for word in the text this system pulled out of that paper —
+and what differs is the scope of the thing it is attached to, which the words
+already carry twice ("this paper", singular, under the group head; "verified" at
+the top of a row that names two). A second glyph vocabulary would say a second
+kind of check ran, and would take the reader from three symbols to six on the
+page where they can least afford to guess. So: `.62rem` → `.78rem` on the group
+head's stamp and nothing else. No new form, no new colour, no second scale
+(decisions 24 and 25), and the three strings are byte-identical. The uppercase
+caption above it stays at `.62rem`, a label sitting under the claim.
+
 **The page now says, above the fold, that it has a way in** (issue #155). #146
 built the index and nothing on the first screen named it: measured on the live
 page at 1440×900, `nav[aria-label="Jump to a paper"]` starts at **y = 2152**, 2.4

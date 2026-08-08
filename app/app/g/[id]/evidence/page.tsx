@@ -459,7 +459,17 @@ function GroupHead({ gr, concept }: { gr: EdgeGroup; concept: string }) {
               its tick, because the paragraph above defines ● ○ ◌ and the added
               clause promises the same three marks here. lib/stamp.ts holds the
               wording all of them are copied from (issues #129, #135). */}
-          <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", marginTop: ".3rem",
+          {/* Same size as the pair-level stamp on a row, .78rem, and that is the
+              answer to the question #146 left open as well as a legibility fix
+              (issue #156). The mark means the identical thing in both places;
+              what differs is the scope of the thing it is attached to, and the
+              words carry that already ("this paper", singular). At .62rem this
+              was 9.92 px, the smallest text on the page and 0.96 px under the
+              loading note #147 raised for being the least legible in the
+              product - on the one sentence that tells a sceptic whether this
+              paper's own defining passage was found. The uppercase caption above
+              stays at .62rem: it is a label and should sit under the claim. */}
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: ".78rem", marginTop: ".3rem",
             color: STAMP_COLOR[stamp], lineHeight: 1.5 }}>
             {stamp === "verified" && "● found word for word in the text this system pulled out of this paper · shown as verified"}
             {stamp === "inferred" && "○ the check ran against the text this system pulled out of this paper and could not find it · shown as inferred"}
