@@ -30,6 +30,14 @@ const slug = (arxiv: string) => arxiv.replace(/\//g, "_");
 /** Where a paper's own passage and its relationships sit: `p-1706.03762`. */
 export const paperAnchor = (arxiv: string) => `p-${slug(arxiv)}`;
 
+/** The jump index itself, the one place on the page not derived from content
+ *  (issue #155). It is here rather than inline because this file is where the
+ *  evidence page's place-names are written, and because the standfirst that
+ *  points at the index and the `<nav>` that answers to it are 200 lines apart:
+ *  two literals that must agree is how a fragment link quietly stops resolving.
+ *  It cannot collide with `p-`/`r-` — those prefixes are reserved by shape. */
+export const JUMP_INDEX_ANCHOR = "the-index";
+
 /**
  * One relationship: `r-1409.0473-1706.03762`.
  *

@@ -1789,6 +1789,28 @@ when in the assembled DOM they are inside one, and the find-in-page property has
 to be measured in a browser. Counted in the DOM it is 78 blockquotes outside any
 `<details>`; counted in the bytes it reads 296.
 
+**The page now says, above the fold, that it has a way in** (issue #155). #146
+built the index and nothing on the first screen named it: measured on the live
+page at 1440×900, `nav[aria-label="Jump to a paper"]` starts at **y = 2152**, 2.4
+screens down, behind the ranked paper list, on a page that is 62 screens tall and
+got 52% taller in the change that added the index. The first screen was the h1,
+the counts and a two-sentence standfirst that mentioned neither the index nor the
+second way in — find-in-page, which #146 paid 19 000 px for and which nothing on
+the page claimed.
+
+The standfirst carries both now, in two added sentences, the second ending in an
+in-page link to the index. The index's `id` is `the-index` and it is written in
+`lib/anchors.ts` beside the content-derived ones, because the standfirst and the
+`<nav>` are 200 lines apart and two literals that must agree is how a fragment
+link stops resolving without anyone noticing. The `<nav>` takes the same
+`scroll-margin-top` every other target on this page has, so it lands 1.2 rem
+below the top of the window rather than flush against it, and `hash-target.tsx`
+already handles the click through its `hashchange` listener.
+
+Deliberately not done, and both refusals are inherited: the index is not sticky
+and has not moved above the ranked list. #143 refused a fixed bar on this page,
+and section 1 is the page's own order.
+
 **Clicking the tab you are already on no longer refetches that route** (issue
 #151). It was one behaviour in two files — `nav.tsx` since it shipped, `tabs.tsx`
 inheriting the pattern for #143 — and it had become the three longest waits in

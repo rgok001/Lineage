@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import HashTarget from "../../../hash-target";
-import { edgeAnchors, paperAnchor } from "../../../../lib/anchors";
+import { JUMP_INDEX_ANCHOR, edgeAnchors, paperAnchor } from "../../../../lib/anchors";
 import { deleteEdge, deleteGenealogy, reclassifyEdge } from "../../../../lib/actions";
 import { getViewer, isOwner } from "../../../../lib/authz";
 import { EDGE_MEANING, EDGE_TYPES, editActor, editOp, editWhen, getGenealogy, readableQuote, type Edge, type RankedPaper, type Genealogy, type UserEdit } from "../../../../lib/genealogy";
@@ -155,9 +155,20 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
             the map" is a riddle on first meeting (issue #120): it is the best
             thing this page has to say and it was saying it in a form that only
             makes sense once you already know. */}
+        {/* The last two sentences are the only thing above the fold that says
+            this page has a way in (issue #155). The index is 2152 px down, 2.4
+            screens, behind a ranked list that is a different thing from what the
+            reader came for, and a reader who does not scroll that far concludes
+            the page is a 62-screen wall. The find-in-page clause is claiming
+            what #146 actually paid for: it moved 78 passages out of closed
+            `<details>` precisely so Firefox and Safari could search them, and
+            nothing on the page mentioned it. Two ways in, neither announced. */}
         <p style={{ color: "var(--ink-soft)", margin: ".5rem 0 0", fontSize: ".82rem", fontStyle: "italic" }}>
           Every paper and every typed relationship, with the evidence behind each.
-          For the readable account, go back to the map.
+          For the readable account, go back to the map. This page is long on purpose:
+          nothing is hidden, so your browser’s find will search every quote on it.
+          To go straight to one paper,{" "}
+          <a href={`#${JUMP_INDEX_ANCHOR}`} style={{ color: "var(--ink)" }}>jump to a paper</a>.
         </p>
       </header>
 
@@ -343,9 +354,9 @@ function JumpIndex({ groups, typeCounts, total }: {
   groups: EdgeGroup[]; typeCounts: { type: string; n: number }[]; total: number;
 }) {
   return (
-    <nav aria-label="Jump to a paper"
+    <nav id={JUMP_INDEX_ANCHOR} aria-label="Jump to a paper"
       style={{ border: "1px solid var(--line)", borderRadius: 8, background: "var(--card)",
-        padding: ".9rem 1.05rem", margin: "0 0 1.6rem" }}>
+        padding: ".9rem 1.05rem", margin: "0 0 1.6rem", scrollMarginTop: SCROLL_MARGIN }}>
       <div style={{ fontFamily: "var(--font-mono)", fontSize: ".74rem", color: "var(--ink-soft)", lineHeight: 1.6 }}>
         {total} relationships:{" "}
         {typeCounts.map((c, i) => (
