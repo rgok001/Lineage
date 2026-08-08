@@ -1,8 +1,9 @@
 """Print what a map is made of, from the map's own rows, storing nothing.
 
 Ticket #30 ([F2]); the design is docs/design/f2-map-report.md. The figures come
-from migration 016's two views and migration 017's third (the mix of kinds of
-link, issue #162) and are computed nowhere else, so this command and
+from migration 016's two views, migration 017's third (the mix of kinds of
+link, issue #162) and migration 019's fourth (what the map read, by year, issue
+#182) and are computed nowhere else, so this command and
 `/g/<id>/report` read one expression and cannot disagree about the same map.
 
 **It reads LINEAGE_READ_URL and never DATABASE_URL, and it issues no statement
@@ -86,7 +87,26 @@ COLUMNS = """genealogy_id, concept, prompt_version, status,
   papers_with_no_year,
   runs_recorded, run_cost_usd, run_cost_basis, run_wall_clock, requester_wait"""
 
-REPORTS = f"SELECT {COLUMNS} FROM map_report ORDER BY concept, prompt_version"
+# What the map READ, by year (migration 019, issue #182). Named the same way and
+# for the same reason, and joined into the report row rather than fetched as a
+# second table, because the grain is the same: one row per map.
+#
+# **LEFT JOIN, and unguarded on purpose.** LEFT so that a map absent from the
+# view -- which the view's own LEFT JOINs make impossible, and which is therefore
+# worth being able to see -- prints "not recorded" for these figures rather than
+# vanishing out of the report entirely. Unguarded because this command is run by
+# the Operator against a database whose migrations have been applied, so a
+# missing view should stop it loudly; the app carries the `to_regclass` fallback
+# instead, because it is live to strangers during the few minutes between the
+# Vercel deploy and Render's pre-deploy migration.
+READ_YEAR_COLUMNS = """r.read_year_min, r.read_year_max, r.read_year_counts,
+  r.papers_read_with_no_year, r.recent_window_start, r.recent_window_end,
+  r.papers_read_recent, r.papers_defining_recent"""
+
+REPORTS = (f"SELECT {COLUMNS},\n  {READ_YEAR_COLUMNS}\n"
+           "FROM map_report m\n"
+           "LEFT JOIN map_report_read_years r USING (genealogy_id)\n"
+           "ORDER BY concept, prompt_version")
 
 BUCKETS = """
 SELECT genealogy_id, unit, source, total, verified, inferred, stale
@@ -265,6 +285,26 @@ SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
         ("upper quartile", "year_p75", year, "no years recorded"),
         ("latest year", "year_max", year, "no years recorded"),
         ("papers with no year", "papers_with_no_year", count, "not recorded"),
+        # Everything above is over the papers that DEFINE the term; everything
+        # below is over every paper the map read (migration 019, issue #182).
+        # The labels say which, because two populations under one noun is how
+        # four surfaces of this product came to print four different counts of
+        # "papers" (#123). "papers read" is already the first figure of the
+        # report and these use the same word for the same population.
+        ("oldest paper read", "read_year_min", year, "no years recorded"),
+        ("newest paper read", "read_year_max", year, "no years recorded"),
+        ("papers read with no year", "papers_read_with_no_year", count, "not recorded"),
+        ("recent window, first year", "recent_window_start", year, "not recorded"),
+        ("recent window, last year", "recent_window_end", year, "not recorded"),
+        # This one moves by construction the moment the selection reserves seats
+        # for recent work: a figure counting papers in a window cannot fail when
+        # something puts papers in the window. It is instrumentation and the
+        # evidence is the line below it, which an independent judge -- reading
+        # the paper -- can still answer no to.
+        ("papers read from the last five years", "papers_read_recent", count,
+         "not recorded"),
+        ("of those, papers that define the term", "papers_defining_recent", count,
+         "not recorded"),
     ]),
     ("The run", [
         ("runs recorded", "runs_recorded", count, "not recorded"),
@@ -358,11 +398,24 @@ def render(row: dict, others: list[dict], buckets: list[dict], types: list[dict]
         if title == "When the papers were written":
             out += ["", "  papers per year"]
             counts = row["year_counts"] or {}
-            if not counts:
+            # Both series in one bar, the way the page draws them in one column
+            # (issue #182): '#' is a paper that defines the term, '-' is a paper
+            # read that did not, so the tail of the bar IS the gap between the
+            # two figures and nobody has to subtract. `read` is falsy on a map
+            # that read no dated paper, and then this prints exactly what it
+            # printed before the read series existed.
+            read = row.get("read_year_counts") or {}
+            if not counts and not read:
                 out.append("  no years recorded")
-            else:
+            elif not read:
                 for y in sorted(counts, key=int):
                     out.append(f"  {y}  {'#' * min(60, int(counts[y]))} {counts[y]}")
+            else:
+                out.append("  '#' defines the term, '-' read and did not")
+                for y in sorted(set(counts) | set(read), key=int):
+                    n_def, n_read = int(counts.get(y, 0)), int(read.get(y, 0))
+                    bar = ("#" * n_def + "-" * max(0, n_read - n_def))[:60]
+                    out.append(f"  {y}  {bar} {n_read} read, {n_def} define")
 
     out += ["", "What this cannot tell you:",
             "  How many candidate links were considered and dropped, and why: the",

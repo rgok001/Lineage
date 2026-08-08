@@ -554,6 +554,60 @@ no edges reports six zeros with an absent share, and after the CHECK constraint
 was dropped and a `supersedes` edge inserted, that kind appeared as a seventh row
 with a NULL rank and the sum still matched.
 
+**map_report_read_years** (019, `019_map_report_read_years.sql`): what the map
+**read**, by year, one row per map, issue #182 designing #33 (F5). Every year
+figure `016` publishes is over the papers that *define* the term — its
+`year_rows` CTE joins `definitions ... AND d.defines_concept = true` — so
+`year_max = 2016` on the dark energy map conflates two causes needing opposite
+fixes: selection never picked a recent paper, or selection picked it, Stage B
+read it, and it did not define the term. The first is a defect in how papers are
+chosen (what F5 fixes); the second is a finding about the literature, which F5
+must be neither blamed nor credited for.
+
+The view is `016`'s `year_rows` **minus** the `defines_concept = true`
+predicate, with that predicate carried as a column instead, so both series come
+out of one set of rows and `read_year_max >= year_max` and
+`papers_defining_recent <= papers_read_recent` hold by construction; a map where
+either fails has a join defect. It carries `read_year_min`, `read_year_max`,
+`read_year_counts` (the histogram, in `year_counts`' shape so one renderer draws
+both), `papers_read_with_no_year`, `recent_window_start`, `recent_window_end`,
+`papers_read_recent` and `papers_defining_recent`. Its numeric literals are
+`{1, 5}` — the `1` of `window_end - width + 1` and of `SELECT 1 FROM pg_roles`,
+and the `5` of the recency window, which decides nothing about a paper and names
+a population whose two ends both ship as columns, so the surfaces print "papers
+from 2022 to 2026" rather than the word "recent". The window is read from
+`current_date` when the view is read, so it moves with the calendar, which is
+exactly why both ends are published rather than assumed.
+
+**It is a fourth view rather than four more columns on `map_report`, and the
+reason is the deploy window rather than the grain.** The grain is per map, the
+same as `map_report`, so on grain alone these would have been columns. But
+`CREATE OR REPLACE VIEW` can only append trailing columns to a definition given
+in full, which would have put the live definition of `map_report` in two files
+with the newer one silently winning; and a missing *column* cannot be guarded,
+because `app/lib/report.ts` names every column of `map_report` in one statement,
+so the whole report page would raise `UndefinedColumn` and 500 for the minutes
+between the Vercel deploy and Render's pre-deploy migration. A missing
+*relation* is guarded by the `to_regclass` fallback #92 earned, and the page
+loses three figures instead of a page.
+
+**`papers_read_recent` is instrumentation and not evidence, and both surfaces
+say so.** It counts papers in a window, so a selection rule that reserves seats
+for recent work raises it *by construction* and it cannot report failure. The
+evidence for F5 is `papers_defining_recent` and `read_year_max` against
+`year_max`, because Stage B and the grounding check are independent judges that
+can still answer no about exactly the papers a reservation admitted.
+
+Measured against a real PostgreSQL with `001`-`019` applied and four fixture
+maps (one that read newer work than it found defined, one that read nothing
+recent, one that read nothing at all, one whose every paper is undated), 27
+checks: every map has a row, `read_year_max >= year_max` and
+`papers_defining_recent <= papers_read_recent` on all four, the histogram plus
+the undated count equals `papers_with_a_reading` on all four, every year of the
+defining series is present in the read series and never larger, the window is
+the five calendar years ending in the current one, and a map with no dated paper
+reports the histogram absent rather than as an empty object.
+
 Three figures the report is asked for have no input in this database and each
 renders as an explicit "not recorded", never a zero and never a blank: run cost
 (`genealogies.spend_usd` exists and is written by nothing, reading `0.0000` on
@@ -1192,6 +1246,34 @@ fetches nothing. The reasoning is with the other navigation costs, below.
   it non-zero is the run that makes it appear. The derived sentence beside it
   lost its unreachable branch with the change: it is only ever rendered on a map
   that has at least one, so "no map in this system has one" could not be shown.
+  **The years chart draws two series, and three figures below it say what the
+  map read** (issue #182, designing #33/F5, migration
+  `019_map_report_read_years.sql`). Everything about years on this page counted
+  the papers that *define* the term, so "the newest paper is 2016" could mean
+  either that nothing recent was ever selected or that recent papers were read
+  and none of them defined the term, which need opposite fixes. Now the papers
+  read set each column's height and the papers that define the term are drawn
+  over them from the same baseline, so **the exposed part of a column is exactly
+  the papers read that year that did not define the term**; the number above a
+  column is the papers read that year, and a key under the chart title names
+  both series and says so. The three figures are `newest paper read` (never
+  earlier than `latest year`, and the page says why), `papers read from the last
+  five years` with the window printed beside the count as "written 2022 to 2026"
+  rather than the word "recent", and `of those, papers that define the term`,
+  printed as "N of M" rather than as a percentage. **The middle one is labelled
+  as instrumentation in its own explainer**: it counts papers in a window, so
+  changing how papers are chosen moves it by construction and it cannot report
+  failure, and the copy says it "can say what this map read and it cannot say
+  whether the reading was any good". No threshold, no colour and no pass mark,
+  as everywhere else here. On a deployment one migration behind, `reading` is
+  null: the chart falls back to the single series it drew before, the key does
+  not render, the three figures are replaced by one sentence, and nothing 500s —
+  the #92 fallback again, with an unqualified `to_regclass` probe.
+  Verified by rendering the shipped page against three data states (both series,
+  `reading` null, and a map with no years at all): the bars scale to the read
+  peak with the gap drawn where the two series differ and no inner bar where a
+  year has no defining paper, the key and the three rows appear and disappear
+  with the state, and the comparison lines carry the other maps' figures.
   **The years section leads with the papers-per-year chart, and the three
   quantile rows are cut** (issue #113). Lower quartile, median and upper quartile were a
   harder-to-read summary of the distribution the chart draws directly, in

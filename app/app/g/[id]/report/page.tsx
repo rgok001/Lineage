@@ -11,8 +11,9 @@ export const dynamic = "force-dynamic"; // computed on read, never stored
  * What this map is made of (issue #30, `[F2]`).
  *
  * One screen, one column, no interactivity. Every number is selected from
- * migration 016's two views and migration 017's third (the mix of kinds of
- * link, issue #162), so this page and `pipeline/map_report.py` read one
+ * migration 016's two views, migration 017's third (the mix of kinds of link,
+ * issue #162) and migration 019's fourth (what the map read, by year, issue
+ * #182), so this page and `pipeline/map_report.py` read one
  * expression and cannot disagree about the same map, and nothing is stored, so
  * no figure here can survive the curatorial edit that invalidates it.
  *
@@ -396,6 +397,49 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
     const s = share(t.edges_share);
     return s === null ? count(t.edges)! : `${count(t.edges)} (${s})`;
   };
+
+  /**
+   * The two year series, and the window (issue #182, designing #33, F5).
+   *
+   * **What was missing.** Every year figure on this page counted the papers that
+   * *define* the term, so "the newest paper is 2016" could mean either that
+   * nothing recent was ever selected to read, or that recent papers were read
+   * and none of them defined the term. Those are a defect in how papers are
+   * chosen and a finding about the literature, they need opposite fixes, and
+   * nothing in this system could tell them apart.
+   *
+   * The chart now draws both: the papers read set each column's height, the
+   * papers that define the term are drawn over them from the same baseline, so
+   * **the exposed part of a column is exactly the papers read that year that did
+   * not define the term**. That gap is the whole figure; two separate charts
+   * would have made a reader hold one in their head while reading the other.
+   *
+   * `rd === null` means migration 019 has not landed on this deployment yet, and
+   * the page falls back to the single series it drew before, which is why the
+   * chart is written to take a missing read series rather than assuming one.
+   */
+  const rd = r.reading;
+  const readCounts = rd?.read_year_counts ?? null;
+  const defCounts = r.year_counts ?? null;
+  const chartYears = Array.from(new Set([
+    ...Object.keys(readCounts ?? {}), ...Object.keys(defCounts ?? {}),
+  ])).map(Number).sort((a, b) => a - b);
+  // Every year in the defining series is in the read series and never larger
+  // (the view carries `defines_concept` as a column rather than as a filter), so
+  // this peak is the read series' peak whenever there is one. It is taken over
+  // both anyway: a peak taken from a series that turned out to be missing would
+  // silently rescale the other one.
+  const chartPeak = Math.max(1, ...chartYears.map((y) => Math.max(
+    readCounts?.[String(y)] ?? 0, defCounts?.[String(y)] ?? 0)));
+  const barPx = (v: number) => (v > 0 ? Math.max(2, (v / chartPeak) * 62) : 0);
+
+  /** The recency window, printed rather than implied: a window a reader cannot
+   *  see is a threshold in disguise. Both ends come from the view, which reads
+   *  the date when the page loads, so they are never written down here. */
+  const windowYears =
+    rd && rd.recent_window_start !== null && rd.recent_window_end !== null
+      ? `${rd.recent_window_start} to ${rd.recent_window_end}`
+      : null;
 
   const noRunMaps = all.filter((m) => m.runs_recorded === 0).length;
   const runRecordSentence =
@@ -841,7 +885,9 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         lede="Each paper is dated by the earliest date we can trust for it: whichever is
               earlier of the date the catalogue gives and the date built into its arXiv
               number. Read it as when the work first appeared, not as a publication
-              date. A paper with no year is counted separately and never guessed at."
+              date. A paper with no year is counted separately and never guessed at.
+              Two things are counted here and they are not the same: every paper this
+              map read, and the ones that define the term."
       >
         {/* The chart leads, and the three quantile rows it summarised are gone
             (issue #113). "A quarter of the defining papers are this old or
@@ -860,30 +906,73 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             textTransform: "uppercase", color: "var(--ink-faint)" }}>
             papers per year
           </div>
-          {r.year_counts && Object.keys(r.year_counts).length > 0 ? (
+          {/* The key, which a two-series chart cannot do without. It renders
+              only when there are two series: on a deployment one migration
+              behind, the chart is the single series it always was, and a key
+              naming a bar that is not drawn would be worse than none. */}
+          {readCounts && (
+            <div style={{ ...mono, fontSize: ".62rem", color: "var(--ink-faint)",
+              display: "flex", gap: "1.1rem", flexWrap: "wrap", marginTop: ".4rem",
+              alignItems: "center" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: ".35rem" }}>
+                <span style={{ width: 10, height: 10, background: "var(--line-soft)",
+                  border: "1px solid var(--line-soft)", display: "inline-block" }} />
+                papers read
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: ".35rem" }}>
+                <span style={{ width: 10, height: 10, background: "var(--line)",
+                  border: "1px solid var(--line)", display: "inline-block" }} />
+                of those, papers that define the term
+              </span>
+              <span>the number above each column is how many papers were read that year</span>
+            </div>
+          )}
+          {chartYears.length > 0 ? (
             <div style={{ display: "flex", alignItems: "flex-end", gap: "2px",
               marginTop: ".5rem", height: 90 }}>
-              {Object.entries(r.year_counts)
-                .sort(([a], [b]) => Number(a) - Number(b))
-                .map(([y, n]) => {
-                  const peak = Math.max(...Object.values(r.year_counts!));
-                  return (
-                    <div key={y} style={{ display: "flex", flexDirection: "column",
-                      alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
-                      <span style={{ ...mono, fontSize: ".58rem", color: "var(--ink-faint)" }}>
-                        {n}
-                      </span>
-                      <div title={`${y}: ${n}`} style={{
-                        width: 16, height: `${Math.max(2, (n / peak) * 62)}px`,
-                        background: "var(--line)", border: "1px solid var(--line)",
-                      }} />
-                      <span style={{ ...mono, fontSize: ".55rem", color: "var(--ink-faint)",
-                        writingMode: "vertical-rl", marginTop: 3 }}>
-                        {y}
-                      </span>
+              {chartYears.map((yr) => {
+                const key = String(yr);
+                // `null`, not 0, when there is no read series at all: the column
+                // then reports the defining count above it, exactly as it did
+                // before this ticket, rather than announcing that nothing was
+                // read that year.
+                const readN = readCounts ? readCounts[key] ?? 0 : null;
+                const defN = defCounts?.[key] ?? 0;
+                const readH = readN === null ? 0 : barPx(readN);
+                const defH = barPx(defN);
+                return (
+                  <div key={key} style={{ display: "flex", flexDirection: "column",
+                    alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
+                    <span style={{ ...mono, fontSize: ".58rem", color: "var(--ink-faint)" }}>
+                      {readN ?? defN}
+                    </span>
+                    {/* One column, two series drawn from one baseline, so the
+                        exposed part is the papers read that year that did not
+                        define the term. Two side-by-side bars would have made
+                        that a subtraction the reader has to do. */}
+                    <div
+                      title={readN === null
+                        ? `${yr}: ${defN} define the term`
+                        : `${yr}: ${readN} read, ${defN} define the term`}
+                      style={{
+                        position: "relative", width: 16,
+                        height: `${Math.max(readH, defH)}px`,
+                        background: "var(--line-soft)",
+                        border: "1px solid var(--line-soft)",
+                      }}
+                    >
+                      {defH > 0 && (
+                        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0,
+                          height: `${defH}px`, background: "var(--line)" }} />
+                      )}
                     </div>
-                  );
-                })}
+                    <span style={{ ...mono, fontSize: ".55rem", color: "var(--ink-faint)",
+                      writingMode: "vertical-rl", marginTop: 3 }}>
+                      {yr}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <p style={{ ...mono, fontSize: ".78rem", color: "var(--ink-soft)",
@@ -895,16 +984,62 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
 
         <div style={{ marginTop: "1.1rem" }}>
           <Figure label="earliest year" value={year(r.year_min)} absent="no years recorded"
-            counts="The oldest defining paper in the map, which is the left end of the chart above."
+            counts="The oldest paper in the map that defines the term. The chart above can start further left, where a paper was read and did not define the term."
             moves="The map being rebuilt and reaching further back, or a wrong year being corrected."
             others={others((m) => m.year_min, year)} />
           <Figure label="latest year" value={year(r.year_max)} absent="no years recorded"
-            counts="The newest defining paper in the map, which is the right end of the chart above."
+            counts="The newest paper in the map that defines the term. Read it beside the newest paper read, below: if that one is later, this map read newer work and did not find the term defined in it."
             moves="Only mapping the term again brings in newer work."
             others={others((m) => m.year_max, year)} />
+          {/* The three figures #182 added, and the reason they are three rows
+              and not one. `read_year_max` against `latest year` says whether
+              recent work was read at all; the window count says how much;
+              the last says how much of it defined the term. The first two can
+              only be made to move by changing what gets read, and the third is
+              the one an independent judge can still answer no to. */}
+          {rd ? (
+            <>
+              <Figure label="newest paper read" value={year(rd.read_year_max)}
+                absent="no years recorded"
+                counts="The newest paper in the map, whether or not it defines the term, which is the right end of the chart above. It is never earlier than the latest year above, because the papers that define the term are some of the papers read."
+                moves="The map being rebuilt over papers chosen differently."
+                others={others((m) => m.reading?.read_year_max ?? null, year)} />
+              <Figure
+                label="papers read from the last five years" lead
+                value={count(rd.papers_read_recent)} absent="not recorded"
+                tail={windowYears ? `, written ${windowYears}` : undefined}
+                counts={`How many of this map's papers were written in the last five years${
+                  windowYears ? `, which is ${windowYears} as this page was loaded` : ""
+                }. This is what the map chose to read, before anything was found in them. It is a count of what was selected and not a result: changing how papers are chosen moves it by construction, so it can say what this map read and it cannot say whether the reading was any good.`}
+                moves="The map being rebuilt, and the way papers are chosen for it changing. The window moves too: it is the five calendar years ending in the year you loaded this page."
+                others={others((m) => m.reading?.papers_read_recent ?? null, count)} />
+              <Figure
+                label="of those, papers that define the term" lead
+                value={outOf(rd.papers_defining_recent, rd.papers_read_recent)}
+                absent="not recorded"
+                counts="Of the papers above, the ones found to give the term a definition of their own. A paper read and found not to define the term is a finding about the literature, not a gap in the map. Unlike the figure above, this one can come back lower after more recent papers are read, because whether a paper defines the term is decided by reading it."
+                moves="The map being rebuilt, and a paper being read differently the second time, in either direction."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: m.reading
+                    ? outOf(m.reading.papers_defining_recent, m.reading.papers_read_recent)
+                    : null,
+                }))} />
+            </>
+          ) : (
+            /* The #92 fallback again (see the mix of kinds of link above): the
+               app is live for a few minutes against a schema one migration
+               behind, and losing three figures is honest where a 500 would take
+               the whole page. */
+            <p style={{ ...prose, fontSize: ".9rem", margin: "1rem 0 .4rem" }}>
+              Which years the papers this map read were written in, beyond the ones
+              that define the term, is not counted on this page at the moment. That
+              is this page&rsquo;s reach and not a fact about the map.
+            </p>
+          )}
           <Figure label="papers with no year" value={count(r.papers_with_no_year)}
             absent="not recorded"
-            counts="Defining papers with no year at all. They are nowhere in the chart above and in neither figure, rather than being given a guessed date."
+            counts="Papers that define the term and have no year at all. They are nowhere in the chart above and in none of the figures here, rather than being given a guessed date."
             moves="Only better publication dates for those papers. Nothing about the map itself moves this."
             others={others((m) => m.papers_with_no_year, count)} />
         </div>

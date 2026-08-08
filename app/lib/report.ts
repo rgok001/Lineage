@@ -61,6 +61,36 @@ export type ReportTypeCount = {
   edges_share: number | null;
 };
 
+/** What the map READ, by year (migration 019, issue #182, designing #33).
+ *
+ *  Every figure `map_report` publishes about years is over the papers that
+ *  **define** the term; these are the same shape over every paper the map read,
+ *  defining or not. The pair is the point: `year_max` alone cannot separate "no
+ *  recent paper was ever selected" from "recent papers were read and none of
+ *  them defined the term", and those two need opposite fixes.
+ *
+ *  `read_year_max >= year_max` and `papers_defining_recent <=
+ *  papers_read_recent` hold by construction, because the view carries
+ *  `defines_concept` as a column rather than as a filter and both series come
+ *  out of one set of rows. A map where either fails has a join defect.
+ *
+ *  **`papers_read_recent` is instrumentation, not evidence.** It counts papers
+ *  in a window, so a change to how papers are selected for a map moves it by
+ *  construction and it cannot report failure. The page's copy says so. */
+export type ReadYears = {
+  read_year_min: number | null;
+  read_year_max: number | null;
+  read_year_counts: Record<string, number> | null;
+  papers_read_with_no_year: number;
+  /** Both ends of the window, published so the page prints the years it used
+   *  rather than the word "recent". They move with the calendar: the view reads
+   *  `current_date` when the page loads. */
+  recent_window_start: number | null;
+  recent_window_end: number | null;
+  papers_read_recent: number;
+  papers_defining_recent: number;
+};
+
 export type MapReport = {
   genealogy_id: number;
   concept: string;
@@ -123,6 +153,12 @@ export type MapReport = {
    *  the view never makes (it emits six rows for a map with no relationships,
    *  each reading zero). The page prints words for the NULL and never a zero. */
   types: ReportTypeCount[] | null;
+  /** **NULL is not a map that read nothing.** Same rule as `types` above: it
+   *  means migration 019 has not landed on this deployment yet and the year
+   *  series over the papers read could not be read at all. The view emits a row
+   *  for every map, including one that has read nothing, so a missing row means
+   *  the read did not happen and the page prints words rather than a zero. */
+  reading: ReadYears | null;
 };
 
 /** Named, in the view's own order, so the shape of this list and the shape of
@@ -145,7 +181,8 @@ const COLUMNS = `genealogy_id, concept, prompt_version, status,
   runs_recorded, run_cost_usd, run_cost_basis, run_wall_clock, requester_wait`;
 
 function shape(r: Record<string, unknown>, buckets: ReportBucket[],
-               types: ReportTypeCount[] | null): MapReport {
+               types: ReportTypeCount[] | null,
+               reading: ReadYears | null): MapReport {
   const n = (k: string) => num(r[k]) ?? 0;      // counts: the view coalesces these
   const m = (k: string) => num(r[k]);           // measurements: absence is meaningful
   return {
@@ -200,6 +237,7 @@ function shape(r: Record<string, unknown>, buckets: ReportBucket[],
     requester_wait: m("requester_wait"),
     buckets,
     types,
+    reading,
   };
 }
 
@@ -285,6 +323,56 @@ async function typesFor(ids: number[]): Promise<Map<number, ReportTypeCount[]> |
 }
 
 /**
+ * The year series over every paper the map read (migration 019, issue #182).
+ *
+ * **Guarded exactly like `typesFor` above, and for the same reason**: this
+ * migration lands after the app that reads it, because a push deploys Vercel and
+ * Render at once and Render's pre-deploy is what applies it. Without the probe,
+ * Postgres raises `UndefinedTable` for a statement naming a relation that is not
+ * there and the whole report page 500s to add two figures. The probe is
+ * unqualified so that it resolves the name against the same `search_path` the
+ * next statement does (#92's correction), and its answer is a snapshot, so a
+ * view dropped between the two statements still raises — a known residue, not an
+ * oversight.
+ *
+ * **This one is a fourth view rather than four columns on `map_report`
+ * precisely so that it can be guarded.** A missing column cannot be: `COLUMNS`
+ * above names every one in a single statement, so the report page would 500 for
+ * the minutes between the two deploys. Migration 019's header carries the whole
+ * argument.
+ */
+async function readYearsFor(ids: number[]): Promise<Map<number, ReadYears> | null> {
+  const [probe] = (await sql`
+    SELECT to_regclass('map_report_read_years') IS NOT NULL AS reported
+  `) as { reported: boolean }[];
+  if (!probe?.reported) return null;
+  if (!ids.length) return new Map();
+  const rows = (await sql`
+    SELECT genealogy_id, read_year_min, read_year_max, read_year_counts,
+           papers_read_with_no_year, recent_window_start, recent_window_end,
+           papers_read_recent, papers_defining_recent
+    FROM map_report_read_years
+    WHERE genealogy_id = ANY(${ids})
+  `) as Record<string, unknown>[];
+  const out = new Map<number, ReadYears>();
+  for (const r of rows) {
+    out.set(Number(r.genealogy_id), {
+      // Measurements: a map that read no dated paper has no earliest and no
+      // latest year, and the page prints words for that rather than a year.
+      read_year_min: num(r.read_year_min),
+      read_year_max: num(r.read_year_max),
+      read_year_counts: (r.read_year_counts ?? null) as Record<string, number> | null,
+      papers_read_with_no_year: num(r.papers_read_with_no_year) ?? 0,
+      recent_window_start: num(r.recent_window_start),
+      recent_window_end: num(r.recent_window_end),
+      papers_read_recent: num(r.papers_read_recent) ?? 0,
+      papers_defining_recent: num(r.papers_defining_recent) ?? 0,
+    });
+  }
+  return out;
+}
+
+/**
  * Every map's report, newest map first.
  *
  * The page needs all of them rather than one, because each figure is published
@@ -303,15 +391,21 @@ export async function listMapReports(): Promise<MapReport[]> {
     SELECT ${sql.unsafe(COLUMNS)} FROM map_report ORDER BY genealogy_id DESC
   `) as Record<string, unknown>[];
   const ids = rows.map((r) => Number(r.genealogy_id));
-  // In parallel, so #162's two extra round trips cost one wait rather than two
-  // on a page already taking most of a second.
-  const [buckets, types] = await Promise.all([bucketsFor(ids), typesFor(ids)]);
+  // In parallel, so #162's two extra round trips and #182's two cost one wait
+  // rather than four on a page already taking most of a second.
+  const [buckets, types, reading] = await Promise.all([
+    bucketsFor(ids), typesFor(ids), readYearsFor(ids),
+  ]);
   return rows.map((r) => {
     const id = Number(r.genealogy_id);
     // `?? []` for the buckets and `?? null` for the types, and the difference is
     // the point: a map with no definitions and no relationships genuinely has no
     // bucket rows, while the view emits six type rows for every map that exists,
-    // so a map missing from `types` means the read did not happen.
-    return shape(r, buckets.get(id) ?? [], types === null ? null : types.get(id) ?? null);
+    // so a map missing from `types` means the read did not happen. The year
+    // series over the papers read follows the types: one row per map that
+    // exists, so absence means the read did not happen.
+    return shape(r, buckets.get(id) ?? [],
+                 types === null ? null : types.get(id) ?? null,
+                 reading === null ? null : reading.get(id) ?? null);
   });
 }

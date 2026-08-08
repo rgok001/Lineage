@@ -704,10 +704,24 @@ write. Ever.
 `map_report.py`
 (`map_report.py <concept> [--prompt-version PV] [--all] [--json]`): what a map is
 made of, from the map's own rows (issue #30, `[F2]`). Every figure is selected
-from migration `016`'s two views, `map_report` and `map_report_by_source`, and
-from migration `017`'s `map_report_by_type`, and
+from migration `016`'s two views, `map_report` and `map_report_by_source`, from
+migration `017`'s `map_report_by_type`, and from migration
+`019_map_report_read_years.sql`'s `map_report_read_years` (issue #182), and
 computed here not at all, so this command and `/g/<id>/report` read one
-expression and cannot disagree about the same map. **It reads `LINEAGE_READ_URL`
+expression and cannot disagree about the same map. **`019` is joined into the
+report query rather than fetched as a fourth statement**, because its grain is
+the same one row per map, so the command still issues exactly three `SELECT`s;
+the join is `LEFT` and unguarded, so a map somehow absent from that view prints
+"not recorded" for its year figures rather than dropping off the report, while a
+missing view stops the command loudly. The app guards the same view with
+`to_regclass` instead, because it is live to strangers in the minutes between
+the Vercel deploy and Render's pre-deploy migration.
+The years block prints both series: everything from `earliest year` to `papers
+with no year` is over the papers that define the term, and `oldest paper read`,
+`newest paper read`, `papers read with no year`, the two `recent window` years
+and the two window counts are over every paper read. The per-year bar shows both
+at once, `#` for a paper that defines the term and `-` for one read that did not,
+so the tail of the bar is the gap between the two populations. **It reads `LINEAGE_READ_URL`
 and never `DATABASE_URL`, and issues no statement but `SELECT`** — the second
 tool in this pipeline built that way, and for `recheck_stamp.py`'s reason: its
 value is that an Operator can run it against production and paste the answer into
