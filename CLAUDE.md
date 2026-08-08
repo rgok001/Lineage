@@ -167,7 +167,7 @@ were retired when the owner blessed what the site actually ships (issue 116).
 - Palette: paper #0d1317, card #121a20, card-2 #182126, ink #e8eef1, ink-soft #8b9aa2, ink-faint #5a6a72, line #223038, line-soft #18232a
 - Edge colours: extends #6b9bd0 · contests #c9776a · narrows #9a8ac4 · renames #c9a84e · migrates #5cb389 · merges #d0895c
 - Stamp colours: verified #5cb389 · inferred #f0605f
-- Type: Spectral (display/quotes, serif), IBM Plex Sans (UI), IBM Plex Mono (data/years/labels)
+- Type: Georgia (display/quotes, serif) · system UI sans (UI) · system monospace (data/years/labels). Named for what ships (owner decision 35, 2026-08-08, issue 148): no webfonts — their cost lands on the render path the speed work paid down.
 - Evidence panel: two facing quote-cards, verification stamp (green ✓ verified / red ◌ inferred + confidence)
 - Solid edges = verified, dotted = inferred. Legend always visible.
 

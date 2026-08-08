@@ -773,6 +773,23 @@ The why behind the load-bearing choices, in one place:
     which is the defect. A researcher's `.bib` staying parseable outranks a
     capital letter.
 
+35. **The type the law names is the type that ships: Georgia and the system
+    stacks, no webfonts** (2026-08-08, issue 148, Product Owner). EVE's review
+    of the speed work found `document.fonts` empty on every page: the Spectral
+    and IBM Plex families named by decision 32's token line were never loaded,
+    and every page the owner blessed on 2026-08-07 rendered in the fallbacks —
+    Georgia and system-ui. The law and the running system disagreed, and the
+    owner ruled the law had moved: the token now names Georgia (display/quotes),
+    the system UI sans, and the system monospace. Webfonts were declined
+    deliberately, not overlooked: three families even self-hosted and subset are
+    ~150–250 kB of render-blocking fetch on the critical path issue 140 had just
+    paid down, and a late font swap moves text under the reader's eye on the one
+    page whose purpose is that a quotation can be checked. The reader loses
+    nothing they ever had. If Spectral is ever wanted, the recorded honest
+    version is display face only, self-hosted, subset, `font-display: swap` —
+    never all three families. This corrects the type line of decision 32; the
+    palette and everything else in decision 32 stand.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record
