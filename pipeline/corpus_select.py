@@ -12,9 +12,10 @@ Then, either way:
   - Expand one hop BACKWARD: works frequently referenced BY the seeds, fetched by
     ID in batches. This is how ancestors enter (decision 4).
   - Expand one hop FORWARD: recent works that CITE the seeds. This is how the
-    literature written after the seeds enters, and it is measured before it is
-    given a seat (issue #180).
-  - Rank the merged pool and print a table capped at --limit.
+    literature written after the seeds enters (issue #180).
+  - Rank the merged pool and print a table capped at --limit, with --recent-seats
+    of those seats reserved for the recency window and filled by citation
+    connection and topicality together (issue #181).
 
 The embedding relevance filter (rest of Stage A) comes later; ranking here is
 citation count + how often the corpus itself references the paper.
@@ -79,6 +80,28 @@ FORWARD_SORTS = ("cited_by_count:desc", "publication_date:desc")
 # Rows of the forward table printed. The full set runs to hundreds; the table
 # is there to be read by a person deciding whether the hop found the lineage.
 FORWARD_TABLE_ROWS = 30
+
+# ── the reserved partition (issue #181) ─────────────────────────────────────
+#
+# A fifth of the seats, 30 of 150, compete only within the recency window. The
+# divisor is a constant rather than a literal because the seat count follows
+# --limit: a 50-paper corpus reserving 30 would be a different product.
+RECENT_SEATS_DIVISOR = 5
+
+# The fallback candidate set: one page of the same search the seeds come from,
+# restricted to the window and sorted by relevance. A young field, or a concept
+# whose founding work is thinly cited, yields few forward candidates and the
+# reservation would otherwise sit silently empty.
+RECENT_SEARCH_CANDIDATES = 200
+
+# Relevance is rounded to this many places before the citations-per-year
+# tiebreak, which is the only thing that makes the tiebreak reachable: two
+# cosines are never exactly equal, so an unrounded sort would never consult it.
+# Three places is roughly the granularity at which two papers are "as relevant
+# as each other" on the seed measurements in this file (junk ~0.33-0.40, median
+# ~0.46). Stated here so it can be argued with in review; it is a rounding for a
+# tiebreak and never a threshold on what is admitted.
+RECENT_TIEBREAK_PRECISION = 3
 
 ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf)/([a-z\-]+/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?", re.I)
 ARXIV_DOI_RE = re.compile(r"10\.48550/arxiv\.(.+)$", re.I)
@@ -265,6 +288,71 @@ def expand_forward(seeds: list[dict], since_year: int, field: str | None,
     return candidates, seeds_cited, stats
 
 
+def fetch_recent_by_search(query: str, since_year: int, field: str | None,
+                           per_page: int) -> list[dict]:
+    """One page of the search, restricted to the recency window, by relevance.
+
+    The forward hop's fallback and its second opinion. Sorted by
+    `relevance_score:desc`, which the seed search cannot use because cursor
+    paging forbids it — a five-year window is small enough to need one page, so
+    the sort is available here. Measured on the dark-energy query 2026-08-08,
+    the first fifteen include the DESI dynamical-dark-energy papers, *New early
+    dark energy*, and the DES data release: the same literature the forward hop
+    finds, arrived at without using the citation graph at all.
+    """
+    filters = ["indexed_in:arxiv", f"publication_year:>{since_year - 1}"]
+    if (fc := field_clause(field)):
+        filters.append(fc)
+    data = get_json(f"{OPENALEX}/works", polite({
+        "search": query, "filter": ",".join(filters), "per-page": per_page,
+        "select": WORK_FIELDS, "sort": "relevance_score:desc",
+    }))
+    return data.get("results", [])
+
+
+def cites_per_year(work: dict, now_year: int) -> float:
+    """Citations normalised by age. Only ever used INSIDE the recency window.
+
+    Age normalisation is rejected as a ranking term for the corpus as a whole
+    (issue #181): it re-orders a pool that contains almost no recent papers, so
+    it would ship, be measured and change nothing. Inside a five-year window it
+    has one honest use — every candidate there is roughly equally un-cited, so
+    a raw count measures which sub-area is fashionable rather than which paper
+    fits the concept, and a 2025 paper and a 2021 one are otherwise
+    incomparable. It is a tiebreak and never a filter.
+    """
+    year = work.get("publication_year") or now_year
+    return (work.get("cited_by_count") or 0) / max(1, now_year - year + 1)
+
+
+def interleave_reserved(general: list[dict], reserved: list[dict],
+                        limit: int) -> list[dict]:
+    """Spread the reserved seats through the ranked corpus, don't append them.
+
+    Position in this list is read order: `fetch_papers.py` fetches in it and
+    Stage B reads in it (issue #185). Appending 30 recent papers at the end
+    would mean a spend cap dropped exactly the seats the reservation bought, so
+    the file itself carries the interleave and every consumer inherits it
+    without knowing anything about reservations.
+    """
+    if not reserved:
+        return general[:limit]
+    out: list[dict] = []
+    gi = ri = 0
+    step = max(2, round(limit / len(reserved)))
+    for pos in range(1, limit + 1):
+        want_reserved = (pos % step == 0 and ri < len(reserved)) or gi >= len(general)
+        if want_reserved and ri < len(reserved):
+            out.append(reserved[ri])
+            ri += 1
+        elif gi < len(general):
+            out.append(general[gi])
+            gi += 1
+        else:
+            break
+    return out
+
+
 def abstract_of(work: dict) -> str:
     """Rebuild an abstract from OpenAlex's inverted index ({word: [positions]})."""
     inv = work.get("abstract_inverted_index")
@@ -317,6 +405,10 @@ def main() -> None:
                          "used as the relevance query instead of the bare concept")
     ap.add_argument("--keep-seeds", type=int, default=DEFAULT_KEEP_SEEDS,
                     help=f"keep the top N seeds by relevance (default {DEFAULT_KEEP_SEEDS})")
+    ap.add_argument("--recent-seats", type=int, metavar="R",
+                    help=f"seats reserved for the recency window (default "
+                         f"--limit // {RECENT_SEATS_DIVISOR}, i.e. 30 of 150; "
+                         f"0 disables the reservation)")
     ap.add_argument("--recent-since", type=int, metavar="YEAR",
                     help=f"first year of the recency window (default: this year "
                          f"minus {RECENT_YEARS})")
@@ -374,9 +466,8 @@ def main() -> None:
     print("Expanding one hop backward through the citation graph (unfiltered — protects ancestors)…")
     expanded, ref_freq = expand_one_hop(seeds, args.max_expand)
 
-    # The forward hop. It takes no seat in this run: it is the instrument the
-    # seat change is argued from, and it lands first so the "before" reading is
-    # taken while the selection is still the one being complained about (#180).
+    # The forward hop (#180). It is both the instrument and, since #181, the
+    # first of the two signals the reserved seats are filled from.
     since = args.recent_since or (datetime.date.today().year - RECENT_YEARS)
     forward: list[dict] = []
     seeds_cited: Counter = Counter()
@@ -403,12 +494,157 @@ def main() -> None:
         w["_seed"] = w["id"] in seed_ids
         pool[aid] = better(pool[aid], w) if aid in pool else w
 
-    ranked = sorted(pool.values(), key=lambda w: score(w, ref_freq), reverse=True)
-    ranked = ranked[:args.limit]
+    general = sorted(pool.values(), key=lambda w: score(w, ref_freq), reverse=True)
+    general_top = general[:args.limit]  # what the corpus would be with no reservation
+
+    # ── the reserved partition (#181) ───────────────────────────────────────
+    #
+    # R of the --limit seats are competed for only within the recency window,
+    # and a candidate must pass two signals that can each veto: it cites at
+    # least FORWARD_MIN_SEEDS_CITED of the seeds (it is attached to this
+    # lineage) and it ranks well on the same embedding relevance check the seeds
+    # go through (it is about this concept). Neither is derivable from the
+    # other. The forward hop admits an AGN-feedback paper that cites the 1998
+    # supernova results as boilerplate; a citation-sorted recency window admits
+    # kagome superconductors. One signal alone fills 30 seats with noise and
+    # makes the map worse rather than more recent.
+    #
+    # DECISION 3 IS UNTOUCHED AND EXTENDED IN ITS OWN SPIRIT: the reservation is
+    # another top-K, taken within a partition, and no absolute similarity number
+    # is introduced anywhere. `--min-relevance` is deliberately NOT applied here
+    # — it is a seed-side escape hatch, default off, and applying it to the
+    # partition would put an absolute cosine floor in the one place this change
+    # could have introduced one.
+    #
+    # DECISION 4 IS UNTOUCHED AND ITS REASONING ENDORSES THIS: decision 4
+    # protects ancestors, which predate the term's vocabulary, and the backward
+    # `expand_one_hop` set above is still unfiltered and unmodified. The
+    # reserved partition is the opposite population — papers written after the
+    # term settled, which by construction use its current name — so relevance
+    # ranking is reliable exactly where decision 4 says it is unreliable in
+    # reverse. The seats come out of the total, not out of the expansion.
+    #
+    # The risk this carries is that 30 seats the founding era used to hold now
+    # go to recent work. The control is `year_min` on the rebuilt map (#183),
+    # which must still reach 1988: if forward reach was bought by selling
+    # backward reach, this is wrong however good the recency figures look.
+    recent_seats = (args.recent_seats if args.recent_seats is not None
+                    else args.limit // RECENT_SEATS_DIVISOR)
+    if recent_seats > args.limit:
+        # Otherwise "filled 40 of 200" would be printed about a corpus with 150
+        # seats in it, and the reservation's own report would be the thing that
+        # is wrong.
+        print(f"  --recent-seats {recent_seats} exceeds --limit {args.limit}; "
+              f"reserving every seat.")
+        recent_seats = args.limit
+    reserved: list[dict] = []
+    search_recent: list[dict] = []
+    connected: list[dict] = []
+    others: list[dict] = []
+    if recent_seats > 0:
+        print(f"Searching {args.field} arXiv works from {since} for \"{args.concept}\" "
+              f"by relevance (the reservation's second signal)…")
+        search_recent = fetch_recent_by_search(args.concept, since, args.field,
+                                               RECENT_SEARCH_CANDIDATES)
+        # The search hits carry `referenced_works` too, so both candidate sets
+        # are scored on both signals rather than each on its own.
+        for w in search_recent:
+            seeds_cited[w["id"]] = len(seed_ids & set(w.get("referenced_works") or []))
+
+        held = {w["_arxiv_id"] for w in general_top}
+        cands: dict[str, dict] = {}
+        for w in forward + search_recent:
+            aid = arxiv_id_of(w)
+            # `held`: a recent paper that won an ordinary seat on the general
+            # ranking keeps it and does not consume the reservation.
+            if aid is None or aid in held or w["id"] in seed_ids:
+                continue
+            if (w.get("publication_year") or 0) < since:
+                continue
+            w["_arxiv_id"], w["_seed"], w["_recent"] = aid, False, True
+            prev = cands.get(aid)
+            if prev is None or seeds_cited[w["id"]] > seeds_cited[prev["id"]]:
+                cands[aid] = w
+        cand_list = list(cands.values())
+
+        if cand_list and not args.no_relevance_filter:
+            print(f"  scoring {len(cand_list)} recency-window candidates against "
+                  f"\"{rel_query}\"…")
+            rel_by_id.update({w["id"]: s for w, s in
+                              zip(cand_list, relevance_scores(rel_query, cand_list))})
+
+        now_year = datetime.date.today().year
+
+        def partition_key(w: dict) -> tuple:
+            # Relevance first, citations-per-year as the tiebreak — the one
+            # honest use of age normalisation in this file, and only inside the
+            # window. With no relevance scores (--no-relevance-filter) the
+            # citation connection is all that is left and the run says so.
+            rel = rel_by_id.get(w["id"])
+            first = (round(rel, RECENT_TIEBREAK_PRECISION) if rel is not None
+                     else float(seeds_cited[w["id"]]))
+            return (first, cites_per_year(w, now_year))
+
+        connected = sorted([w for w in cand_list
+                            if seeds_cited[w["id"]] >= FORWARD_MIN_SEEDS_CITED],
+                           key=partition_key, reverse=True)
+        others = sorted([w for w in cand_list
+                         if seeds_cited[w["id"]] < FORWARD_MIN_SEEDS_CITED],
+                        key=partition_key, reverse=True)
+        reserved = connected[:recent_seats]
+        # The fallback, and only when the two-signal set cannot fill the
+        # reservation: relevance alone, among the recency-window search hits.
+        if len(reserved) < recent_seats:
+            reserved += others[:recent_seats - len(reserved)]
+
+    # Unconditional, whatever happened. A reservation that cannot say it went
+    # unfilled is a fallback with no global check: 4 recent papers in a
+    # 150-paper corpus looks like a fix on every figure downstream.
+    if recent_seats <= 0:
+        print(f"\nReserved recent seats: DISABLED (--recent-seats {recent_seats}). "
+              f"The corpus is the general ranking alone.")
+    else:
+        from_connected = min(len(connected), recent_seats)
+        print(f"\nFilled {len(reserved)} of {recent_seats} reserved recent seats "
+              f"({since} or later): {from_connected} citing >= "
+              f"{FORWARD_MIN_SEEDS_CITED} seeds, {len(reserved) - from_connected} "
+              f"on relevance alone.")
+        # Both candidate counts by SOURCE as well as by tier, because they
+        # answer different questions when the reservation under-fills: "this
+        # field has no recent work on this term" looks nothing like "the forward
+        # hop returned nothing", and only the source counts tell them apart.
+        print(f"  candidates by tier: {len(connected)} cite >= "
+              f"{FORWARD_MIN_SEEDS_CITED} seeds, {len(others)} more from the "
+              f"recency search only")
+        print(f"  candidates by source: {len(forward):,} from the forward hop, "
+              f"{len(search_recent):,} from the recency search, "
+              f"{len(connected) + len(others):,} distinct and eligible after "
+              f"dropping seats already held and papers with no arXiv id")
+        if args.no_relevance_filter:
+            print("  ⚠ --no-relevance-filter: the seats were ranked on citation "
+                  "connection alone. One of the two signals did not run, and the "
+                  "seats may be this field's general recent traffic.")
+        if len(reserved) < recent_seats:
+            print(f"  ⚠ UNDER-FILLED by {recent_seats - len(reserved)}. Either this "
+                  f"field has little recent work on this term, or the forward hop "
+                  f"returned too little to choose from — the two candidate counts "
+                  f"above say which.")
+        if len(reserved) * 2 < recent_seats:
+            print(f"  ⚠⚠ fewer than half the reserved seats could be filled. Read the "
+                  f"table before trusting any recency figure taken from this corpus.")
+
+    reserved_ids = {w["_arxiv_id"] for w in reserved}
+    fill = [w for w in general if w["_arxiv_id"] not in reserved_ids]
+    ranked = interleave_reserved(fill, reserved, args.limit)
+
+    def src_of(w: dict) -> str:
+        return "rec" if w.get("_recent") else ("seed" if w["_seed"] else "exp")
 
     print(f"\nCandidate corpus for \"{args.concept}\" — {len(ranked)} papers "
           f"({sum(w['_seed'] for w in ranked)} seed, "
-          f"{sum(not w['_seed'] for w in ranked)} expanded)\n")
+          f"{sum(not w['_seed'] and not w.get('_recent') for w in ranked)} expanded, "
+          f"{sum(bool(w.get('_recent')) for w in ranked)} reserved recent), "
+          f"in read order\n")
     print(f"{'#':>3}  {'arXiv ID':<14} {'Year':<5} {'Cites':>7} {'Refs':>5} {'Rel':>5} {'Src':<4} Title")
     print("-" * 116)
     for i, w in enumerate(ranked, 1):
@@ -417,14 +653,15 @@ def main() -> None:
         rel_s = f"{rel:.2f}" if rel is not None else "  -"
         print(f"{i:>3}  {w['_arxiv_id']:<14} {w.get('publication_year') or '?':<5} "
               f"{w.get('cited_by_count') or 0:>7,} {ref_freq.get(w['id'], 0):>5} {rel_s:>5} "
-              f"{'seed' if w['_seed'] else 'exp':<4} {title}")
+              f"{src_of(w):<4} {title}")
 
-    # ── the forward hop, reported and nothing else (#180) ───────────────────
+    # ── what the forward hop found, and what the corpus still cannot see ────
     #
     # Printed under the corpus table on purpose: the two numbers that matter are
-    # the newest year the selection above reached and the newest year the hop
-    # found, and they belong on the same screen. Everything here is metadata
-    # from the polite pool; no seat above moved and nothing was paid for.
+    # the newest year the selection reached and the newest year the hop found,
+    # and they belong on the same screen. Since #181 some of these candidates
+    # hold seats; the count of those that do not is the blind spot that remains.
+    # Everything here is metadata from the polite pool and costs nothing.
     if args.max_forward > 0:
         selected_years = [w.get("publication_year") for w in ranked
                           if w.get("publication_year")]
@@ -434,8 +671,7 @@ def main() -> None:
         recent_selected = sum(1 for y in selected_years if y >= since)
         per_sort = ", ".join(f"{k.split(':')[0]} {v:,}"
                              for k, v in fwd_stats.get("per_sort", {}).items())
-        print(f"\nForward citation hop — arXiv works from {since} citing these seeds. "
-              f"Instrument only: no seat above changed.")
+        print(f"\nForward citation hop — arXiv works from {since} citing these seeds.")
         print(f"  {fwd_stats['fetched']:,} distinct works fetched over "
               f"{fwd_stats['batches']} seed batch(es) x {len(FORWARD_SORTS)} orderings "
               f"({per_sort})")
@@ -473,6 +709,12 @@ def main() -> None:
             "in_corpus_refs": ref_freq.get(w["id"], 0),
             "seed_relevance": rel_by_id.get(w["id"]),
             "seed": w["_seed"],
+            # Additive, and in the file rather than only in the log because the
+            # rebuild's proof figure has to be able to say which seats the
+            # reservation took. Existing readers name the keys they want
+            # (fetch_papers.py) and are untouched by two more.
+            "seeds_cited": seeds_cited.get(w["id"], 0),
+            "recent_seat": bool(w.get("_recent")),
         } for w in ranked]
         Path(args.json).write_text(json.dumps(out, indent=2), encoding="utf-8")
         print(f"\nWrote {len(out)} papers to {args.json}")

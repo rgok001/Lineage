@@ -121,10 +121,61 @@ clearing two seeds, is checked in code and printed as a warning; 504 is not near
 it.
 **This hop introduces no cosine threshold and filters nothing on relevance**
 (decisions 3 and 4 untouched), and the backward expansion is not modified by it.
-As shipped in #180 it **takes no seat**: the ranked corpus is exactly what it was,
-and the hop prints its table underneath it. It is the instrument the seat change
-is argued from, and it landed first so the "before" reading could be taken while
-the selection was still the one being complained about.
+As shipped in #180 it took no seat and only printed its table; #181 then gave it
+seats to fill.
+
+**The reserved partition** (`--recent-seats R`, default `--limit //
+RECENT_SEATS_DIVISOR` = 30 of 150; issue #181). R of the seats are competed for
+only within the recency window, and a candidate must pass **two signals that can
+each veto**: it cites at least two of the seeds (it is attached to this lineage)
+and it ranks well on the same embedding relevance check the seeds go through (it
+is about this concept). Neither is derivable from the other, and each admits work
+the other should reject — the forward hop returns papers citing the 1998
+supernova results as boilerplate, and a citation-sorted recency window returns
+kagome superconductors and twisted bilayer graphene. Candidates are the forward
+hop's `seeds_cited >= 2` set **unioned with one page of the same search
+restricted to the window and sorted by relevance** (`fetch_recent_by_search`),
+which is the fallback for a young field or a concept whose founding work is
+thinly cited; both sets are scored on both signals, because the search hits carry
+`referenced_works` too. Seats go to the top R by relevance among candidates
+clearing two seeds, falling through to relevance alone among the rest only when
+that set cannot fill R. **The reservation is a floor, not a cap**: a recent paper
+that wins an ordinary seat on the general ranking keeps it and does not consume a
+reserved one.
+Ranking inside the partition is relevance rounded to
+`RECENT_TIEBREAK_PRECISION` places, then **citations per year** — the one honest
+use of age normalisation in this file, and the reason it is rejected as a general
+ranking term: inside a five-year window every candidate is roughly equally
+un-cited, so a raw count measures which sub-area is fashionable rather than which
+paper fits, while across the whole corpus it would re-order a pool that contains
+almost no recent papers at all.
+**`filled X of R reserved recent seats` prints unconditionally**, with both
+candidate counts by tier and by source, a loud line when the reservation
+under-fills and a louder one below half. A reservation that cannot say it went
+unfilled is a fallback with no global check: four recent papers in a 150-paper
+corpus would otherwise look like a fix on every figure downstream.
+**The seats are interleaved through the corpus file, not appended**
+(`interleave_reserved`). Position in that file is read order — `fetch_papers.py`
+fetches in it and, since #185, Stage B reads in it — so appending would mean a
+spend cap dropped exactly the seats the reservation bought. The file gains two
+keys per paper, `seeds_cited` and `recent_seat`, so the rebuild's proof figure
+can say which seats the reservation took; the addition is additive and every
+existing reader names the keys it wants.
+**Decisions 3 and 4 both hold.** The reservation is another top-K taken within a
+partition and introduces no absolute similarity number anywhere;
+`--min-relevance` is deliberately not applied to the partition, since that is the
+one place this change could have put an absolute cosine floor. The backward
+expansion stays unfiltered and unmodified: decision 4 protects ancestors, which
+predate the term's vocabulary, and the reserved partition is the opposite
+population, written after the name settled.
+Measured on the dark-energy query 2026-08-08 (`--recent-since 2021
+--recent-seats 30 --max-seeds 150 --limit 150`): **30 of 30 seats filled, all
+from the two-signal tier, out of 629 candidates clearing two seeds and 41 more
+from the search alone.** Against the same run with `--recent-seats 0`, the
+reservation displaced exactly 30 papers, every one of them from 1996-2016, and
+**the corpus year range moved from 1988-2016 to 1988-2026**: the 1988 Wetterich
+cosmon paper decision 4 exists to protect is still in the corpus. That is the
+selection-time reading of control 1; the map-level control is #183.
 
 **Acquisition** (`fetch_papers.py <corpus.json>`, `extract_text.py`).
 LaTeX source preferred, PDF fallback, 1 request per 3 seconds against arXiv.
