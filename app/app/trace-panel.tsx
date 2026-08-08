@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useCallback, useEffect, useRef, useState } from "react";
 import { approveTrace, rejectTrace, requestTrace, signInHere } from "../lib/trace-actions";
 import type { TraceRequest } from "../lib/traces";
 import type { ArxivField } from "../lib/openalex";
@@ -66,25 +66,50 @@ export default function TracePanel({
   const [rows, setRows] = useState(initial);
   const [skewMs, setSkewMs] = useState(() => Date.now() - new Date(initialNow).getTime());
   const [formState, formAction, pending] = useActionState(requestTrace, null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   const anyActive = rows.some((r) => ACTIVE.has(r.status));
 
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch("/api/traces", { cache: "no-store" });
+      if (res.ok) {
+        const data: { now: string; rows: TraceRequest[] } = await res.json();
+        setRows(data.rows);
+        setSkewMs(Date.now() - new Date(data.now).getTime());
+      }
+    } catch {
+      /* transient network blip — next tick will retry */
+    }
+  }, []);
+
   useEffect(() => {
     if (!anyActive) return;
-    const t = setInterval(async () => {
-      try {
-        const res = await fetch("/api/traces", { cache: "no-store" });
-        if (res.ok) {
-          const data: { now: string; rows: TraceRequest[] } = await res.json();
-          setRows(data.rows);
-          setSkewMs(Date.now() - new Date(data.now).getTime());
-        }
-      } catch {
-        /* transient network blip — next tick will retry */
-      }
-    }, 3000);
+    const t = setInterval(refresh, 3000);
     return () => clearInterval(t);
-  }, [anyActive]);
+  }, [anyActive, refresh]);
+
+  // Draw the request the moment it exists, rather than at the reader's next
+  // manual reload (issue #176: "no way of knowing that it has been submitted
+  // until they refresh the page").
+  //
+  // requestTrace() already calls revalidatePath("/trace"), and that is not
+  // enough on its own: `rows` is seeded from the `initial` prop by useState,
+  // which reads it once, so React keeps the old array across the re-render the
+  // Server Action triggers and the new row never arrives. The 3s poll could not
+  // rescue it either, because it only runs while a row is already active — and
+  // before the first request there are none, which is exactly the case the
+  // owner hit. So fetch once on success; the row that comes back is active, so
+  // the existing poll takes over from there and no second timer is needed.
+  //
+  // Only on success. A refusal keeps what was typed, because the reader is
+  // about to correct one field of it, and the message beside the button says
+  // which (that is where the #175 membership refusal lands).
+  useEffect(() => {
+    if (!formState?.ok) return;
+    formRef.current?.reset();
+    refresh();
+  }, [formState, refresh]);
 
   return (
     <section>
@@ -120,6 +145,7 @@ export default function TracePanel({
 
       {signedIn ? (
         <form
+          ref={formRef}
           action={formAction}
           style={{
             background: "var(--card)", border: "1px solid var(--line)", borderRadius: 8,
@@ -168,8 +194,13 @@ export default function TracePanel({
           <button type="submit" disabled={pending} style={btn}>
             {pending ? "Submitting…" : owner ? "Start mapping" : "Request it"}
           </button>
+          {/* Announced, not just coloured: this is the only acknowledgement a
+              submit gets, and green-versus-red carries none of it to a screen
+              reader or to anyone who cannot tell the two apart (#176). */}
           {formState && (
             <span
+              role="status"
+              aria-live="polite"
               style={{
                 flexBasis: "100%", fontSize: ".78rem",
                 color: formState.ok ? "var(--verified)" : "var(--inferred)",
