@@ -1291,9 +1291,45 @@ against one stubbed database returned identical JSON on the full map, the map
 with no river, the missing row, a JSONB string where `user_edits` should be an
 array, and an edge whose paper row is gone.
 
+**After, same vantage point and same method** (seconds, TTFB then complete;
+`/` is the control, it was not touched and it did not move):
+
+| route | TTFB before → after | complete before → after |
+|---|---|---|
+| `/g/13` | 2.03 → 0.34 | 2.26 → 2.05 |
+| `/g/13/evidence` | 3.06 → 0.36 | 4.32 → 3.34 |
+| `/g/13/report` | 0.78 → 0.35 | 0.97 → 1.00 |
+| `/g/13/river/s0` | 1.39 → 0.35 | 1.61 → 1.40 |
+| `/g/13/river/s3` | 1.62 → 0.35 | 2.06 → 1.61 |
+| `/g/13/p/1706.03762` | 2.49 → 0.34 | 2.71 → 2.02 |
+| `/g/10` | 2.05 → 0.35 | 2.27 → 2.20 |
+| `/g/10/evidence` | 3.18 → 0.36 | 4.32 → 3.37 |
+| `/` (control) | 0.76 → 0.79 | 0.77 → 0.79 |
+
+**Read those two columns differently, because they now measure different
+things.** TTFB is no longer "the data is ready"; with a loading boundary the
+server flushes the skeleton shell as soon as it has one, so every one of these
+routes now returns its first byte at 0.33–0.36 s, which is the redirect's floor.
+That is the number the reader feels, and it is why the page stops appearing
+stuck. The complete column is the honest measure of when the whole answer
+landed, and it is where the round-trip work shows: evidence −23%, the long
+thread −22%, the paper dossier −26%, the map −9%. `/g/13/report` is the useful
+control on the other side — its queries were not changed and its complete time
+did not move, while its TTFB still fell by more than half from the skeleton
+alone. The two levers are separable and this table separates them.
+
+The skeletons cost roughly 1.4 kB brotli on the map and 2.5 kB on the evidence
+page, since the shell ships alongside the content. The streamed content is still
+server-rendered HTML and not client-only: the evidence page carries 2.29 MB of
+non-script markup, and its rendered figures are unchanged across the deploy (85
+papers grouped into meanings, 287 typed relationships, 286 verified, 1 inferred).
+
 What is deliberately **not** here: caching and PPR. The report is computed on
 read and never stored (decision 30), so any caching of it needs design before
-code, and the ticket says so.
+code, and the ticket says so. Nor is there a boundary on `/` or `/trace`: a root
+`loading.tsx` is the only way to scope one to them and it would also cover the
+static `/about` and `/roadmap`, so whether those flash a skeleton on an already
+instant navigation is a judgement for the UX review rather than a guess here.
 
 **Progress transport is polling, not SSE**, a deliberate deviation from the
 original plan: progress lives in Postgres anyway, serverless cannot hold
