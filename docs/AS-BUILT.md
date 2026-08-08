@@ -1485,6 +1485,66 @@ evidence page is the wrong answer to a problem an index should solve), the
 `‹ the map` breadcrumbs and the two bottom cards on the map page stay, and no
 export control in the strip.
 
+**After, measured on the live deploy**, headless Chrome at 1440×900 from Sydney,
+real clicks on the strip, time from click until anything at all changes on
+screen — all eighteen sideways navigations, every tab from every one of the five
+sections:
+
+| from | The map | Threads | The evidence | What this map is made of |
+|---|---|---|---|---|
+| the map (`/g/13`) | *current* | *anchor, same page* | **7 ms** (was 349) | **7 ms** (was 325) |
+| the evidence | 12 ms | 11 ms | *current* | 13 ms |
+| the report | 6 ms | 9 ms | 7 ms | *current* |
+| a thread (`river/s0`) | 6 ms | 6 ms | **7 ms** (was no link at all) | **7 ms** (was no link at all) |
+| a dossier (`p/1706.03762`) | 7 ms | 7 ms | 7 ms | 8 ms |
+
+Six to thirteen milliseconds, against a falsification line of 100 ms. **And the
+strip is the same DOM node before and after every one of those clicks** — the
+run marks the `<nav>` with a `data-mark` the React tree knows nothing about and
+re-reads it after the navigation, so a reused layout and a remounted one are
+told apart by something other than how it looks. The content swaps inside the
+map frame, the strip never re-skeletons, and the active tab is correct on
+arrival in all eighteen.
+
+**TTFB under a map did not move**, which is the check that says the layout never
+started fetching (median of 9 warm brotli requests, same vantage and method as
+the table above, so the columns are comparable): `/g/13` **0.33 s**,
+`/g/13/evidence` 0.33, `/g/13/report` 0.32, `/g/13/river/s0` 0.32, `river/s3`
+0.32, `/g/13/p/1706.03762` 0.32, `/g/10` 0.31, `/g/10/evidence` 0.32, against
+0.34–0.36 recorded after #140 and a falsification line of 0.5 s. Complete times
+are unmoved too (evidence 3.32 s against 3.34, the report 1.00 against 1.00),
+and `/` is the untouched control at 0.32 / 0.75. **CLS is 0.0000 on a hard load
+of all five routes**; the strip is server-rendered, so there is nothing to
+shift, and `curl` confirms all four hrefs in the served HTML of all five, with
+no tab marked current on the dossier.
+
+**The prefetch cost is +2 route prefetches per map page view, not the +4 the
+design budgeted.** Counted as `?_rsc=` resource entries: "Threads" points at
+`/g/13`, the same route as "The map", so the two share one prefetch, and the
+router does not prefetch the route it is already on. A thread page went from one
+outbound prefetch to three, the evidence page from none in the viewport to two.
+
+**One check from the design fails and is not fixed here: the `#threads` anchor
+does not scroll.** Clicking Threads from the evidence page or a thread page
+lands on `/g/13#threads` with the right page and a scroll offset of 150 px — the
+thread list is at 884 and stays there. The cause is not the anchor: it is that `/g/13`
+streams behind a `loading.tsx`, so at the moment the router applies the hash the
+`#threads` element does not exist yet, and nothing re-scrolls when the content
+arrives 4 s later. A **hard load** of `/g/13#threads` does not scroll either
+(offset 0), which is what shows this belongs to the streaming boundary rather
+than to the strip. Where the content is already present — clicking Threads while
+on `/g/13` — it scrolls correctly and the list lands on screen. So the strip
+removes the *click* cost everywhere and the *scroll hunt* only for a reader
+already on the map. Filed as issue #150 rather than improvised here, because any fix
+is client-side scroll restoration touching the same anchors #146 is designing a
+scheme for, and because it is general: every in-page anchor into a route with a
+`loading.tsx` has it.
+
+Also observed and left alone: clicking the tab you are already on refetches that
+route (2.8 s on the map, 1.6 s on the report). `nav.tsx` has done the same on
+the global tabs since it shipped; it is one behaviour in two places and should
+be decided in one.
+
 **`/about` and `/roadmap` are now prerendered, and every other route on the site
 stopped waiting for a session** (issue #145). This is the only one of the three
 performance tickets that removes time rather than covering it. `layout.tsx`
@@ -1595,7 +1655,6 @@ replacing a server-side session read that was on it. And a reader with
 JavaScript off loses the sign-in control, which used to be a server-rendered
 form; the slot carries a `<noscript>` link to `/api/auth/signin`, Auth.js's own
 page, which is one line and the honest answer.
-
 **Progress transport is polling, not SSE**, a deliberate deviation from the
 original plan: progress lives in Postgres anyway, serverless cannot hold
 streams open cheaply, and a 3 s poll of a tiny route gives the same live feel
