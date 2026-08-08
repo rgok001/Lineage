@@ -1,11 +1,18 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import HashTarget from "../../../hash-target";
+import { edgeAnchors, paperAnchor } from "../../../../lib/anchors";
 import { deleteEdge, deleteGenealogy, reclassifyEdge } from "../../../../lib/actions";
 import { getViewer, isOwner } from "../../../../lib/authz";
-import { EDGE_MEANING, EDGE_TYPES, editActor, editOp, editWhen, getGenealogy, type Edge, type RankedPaper, type Genealogy, type UserEdit } from "../../../../lib/genealogy";
-import { STAMP_COLOR, STAMP_LABEL } from "../../../../lib/stamp";
+import { EDGE_MEANING, EDGE_TYPES, editActor, editOp, editWhen, getGenealogy, readableQuote, type Edge, type RankedPaper, type Genealogy, type UserEdit } from "../../../../lib/genealogy";
+import { STAMP_COLOR, STAMP_LABEL, stampOf } from "../../../../lib/stamp";
 
 export const dynamic = "force-dynamic";
+
+/** How far below the top of the window an anchored element comes to rest. The
+ *  tab strip is not fixed, so this is breathing room rather than clearance, and
+ *  a row that lands flush against the edge reads as the top of the page. */
+const SCROLL_MARGIN = "1.2rem";
 
 const EDGE_COLORS: Record<string, string> = {
   extends: "var(--edge-extends)",
@@ -37,6 +44,8 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
     g.nodes.flatMap((n) => n.members).find((m) => m.arxiv_id === p)?.title
     ?? p ?? MISSING_PAPER;
   const labelOf = (nid: string) => g.nodes.find((n) => n.node_id === nid)?.label ?? nid;
+  const meaningOf = (p: string | null) =>
+    g.nodes.find((n) => n.members.some((m) => m.arxiv_id === p))?.label ?? "";
   const edges = [...g.edges].sort((a, b) => yearOf(a.source_paper) - yearOf(b.source_paper));
   // Three counts, disjoint, resolved at the same unit as the stamp on each row.
   // A header that folds stale into either of the other two is the same overclaim
@@ -44,6 +53,62 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
   const verified = edges.filter((e) => e.stamp === "verified").length;
   const stale = edges.filter((e) => e.stamp === "stale").length;
   const inferred = edges.length - verified - stale;
+
+  // ── section 2's structure (issue #146) ──────────────────────────
+  // Every anchor on the page, computed once, keyed on the paper pair and never
+  // on `edges.id` (lib/anchors.ts says why at length). An edge missing either
+  // paper row is absent from this map and gets no link and no invented id.
+  const anchorOf = edgeAnchors(edges);
+  const paperOf = new Map(g.papers.map((p) => [p.arxiv, p]));
+
+  // A PARTITION, not a filter-and-rejoin: every edge lands in exactly one
+  // group, keyed on its source (the earlier paper), and the ones whose source
+  // row is gone land in the last group. So the rows on the page and the count in
+  // the heading are the same array rather than two numbers somebody has to keep
+  // in agreement. A group also exists for a paper that is only ever the later
+  // one; it carries no rows, and the back-links are what stop it being a dead
+  // end.
+  const groups = new Map<string, EdgeGroup>();
+  const groupFor = (arxiv: string) => {
+    let gr = groups.get(arxiv);
+    if (!gr) {
+      gr = {
+        arxiv,
+        year: yearOf(arxiv),
+        title: titleOf(arxiv),
+        meaning: meaningOf(arxiv),
+        paper: paperOf.get(arxiv),
+        rows: [],
+        incoming: [],
+      };
+      groups.set(arxiv, gr);
+    }
+    return gr;
+  };
+  const unrecorded: EdgeGroup = {
+    arxiv: null, year: 0, title: MISSING_PAPER, meaning: "",
+    paper: undefined, rows: [], incoming: [],
+  };
+  for (const e of edges) {
+    (e.source_paper ? groupFor(e.source_paper) : unrecorded).rows.push(e);
+    if (e.target_paper) groupFor(e.target_paper).incoming.push(e);
+  }
+  // Year then title, which is the order the flat list already had, so nothing
+  // re-sorts under a reader who knew the page before this ticket.
+  const ordered = [...groups.values()].sort((a, b) => a.year - b.year || a.title.localeCompare(b.title));
+  if (unrecorded.rows.length) ordered.push(unrecorded);
+
+  // Stated, never a jump link. With the section grouped by paper a type is not
+  // contiguous anywhere on the page, so "jump to extends" would land on an
+  // arbitrary row and imply a block that does not exist; the honest alternative
+  // is a filter, and a filter takes rows out of the DOM, which is what breaks
+  // find-in-page and is the one thing this page must not do (issue #146).
+  // Counted off the edges themselves rather than off EDGE_TYPES, so the parts
+  // always sum to the total in the heading. A stored type outside the taxonomy
+  // would otherwise vanish from the line and leave a reader's arithmetic short.
+  const typeCounts = [...edges.reduce(
+    (m, e) => m.set(e.edge_type, (m.get(e.edge_type) ?? 0) + 1), new Map<string, number>(),
+  )].map(([type, n]) => ({ type, n })).sort((a, b) => b.n - a.n || a.type.localeCompare(b.type));
 
   return (
     <main style={{ maxWidth: 940, margin: "0 auto", padding: "1rem 1.5rem 5rem" }}>
@@ -113,17 +178,34 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
         be found, so the relationship is marked <em>inferred</em>; ◌ means the quotes have not been
         checked against those papers’ text as it now stands, so the relationship is
         marked <em>not re-checked</em>.
+        {/* The one clause the regrouping owed this paragraph (issue #146):
+            there are now two kinds of mark on screen, one about a paper's own
+            passage and one about a pair, and they can legitimately differ. Said
+            in #135's vocabulary, after the three symbols rather than inside
+            them, so #127's structure is untouched. */}
+        {" "}The same three marks stand beside each paper’s own passage, above its
+        relationships, where each one is about that passage alone: a passage marked ● can sit
+        above a relationship marked ○, when it is the other paper’s quote that could not be
+        found.
         Click a row to see the evidence
         {canEdit ? ", reclassify it, or remove it." : "."}
       </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
-        {edges.map((e) => (
-          <EdgeRow key={e.id} e={e} genealogyId={g.id} canEdit={canEdit}
-            srcLabel={labelOf(e.source_node)} dstLabel={labelOf(e.target_node)}
-            srcYear={yearOf(e.source_paper)} dstYear={yearOf(e.target_paper)}
-            srcTitle={titleOf(e.source_paper)} dstTitle={titleOf(e.target_paper)} />
-        ))}
-      </div>
+
+      {/* A sibling of the targets, never an ancestor of the wait (issue #150).
+          This route streams behind a `loading.tsx` and takes 3.3 s to arrive, so
+          the browser applies the fragment long before any of these anchors
+          exists; this component's mount is the event "the rows are here now". It
+          is mounted from the page rather than the layout for exactly that
+          reason, and the layout is the thing already on screen while the reader
+          waits. */}
+      <HashTarget />
+
+      <JumpIndex groups={ordered} typeCounts={typeCounts} total={edges.length} />
+
+      {ordered.map((gr) => (
+        <PaperGroup key={gr.arxiv ?? "unrecorded"} gr={gr} concept={g.concept} genealogyId={g.id}
+          canEdit={canEdit} anchorOf={anchorOf} yearOf={yearOf} titleOf={titleOf} labelOf={labelOf} />
+      ))}
 
       {g.user_edits.length > 0 && <AuditTrail edits={g.user_edits} />}
 
@@ -236,14 +318,234 @@ function PaperRow({ p, rank, turning }: { p: RankedPaper; rank?: number; turning
   );
 }
 
-function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear, srcTitle, dstTitle }: {
-  e: Edge; genealogyId: number; canEdit: boolean; srcLabel: string; dstLabel: string;
-  srcYear: number; dstYear: number; srcTitle: string; dstTitle: string;
+/** One paper, its passage, and the relationships in which it is the earlier of
+ *  the two. `rows` is the partition's share of the edges; `incoming` is the same
+ *  paper as the later one, which is rendered as links to rows living in other
+ *  groups and never as a second copy of the evidence. */
+type EdgeGroup = {
+  arxiv: string | null;
+  year: number;
+  title: string;
+  meaning: string;
+  paper: RankedPaper | undefined;
+  rows: Edge[];
+  incoming: Edge[];
+};
+
+/**
+ * The only navigation instrument this page has ever had (issue #146). Before it,
+ * one element on 39 screens carried an id and nothing could point at a row.
+ *
+ * The type counts are counts. No score, no threshold, no bar, and no jump link:
+ * see the note where they are computed.
+ */
+function JumpIndex({ groups, typeCounts, total }: {
+  groups: EdgeGroup[]; typeCounts: { type: string; n: number }[]; total: number;
+}) {
+  return (
+    <nav aria-label="Jump to a paper"
+      style={{ border: "1px solid var(--line)", borderRadius: 8, background: "var(--card)",
+        padding: ".9rem 1.05rem", margin: "0 0 1.6rem" }}>
+      <div style={{ fontFamily: "var(--font-mono)", fontSize: ".74rem", color: "var(--ink-soft)", lineHeight: 1.6 }}>
+        {total} relationships:{" "}
+        {typeCounts.map((c, i) => (
+          <span key={c.type}>
+            {i > 0 && ", "}
+            {c.n} <span style={{ color: EDGE_COLORS[c.type] ?? "var(--ink-soft)" }}>{c.type}</span>
+          </span>
+        ))}
+      </div>
+      <p style={{ fontSize: ".76rem", color: "var(--ink-soft)", margin: ".5rem 0 .7rem", lineHeight: 1.5 }}>
+        Listed under the earlier paper of each pair. The number beside a paper is how many are
+        listed there; a paper with none appears further down only as the later paper.
+      </p>
+      <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(15rem, 1fr))", gap: ".15rem .9rem" }}>
+        {groups.map((gr) => {
+          const label = (
+            <>
+              {gr.year > 0 && (
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)" }}>
+                  {gr.year}{" "}
+                </span>
+              )}
+              {gr.title.length > 40 ? gr.title.slice(0, 40) + "…" : gr.title}{" "}
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-faint)" }}>
+                ({gr.rows.length})
+              </span>
+            </>
+          );
+          return (
+            <li key={gr.arxiv ?? "unrecorded"} style={{ fontSize: ".8rem", lineHeight: 1.45,
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {/* The group with no paper row has no content-derived anchor, so it
+                  is listed and not linked. Inventing one for it is the one thing
+                  lib/anchors.ts refuses to do. */}
+              {gr.arxiv
+                ? <a href={`#${paperAnchor(gr.arxiv)}`} style={{ color: "var(--ink)", textDecoration: "none" }}>{label}</a>
+                : <span style={{ color: "var(--ink-soft)" }}>{label}</span>}
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}
+
+/**
+ * A paper's own passage, once, OUTSIDE any `<details>` (issue #146).
+ *
+ * That placement is the point of the regrouping and not a nicety. Firefox and
+ * Safari cannot find text inside a closed `<details>`, and every quote on this
+ * page lived in one, so find-in-page — the only tool the page had — could not
+ * reach the page's most important words. The rows keep their own two quote-cards
+ * (product rule 1) and stay closed; this is the copy a Ctrl-F can land on.
+ *
+ * The stamp is resolved by `stampOf` from the same three values the dossier and
+ * the thread page hand it, so three pages say one thing about one quote. It is
+ * about this passage alone and may differ from the marks on the rows below,
+ * which is what the section's explainer now says out loud.
+ */
+function GroupHead({ gr, concept }: { gr: EdgeGroup; concept: string }) {
+  const p = gr.paper;
+  const quote = p?.verbatim_quote ? readableQuote(p.verbatim_quote) : "";
+  const stamp = p ? stampOf(p.quote_verified, p.quote_text_digest, p.extracted_text_digest) : null;
+  return (
+    <div style={{ borderBottom: "1px solid var(--line)", paddingBottom: ".7rem", marginBottom: ".8rem" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: ".55rem", flexWrap: "wrap" }}>
+        {gr.year > 0 && (
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: ".74rem", color: "var(--ink-soft)" }}>{gr.year}</span>
+        )}
+        <h3 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.08rem",
+          color: "var(--ink)", margin: 0, lineHeight: 1.3 }}>
+          {gr.title}
+        </h3>
+        {gr.arxiv && (
+          <a href={`https://arxiv.org/abs/${gr.arxiv}`} target="_blank" rel="noopener noreferrer"
+            style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-soft)",
+              textDecoration: "none", borderBottom: "1px solid var(--line)" }}>
+            arXiv:{gr.arxiv}
+          </a>
+        )}
+        {gr.meaning && (
+          <span style={{ fontSize: ".74rem", color: "var(--ink-soft)", fontStyle: "italic" }}>{gr.meaning}</span>
+        )}
+      </div>
+
+      {quote && stamp ? (
+        <>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", letterSpacing: ".06em",
+            textTransform: "uppercase", color: "var(--ink-faint)", margin: ".6rem 0 .3rem" }}>
+            How it defines “{concept}”
+          </div>
+          <blockquote style={{ margin: 0, fontFamily: "var(--font-display)", fontStyle: "italic",
+            fontSize: ".95rem", lineHeight: 1.55, color: "var(--ink)", whiteSpace: "pre-wrap",
+            borderLeft: `2px solid ${STAMP_COLOR[stamp]}`, padding: ".5rem .8rem",
+            background: "var(--card)", borderRadius: "0 6px 6px 0" }}>
+            “{quote.length > 500 ? quote.slice(0, 500) + "…" : quote}”
+          </blockquote>
+          {/* The dossier's three sentences, with this page's symbols rather than
+              its tick, because the paragraph above defines ● ○ ◌ and the added
+              clause promises the same three marks here. lib/stamp.ts holds the
+              wording all of them are copied from (issues #129, #135). */}
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: ".62rem", marginTop: ".3rem",
+            color: STAMP_COLOR[stamp], lineHeight: 1.5 }}>
+            {stamp === "verified" && "● found word for word in the text this system pulled out of this paper · shown as verified"}
+            {stamp === "inferred" && "○ the check ran against the text this system pulled out of this paper and could not find it · shown as inferred"}
+            {stamp === "stale" && "◌ not checked against this paper’s text as it now stands · not shown as verified"}
+          </div>
+        </>
+      ) : (
+        /* An absence reported as an absence, not as an empty quote-card. This map
+           holds no defining passage for the paper, which is a fact about the map
+           rather than about the paper. */
+        <p style={{ fontSize: ".78rem", color: "var(--ink-soft)", margin: ".5rem 0 0" }}>
+          This map holds no defining passage for {gr.arxiv ? "this paper" : "the earlier paper of these relationships"}.
+          {gr.rows.length > 0 && " The quotes behind each relationship below are unaffected."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** One group: the paper, its passage, its rows, and links to the rows where it
+ *  is the later paper. The back-links carry no evidence of their own — one
+ *  relationship has one home and one anchor, and mirroring it into both papers'
+ *  groups would double the page and give the anchor two places to be. */
+function PaperGroup({ gr, concept, genealogyId, canEdit, anchorOf, yearOf, titleOf, labelOf }: {
+  gr: EdgeGroup; concept: string; genealogyId: number; canEdit: boolean;
+  anchorOf: Map<number, string>;
+  yearOf: (p: string | null) => number;
+  titleOf: (p: string | null) => string;
+  labelOf: (nid: string) => string;
+}) {
+  return (
+    <section id={gr.arxiv ? paperAnchor(gr.arxiv) : undefined}
+      style={{ scrollMarginTop: SCROLL_MARGIN, marginBottom: "2.2rem" }}>
+      <GroupHead gr={gr} concept={concept} />
+
+      {gr.rows.length > 0 && (
+        <>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: ".64rem", textTransform: "uppercase",
+            letterSpacing: ".06em", color: "var(--ink-soft)", margin: "0 0 .5rem" }}>
+            What later work did with it · {gr.rows.length}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
+            {gr.rows.map((e) => (
+              <EdgeRow key={e.id} e={e} genealogyId={genealogyId} canEdit={canEdit}
+                anchor={anchorOf.get(e.id)}
+                dstLabel={labelOf(e.target_node)}
+                srcYear={yearOf(e.source_paper)} dstYear={yearOf(e.target_paper)}
+                dstTitle={titleOf(e.target_paper)} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {gr.incoming.length > 0 && (
+        <div style={{ marginTop: gr.rows.length > 0 ? ".8rem" : 0, fontSize: ".76rem",
+          color: "var(--ink-soft)", lineHeight: 1.7 }}>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: ".64rem", textTransform: "uppercase",
+            letterSpacing: ".06em" }}>
+            Where it appears as the later paper ·{" "}
+          </span>
+          {gr.incoming.map((e, i) => {
+            const anchor = anchorOf.get(e.id);
+            const t = titleOf(e.source_paper);
+            const y = yearOf(e.source_paper);
+            const text = `${y > 0 ? `${y} ` : ""}${t.length > 34 ? t.slice(0, 34) + "…" : t}`;
+            const type = (
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: ".64rem",
+                color: EDGE_COLORS[e.edge_type] ?? "var(--ink-soft)" }}> {e.edge_type}</span>
+            );
+            return (
+              <span key={e.id}>
+                {i > 0 && <span style={{ color: "var(--ink-faint)" }}> · </span>}
+                {anchor
+                  ? <a href={`#${anchor}`} style={{ color: "var(--ink)", textDecoration: "none",
+                      borderBottom: "1px solid var(--line)" }}>{text}{type}</a>
+                  : <span>{text}{type}</span>}
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** `anchor` is absent exactly when one of the two paper rows is gone (#79). The
+ *  row then says so where a reader would look for the link, rather than being
+ *  given an id derived from `edges.id` that would point at a different
+ *  relationship after the next rebuild. */
+function EdgeRow({ e, genealogyId, canEdit, anchor, dstLabel, srcYear, dstYear, dstTitle }: {
+  e: Edge; genealogyId: number; canEdit: boolean; anchor?: string;
+  dstLabel: string; srcYear: number; dstYear: number; dstTitle: string;
 }) {
   const color = EDGE_COLORS[e.edge_type] ?? "var(--ink-soft)";
   return (
-    <details style={{ border: "1px solid var(--line)", borderLeft: `4px solid ${color}`,
-      borderRadius: 8, background: "var(--card)", overflow: "hidden" }}>
+    <details id={anchor} style={{ border: "1px solid var(--line)", borderLeft: `4px solid ${color}`,
+      borderRadius: 8, background: "var(--card)", overflow: "hidden", scrollMarginTop: SCROLL_MARGIN }}>
       <summary style={{ listStyle: "none", cursor: "pointer", padding: ".85rem 1.1rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap" }}>
           <span style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", textTransform: "uppercase",
@@ -274,14 +576,23 @@ function EdgeRow({ e, genealogyId, canEdit, srcLabel, dstLabel, srcYear, dstYear
             </span>
           </span>
         </div>
+        {/* Only the later paper here (issue #146). The group this row sits in
+            already names the earlier one, three lines above, and repeating it on
+            every row is what made each row two lines high. */}
         <div style={{ marginTop: ".55rem", display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap", fontSize: ".92rem" }}>
-          <PaperTag year={srcYear} title={srcTitle} sub={srcLabel} />
           <span style={{ color, fontSize: "1.3rem", fontWeight: 700 }}>→</span>
           <PaperTag year={dstYear} title={dstTitle} sub={dstLabel} />
         </div>
       </summary>
 
       <div style={{ borderTop: "1px solid var(--line)", padding: "1rem 1.1rem", background: "var(--paper)" }}>
+        {!anchor && (
+          <p style={{ fontFamily: "var(--font-mono)", fontSize: ".64rem", color: "var(--ink-soft)",
+            margin: "0 0 .7rem", lineHeight: 1.5 }}>
+            There is no link straight to this relationship, because one of its two papers is no
+            longer in our records and the link is made from both papers’ arXiv ids.
+          </p>
+        )}
         <BasisCard color={color} rationale={e.rationale} citationContext={e.citation_context} />
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".64rem", textTransform: "uppercase",
           letterSpacing: ".06em", color: "var(--ink-soft)", margin: ".1rem 0 .5rem" }}>

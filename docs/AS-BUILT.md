@@ -881,14 +881,61 @@ fetches nothing. The reasoning is with the other navigation costs, below.
   because it was a third phrasing of one promise, sitting four lines under stamp
   captions that say it the settled way.
 - `/g/[id]/evidence` : the former genealogy page, now the evidence and
-  workbench layer. Timeline of concept-state cards, typed relationship rows
-  with evidence panels (both quotes, verification stamp, confidence), workbench
-  edit controls (owner only), audit trail, danger zone (owner only). Meanings
-  are grouped into citation-connected families (`computeFamilies()`, union-find
-  over edges): a term whose senses do not cite each other (polysemy like
-  "kernel") renders as separate families under a disclosure banner, with
-  citation-isolated meanings pulled into an "Unconnected meanings" section. A
-  single-family map renders flat and unchanged.
+  workbench layer. Two sections: the ranked paper spine ("Which papers shaped
+  X"), then every typed relationship, **grouped by the earlier paper of each
+  pair** (issue #146). Evidence panels carry both quotes, the verification stamp
+  and the confidence; workbench edit controls, the audit trail and the danger
+  zone are owner-only. (`computeFamilies()` in `lib/genealogy.ts` is unused by
+  any page; the citation-connected families this entry described until #146 were
+  not on the shipped page.)
+  **Section 2 is a partition, anchored on the paper pair** (issue #146). Before
+  it, one element on the whole 36 806 px page carried an `id`, so nothing on the
+  map, on a thread page or in a link a reader was sent could point at the row
+  they came to check.
+  - `lib/anchors.ts` formats every anchor and is the only place that does:
+    `p-1706.03762` for a paper's group, `r-1409.0473-1706.03762` for one
+    relationship, with `/` slugged to `_` so old-style ids are one token and a
+    second edge on the same pair suffixed `-2`. **The key is the paper pair and
+    never `edges.id`**: `stage_d_edges.py` rebuilds a map with `DELETE FROM
+    edges WHERE genealogy_id=…` then fresh INSERTs against a `BIGSERIAL`, while
+    the `genealogies` row and therefore the URL survive, so a database-id
+    fragment would silently point at a *different relationship in the same map*
+    after a rebuild. An edge whose paper row is gone (#79) gets no anchor at all
+    and the row says why; there is deliberately no fallback, because one
+    fallback manufactures exactly that failure.
+  - Each edge lands in exactly one group, keyed on its source, with a final
+    group for edges whose source row is missing, so the count in the heading and
+    the rows on the page are the same array. A group also exists for a paper
+    that is only ever the later one; a wrapped line of links, "Where it appears
+    as the later paper", is what stops it being a dead end, and it carries links
+    only, never a second copy of the evidence.
+  - **Each paper's own passage renders once at the group head, outside any
+    `<details>`.** That is the point of the regrouping rather than a nicety:
+    Firefox and Safari cannot find text inside a closed `<details>`, and every
+    quote on this page lived in one, so find-in-page — the page's only
+    navigation before this ticket — could not reach its most important words.
+    The stamp there is `stampOf` over the definition's two digests and the
+    paper's, the same resolver `/g/[id]/p/[arxiv]` and `/g/[id]/river/[sid]`
+    use for the same string.
+  - A jump index heads the section: one line of type counts, then every paper
+    group as `year · title (n)` in a multi-column list. **The type counts are
+    stated and are not jump links**, a deliberate deviation from the ticket:
+    grouped by paper, a type is not contiguous anywhere on the page, so a "jump
+    to extends" link would land on an arbitrary row and imply a block that does
+    not exist.
+  - **Both facing quote-cards stay inside every relationship** (product rule 1
+    and the owner-blessed evidence panel), and nothing is paginated,
+    virtualised or removed from the DOM. Only the summary changed: it no longer
+    repeats the earlier paper, which the group head names three lines above.
+  - `evidence/loading.tsx` was reshaped to the same silhouette (jump index,
+    group head with a passage, collapsed rows), because the skeleton and the
+    page having different shapes is what would bring back the CLS #140 measured
+    at 0.000 here.
+  - Arrival is `app/app/hash-target.tsx` (issue #150), mounted **by this page**
+    beside its groups. This is the longest streamed route in the product, so the
+    browser applies the fragment seconds before any anchor exists and its own
+    hash scroll cannot work; the component's mount is the event "the rows are
+    here now". `scroll-margin-top` on both kinds of target is set here.
   **The page's banner and the door into it are scoped to the viewer** (issue
   #118). The banner said "Evidence & workbench" and the front door's card
   promised "the curation tools" to everyone, while every one of those tools is

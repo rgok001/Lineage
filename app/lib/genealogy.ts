@@ -202,6 +202,17 @@ export type RankedPaper = {
   attention: number | null;
   displacement: number | null;
   novelty: string[] | null;
+  /** The paper's own defining passage and the two digests its stamp resolves
+   *  from, so the evidence page can show each passage once at the head of that
+   *  paper's relationships (issue #146) instead of only inside closed rows.
+   *  They ride on the paper query `getGenealogy` already issues, which is why
+   *  this costs no round trip. Nullable throughout: a paper can define the
+   *  concept with no quote recorded, and a digest is absent on anything checked
+   *  before migration 015. `stampOf` is handed all three and answers stale. */
+  verbatim_quote: string | null;
+  quote_verified: boolean | null;
+  quote_text_digest: string | null;
+  extracted_text_digest: string | null;
 };
 export type Genealogy = {
   id: number;
@@ -648,8 +659,13 @@ export async function getGenealogy(id: number): Promise<Genealogy | null> {
     WHERE e.genealogy_id = ${id}
     ORDER BY e.id
   `,
+    // Four columns more than this asked for a week ago, and no extra statement:
+    // the evidence page's paper groups need each paper's own passage and the
+    // digests its stamp resolves from (issue #146), and they are columns of the
+    // two tables this join already reads.
     sql`
-    SELECT p.arxiv_id AS arxiv, p.year, p.title, d.attention, d.displacement, d.novelty_claims AS novelty
+    SELECT p.arxiv_id AS arxiv, p.year, p.title, d.attention, d.displacement, d.novelty_claims AS novelty,
+           d.verbatim_quote, d.quote_verified, d.quote_text_digest, p.extracted_text_digest
     FROM definitions d JOIN papers p ON p.id = d.paper_id
     WHERE d.concept = ${g.concept} AND d.prompt_version = ${g.prompt_version} AND d.defines_concept = true
     ORDER BY d.attention DESC NULLS LAST
