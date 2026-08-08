@@ -1709,9 +1709,12 @@ Nothing is fetched: zero `?_rsc=` requests in the three seconds after each click
 once the page's own in-viewport prefetching has quiesced, and zero document
 navigations. The `<body>` and both `<nav>` elements are the same DOM nodes
 before and after, marked with a `data-mark` attribute React knows nothing about.
-No skeleton paints. On the evidence page, 38609 px tall, **two relationships
-opened before the click are still open after it** and the page's text is the same
-92315 characters. Every one of the four ends at scroll 0.
+No skeleton paints. On the evidence page, **two relationships opened before the
+click are still open after it** and the page's text is unchanged to the
+character. Every one of the four ends at scroll 0. Re-run after #146 deployed,
+which took that page from 38609 px and 92315 characters to 57620 and 125191: the
+same checks pass on the bigger page, which is the point of measuring the reader's
+open rows rather than the wait.
 
 **The clicks that are meant to go somewhere still do**, all in 20–27 ms with the
 first DOM change at 14–23 ms: the map to the evidence page, the evidence page to
