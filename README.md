@@ -7,6 +7,13 @@ CLI, or how the pipeline is run.
 Concept genealogy engine — traces how an academic concept evolved across arXiv
 papers. See [CLAUDE.md](CLAUDE.md) for the full spec, scope, and build order.
 
+## License
+
+Source-available under the
+[PolyForm Noncommercial License 1.0.0](LICENSE.md): the code is public to
+read and free to use for any noncommercial purpose; commercial rights stay
+with the owner (decision 33, issue 142).
+
 ## Layout
 
 - `pipeline/` — Python CLI scripts, one per pipeline stage. Each runs standalone

@@ -731,6 +731,25 @@ The why behind the load-bearing choices, in one place:
     all six edge colours and the two stamp colours. The light values survive
     only in this entry and in git history.
 
+33. **Source-available under PolyForm Noncommercial 1.0.0** (2026-08-08,
+    Product Owner, issue 142). The repository had no license, which legally
+    means all rights reserved but reads as ambiguous to anyone deciding
+    whether they may use the code. The owner chose the middle path between
+    closed and open source: the repo stays public to read and free to use for
+    any noncommercial purpose, and commercial rights — including hosting
+    Lineage as a service — stay with the owner. Considered and rejected:
+    MIT/Apache (would let a competitor host a clone of a product the owner
+    may commercialise), AGPL (open source, but companies' blanket AGPL bans
+    limit even legitimate noncommercial reading), and the Business Source
+    License (its mandatory change date converts the code to open source
+    automatically, a future decision the owner did not want made in advance).
+    `LICENSE.md` carries the license text byte-for-byte from the PolyForm
+    project's official repository (tag 1.0.0) plus the one line the license
+    itself provides for: a `Required Notice:` naming the copyright holder.
+    Relicensing later is possible because there are no outside contributors;
+    that ease ends if a contribution is ever accepted without a contributor
+    agreement.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record
