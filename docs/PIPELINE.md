@@ -87,6 +87,45 @@ than the Adam optimizer paper against the query. Ancestors enter via
 citations only. Stage A is recall; Stage B is the semantic gate. Output: a
 ranked corpus JSON.
 
+**The forward hop** (`expand_forward`, `--recent-since YEAR`, `--max-forward N`;
+issue #180). The backward expansion asks what the seeds *cite*, so everything it
+reaches is older than the seeds by construction, and the seeds themselves arrive
+sorted by citation count. Nothing asked the other direction until 2026-08-08, and
+that is where the recency gap was made rather than at the ranking: measured on the
+dark-energy query behind /g/17 (`indexed_in:arxiv`, `primary_topic.field.id:fields/31`,
+search `dark energy`), the 400th seed by citations has **883** citations, which
+almost nothing published since 2022 clears. A recent paper was never in the pool
+`score()` ranks. `expand_forward` batches the seed ids 50 at a time into
+`cites:<id>|<id>|…` with `publication_year:>{since-1}`, counts for each returned
+work how many of the seeds it cites (`seeds_cited`, the forward analogue of
+`ref_freq`, counted against the whole seed set so batching cannot change a
+number), and keeps those citing at least `FORWARD_MIN_SEEDS_CITED = 2` — the same
+rule and the same number as the backward hop's `n >= 2`.
+**It pages under two orderings, `FORWARD_SORTS`, and the second one is the
+point.** One batch of 50 dark-energy seeds has 18,725 arXiv works citing it since
+2021: 94 pages and ~270MB to read whole, which no trace can afford, so it is
+truncated — and the first page by `cited_by_count:desc` is 129/200 from 2021 and
+4/200 from 2024-25, so a citation-ordered truncation reproduces inside the window
+the very age bias the window exists to remove. Paging the newest first as well
+costs one extra request per batch and is the control.
+Measured on the same query on 2026-08-08 (`--recent-since 2021 --max-seeds 150
+--no-relevance-filter`, 150 seeds, 3 batches, 29s wall clock including the
+backward hop): **876 distinct works fetched, 504 citing 2 or more seeds, and 504
+of those 504 absent from the selected 150.** The selection held **0** papers from
+2021 or later and its newest was 2016, against the hop's newest of 2026. Top of
+the table by `seeds_cited`: *Robust preference for Dynamical Dark Energy in DESI
+BAO and SN measurements* (2024, 23 seeds) at rank 3 and *Extended dark energy
+analysis using DESI DR2 BAO measurements* (2025) at rank 11 — the literature the
+map was missing. The design's stated failure condition, fewer than ~50 candidates
+clearing two seeds, is checked in code and printed as a warning; 504 is not near
+it.
+**This hop introduces no cosine threshold and filters nothing on relevance**
+(decisions 3 and 4 untouched), and the backward expansion is not modified by it.
+As shipped in #180 it **takes no seat**: the ranked corpus is exactly what it was,
+and the hop prints its table underneath it. It is the instrument the seat change
+is argued from, and it landed first so the "before" reading could be taken while
+the selection was still the one being complained about.
+
 **Acquisition** (`fetch_papers.py <corpus.json>`, `extract_text.py`).
 LaTeX source preferred, PDF fallback, 1 request per 3 seconds against arXiv.
 Gotcha: some arXiv "LaTeX" source is really a PDF inside an `\includepdf`
