@@ -1547,6 +1547,49 @@ run: it reads `DATABASE_URL` out of `.env.local` and needs a server on
 localhost, both of which an agent shell is refused, so it belongs to the Tester
 on a machine that has them.
 
+**After, measured on the deploy**, same method and same vantage (Sydney,
+headless Chrome 1440×900, real clicks on the global nav from `/g/13`, median of
+four; and `curl` medians of 9 warm brotli requests):
+
+| clicked | content on screen, before | after | first byte, before | after | serving |
+|---|---|---|---|---|---|
+| How it works (`/about`) | 297 ms | **64 ms** | 0.316 s | **0.075 s** | PRERENDER, then HIT |
+| Roadmap (`/roadmap`) | 275 ms | **70 ms** | 0.315 s | **0.075 s** | PRERENDER, then HIT |
+| `/g/13` — control, untouched | — | — | 0.303 s | 0.300 s | MISS |
+| `/g/13/river` — the floor, no database work | — | — | 0.320 s | 0.302 s | MISS |
+| `/` — control, untouched | — | — | 0.309 s | 0.304 s | MISS |
+
+Two things in that table are worth naming. **The first-byte figure went below
+what this document has been calling the network floor**, and the floor was not
+wrong, it was the floor for a *function*: 0.30 s is what it costs Sydney to reach
+`iad1` and back. A prerendered page is served from the edge in Sydney and never
+makes that trip, so 0.075 s is a different floor and the right one for these two
+routes. `X-Vercel-Cache` reads PRERENDER on the first request and HIT after,
+where it read `MISS` on every request before. And the three controls did not
+move, which is what turns "it got faster after the deploy" into an attribution.
+
+The ticket's own number was 591 ms and the first run of the day reproduced it at
+547 ms; the 297 ms above is the warm median over four runs on the deploy
+immediately before this one, and it is the honest "before" to compare against.
+Both are the same finding and the cold figure is the one a first-time reader
+actually pays.
+
+**No flash and no shift, sampled every frame from before first paint** on hard
+loads of `/about`, `/roadmap`, `/` and `/g/13` with cookies cleared: the slot
+goes through exactly two states, empty and then the signed-out control, with no
+intermediate and nothing wrong shown in between. The nav row sits at y=57.09 and
+the header row at 28.31 px, identical before and after the answer lands, on all
+four routes; CLS 0.0000 with zero layout-shift entries. The 0.7 px the
+reservation adds shows up as the nav's y moving from 56 to 57 across the deploy,
+which is a different page, not a moving one. And the action still works from a
+prerendered page: clicking the button POSTs to `/about` with a `Next-Action`
+header and the browser lands on GitHub's sign-in.
+
+The signed-in states were verified by rendering the shipped component rather
+than in a browser: signing in needs the owner's credentials, so the curator
+badge, the sign-out control and the audit entry carrying `by` are the Tester's
+to confirm live, along with the two-session cache check.
+
 Costs, stated: one extra client request per page load, off the critical path,
 replacing a server-side session read that was on it. And a reader with
 JavaScript off loses the sign-in control, which used to be a server-rendered
