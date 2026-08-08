@@ -110,17 +110,18 @@ export default function TermsPage() {
         </P>
       </Section>
 
-      <Section title="No warranty, and what the owner is liable for">
+      <Section title="No warranty, no liability">
         <P>
           Lineage is provided as is and as available, with no warranty of any kind. It may be wrong,
           incomplete, offline, or withdrawn. Maps can be rebuilt, changed or removed. Nothing on it
           is professional advice.
         </P>
         <P>
-          To the extent the law allows, the owner is not liable for any loss arising from your use of
-          this site or of anything taken from it, including anything you wrote or published on the
-          strength of a map. Checking what you use is yours to do, and the quotes, the stamps and the
-          links back to arXiv are here so that it takes seconds.
+          The owner accepts no liability of any kind, to the maximum extent the law permits, for
+          anything arising from your use of this site or of anything taken from it, including
+          anything you wrote or published on the strength of a map. Checking what you use is yours to
+          do, and the quotes, the stamps and the links back to arXiv are here so that it takes
+          seconds.
         </P>
       </Section>
 
