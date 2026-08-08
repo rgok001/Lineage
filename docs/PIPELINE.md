@@ -404,6 +404,33 @@ Since migration 015 the stamp is `quote_verified` plus four columns — the matc
 `--corpus` scopes extraction to one trace's papers; without it the query takes
 every extracted paper in the shared papers table, which is correct for
 single-concept research use and wrong for the worker (section 10, incident 3).
+**It reads in corpus rank order** (`ORDER_BY_CORPUS_RANK`, issue #185). Until
+2026-08-08 both selection queries ordered by `p.cited_by_count DESC NULLS LAST`,
+which is the one order this stage must not use: the spend cap aborts cleanly and
+the papers left unread are whichever the ORDER BY put last, so most-cited-first
+means the papers dropped are the least-cited ones — since #181 exactly the
+reserved recent seats. A capped trace would have selected the recency partition,
+paid for it at Stage A and then not read it, and every recency figure on the
+report would have said the fix did not work for a reason unconnected to
+selection. `--corpus` already carries the arxiv ids in Stage A's own ranked
+order, so `array_position` reads them in it; interleaving was the alternative and
+was declined here because Stage A already ranked these papers and the interleave
+belongs in the corpus file (`corpus_select.py` writes the reserved seats spread
+through the rank, not appended). Without `--corpus` there is no rank to honour
+and the order falls back to `p.id`, the insertion order, which is some earlier
+trace's corpus rank: arbitrary across concepts, but carrying no citation bias.
+Verified on a throwaway PostgreSQL against the real query strings, with the
+pre-change query taken from git as the control: at a cap landing after 6 of 10
+papers the old order read 0 of the 4 recent seats and the new order read 2 of
+them, and the `--refresh` query and `--only` both keep rank order.
+**`papers.cited_by_count` has no reader in this repository as of that change.**
+It is written once, by `fetch_papers.py`'s UPSERT, from what OpenAlex said on the
+day the paper entered the system, and is refreshed only if a later trace happens
+to fetch the same paper again — a snapshot, timestamped by the `fetched_at`
+written in the same statement, and never a current figure. Selection does not
+read it (`corpus_select.py` takes citation counts live from OpenAlex on every
+run), and this ORDER BY was its last reader. Anyone wanting an age-normalised
+number for the report must fetch citations rather than read that column.
 
 **Stage C: clustering** (`stage_c_cluster.py <concept>`).
 Embeds definitions via the Voyage hosted API (1024-dim, cached in

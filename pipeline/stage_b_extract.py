@@ -133,6 +133,32 @@ def cost_usd(model: str, in_tok: int, out_tok: int) -> float:
     return in_tok / 1e6 * p_in + out_tok / 1e6 * p_out
 
 
+# In what order the money is spent, which is the order the papers are read
+# (issue #185). This used to be `p.cited_by_count DESC NULLS LAST` and that was
+# the one order this stage must not use.
+#
+# The spend cap aborts a run cleanly, which is correct, and the papers left
+# unread are whichever the ORDER BY put last. Reading most-cited-first makes
+# those the least-cited papers, and since #181 the least-cited papers are
+# precisely the reserved recent seats: a trace that hit its cap would select the
+# recent partition at Stage A, pay for it, and then not read it, and every
+# recency figure on the report would say the fix did not work for a reason that
+# has nothing to do with selection.
+#
+# Corpus rank is chosen over interleaving because Stage A already ranked these
+# papers and the rank is in the file: `--corpus` hands us the arxiv ids in
+# selection order, so `array_position` reads them in it. Interleaving would have
+# invented a second ordering policy here, in the stage least able to defend one.
+#
+# Without --corpus there is no rank to honour — that path takes every extracted
+# paper in a table shared across concepts — so it falls back to `p.id`, the
+# order the rows were inserted, which is the order some earlier trace's
+# corpus_select ranked them in. Arbitrary across concepts, but it is the one
+# available order that carries no citation bias, and that is what matters when
+# the cap lands.
+ORDER_BY_CORPUS_RANK = "ORDER BY array_position(%(arxiv_ids)s::text[], p.arxiv_id)"
+ORDER_BY_INSERTION = "ORDER BY p.id"
+
 # The papers table is shared across ALL traced concepts. Without --corpus this
 # selects every extracted paper in the DB — right when the DB holds one
 # concept's corpus (research CLI use), wrong for the worker: a new trace would
@@ -147,7 +173,7 @@ WHERE p.extracted_text_path IS NOT NULL
       WHERE d.paper_id = p.id AND d.concept = %(concept)s
         AND d.prompt_version = %(prompt_version)s
   )
-{{corpus_filter}}{{arxiv_filter}}ORDER BY p.cited_by_count DESC NULLS LAST
+{{corpus_filter}}{{arxiv_filter}}{{order_by}}
 """
 
 # The stamp is the boolean AND the four columns migration 015 added: where in
@@ -208,7 +234,7 @@ JOIN definitions d ON d.paper_id = p.id
 WHERE p.extracted_text_path IS NOT NULL
   AND COALESCE(p.text_title_match, 0) >= {TITLE_MATCH_MIN}
   AND d.concept = %(concept)s AND d.prompt_version = %(prompt_version)s
-{{corpus_filter}}{{arxiv_filter}}ORDER BY p.cited_by_count DESC NULLS LAST
+{{corpus_filter}}{{arxiv_filter}}{{order_by}}
 """
 
 # --reground re-answers the grounding question for definitions that already
@@ -534,8 +560,10 @@ def main() -> None:
         return
 
     query = SELECT_PAPERS_REFRESH if args.refresh else SELECT_PAPERS
+    order_by = ORDER_BY_CORPUS_RANK if args.corpus else ORDER_BY_INSERTION
     rows = conn.execute(query.format(corpus_filter=corpus_filter,
-                                     arxiv_filter=arxiv_filter), params).fetchall()
+                                     arxiv_filter=arxiv_filter,
+                                     order_by=order_by), params).fetchall()
     if args.limit:
         rows = rows[:args.limit]
     if not rows:

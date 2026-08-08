@@ -102,6 +102,19 @@ def fetch_source(arxiv_id: str) -> tuple[bytes, str, str] | None:
     return None
 
 
+# `papers.cited_by_count` is a SNAPSHOT, and this statement is the only writer of
+# it in the repository (issue #185). It records what OpenAlex said on the day the
+# paper entered this system, timestamped by the `fetched_at` written beside it,
+# and nothing refreshes it afterwards: it moves only if some later trace happens
+# to fetch the same paper again. Selection does not read it — corpus_select.py
+# takes citation counts live from OpenAlex on every run — and since #185 no query
+# in the pipeline orders by it either, so it is stored provenance and not an
+# input to anything.
+#
+# Named here because the next person wanting an age-normalised figure for the
+# report will reach for this column, and a stale citation count on a table whose
+# whole subject is how citation counts mislead is exactly the wrong number to
+# reach for. If a figure needs current citations, fetch them; do not read these.
 UPSERT = """
 INSERT INTO papers (arxiv_id, openalex_id, title, year, cited_by_count,
                     source_format, raw_path, fetched_at)
