@@ -75,6 +75,15 @@ what a thing *is* lives in its ticket.
 | **F7** | Sources beyond arXiv | [#35](https://github.com/rgok001/Lineage/issues/35) |
 | **F8** | A map has an owner, and can be private | [#36](https://github.com/rgok001/Lineage/issues/36) |
 | **F9** | Bring your own corpus | [#37](https://github.com/rgok001/Lineage/issues/37) |
+| **F10** | The question a map asks becomes the user's choice | [#165](https://github.com/rgok001/Lineage/issues/165) |
+
+**F10 was placed by the owner on 2026-08-08**, out of the F7 design discussion:
+some literatures move by redefining their terms (what the product maps today),
+others by changing their understanding of a stable thing (invisible to the
+current question). The user chooses the question per map; one question per map
+stays the rule, because a single comparable extraction is what keeps drift
+measurable and evidence quotable. Unsequenced until the F7 design lands, which
+decides whether widening fields or widening questions comes first.
 
 **F1 is the one that matters most.** No verification stamp in the database can be
 re-checked from stored data, because the text it was matched against is not
