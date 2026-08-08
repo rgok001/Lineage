@@ -1274,6 +1274,23 @@ fetches nothing. The reasoning is with the other navigation costs, below.
   peak with the gap drawn where the two series differ and no inner bar where a
   year has no defining paper, the key and the three rows appear and disappear
   with the state, and the comparison lines carry the other maps' figures.
+  **Live on the deploy, all four maps, 2026-08-08** — this is the "before" half
+  of #183's reading and was taken while /g/17 still is the before. `/g/13`
+  (attention): 156 papers read, 88 define the term, newest defining 2021, newest
+  read 2021, 0 papers written 2022 to 2026. `/g/10` (embedding): 187 read, 138
+  define, 2023 and 2023, 6 in the window of which 5 define. `/g/17` (dark
+  energy): 145 read, 100 define, 2016 and 2016, 0 in the window. `/g/18`
+  (instrumental variable): 145 read, 96 define, 2025 and 2025, 32 in the window
+  of which 23 define. **`newest paper read` equals `latest year` on every one of
+  the four**, which satisfies the ticket's falsifier (it may never be earlier)
+  and says something sharper than the falsifier asked for: no map has yet read a
+  paper newer than the newest one it found defining the term, so /g/17's 2016
+  ceiling is a result of what was selected and not of what the reading found.
+  That is the discrimination this figure exists to make, and it is the reading
+  F5 will be judged against. **CLS is 0.0000 with zero layout-shift entries on
+  all four report pages** (Chrome 1440x1000, cache off, hard load), unchanged by
+  the key and the three added rows: everything in the section is server-rendered
+  in the streamed content, so nothing arrives late to push anything down.
   **The years section leads with the papers-per-year chart, and the three
   quantile rows are cut** (issue #113). Lower quartile, median and upper quartile were a
   harder-to-read summary of the distribution the chart draws directly, in
