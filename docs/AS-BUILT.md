@@ -939,9 +939,14 @@ fetches nothing. The reasoning is with the other navigation costs, below.
     both deliberate. The map panel links at paper level rather than per drawn
     edge, because that panel tallies a paper's links by type instead of listing
     them and turning the tally into a list is a change to the panel, not a link.
-    And a thread paper that takes part in no relationship has no group to land
-    on, so its link arrives at the top of the evidence page: the same place the
-    only link into evidence went before this ticket, never a wrong row.
+    And the thread page shows its link only for a paper that has a group to land
+    on: section 2 groups relationships, so a paper in none has no place there,
+    and two of six links on `/g/13/river/s0` missed before that was noticed.
+    `in_evidence` is an `EXISTS` over the map's edges riding on the statement
+    that page already ran, so it costs no round trip; it was executed against a
+    throwaway PostgreSQL built from the project's migrations, including the two
+    cases that could have been wrong — a paper that is only ever a target counts,
+    and a paper whose only edge belongs to a different map does not.
   - Arrival is `app/app/hash-target.tsx` (issue #150), mounted **by this page**
     beside its groups. This is the longest streamed route in the product, so the
     browser applies the fragment seconds before any anchor exists and its own

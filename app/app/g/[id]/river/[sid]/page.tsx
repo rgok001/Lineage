@@ -23,16 +23,25 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
      it under a verified stamp claimed a grounding it never had. Same source as
      the dossier route, so a reader meets one quote per paper, not two. */
   const arxivs = s.papers.map((p) => p.arxiv);
+  // `in_evidence` rides on the statement that was already running (issue #146).
+  // The evidence page groups by relationship, so a paper taking part in none has
+  // no place there to link to, and a link that lands at the top of 62 screens is
+  // the failure that ticket exists to remove rather than a small imperfection.
+  // Measured on /g/13/river/s0 before this column: two of six links missed.
   const quoteRows = (arxivs.length
     ? await sql`
         SELECT p.arxiv_id AS arxiv, d.verbatim_quote AS quote, d.quote_verified AS verified,
-               d.quote_text_digest, p.extracted_text_digest
+               d.quote_text_digest, p.extracted_text_digest,
+               EXISTS (SELECT 1 FROM edges e
+                        WHERE e.genealogy_id = ${Number(id)}
+                          AND (e.source_paper_id = p.id OR e.target_paper_id = p.id)) AS in_evidence
         FROM definitions d JOIN papers p ON p.id = d.paper_id
         WHERE p.arxiv_id = ANY(${arxivs}) AND d.concept = ${data.concept}
           AND d.prompt_version = ${data.prompt_version} AND d.defines_concept = true
       `
     : []) as { arxiv: string; quote: string | null; verified: boolean | null;
-               quote_text_digest: string | null; extracted_text_digest: string | null }[];
+               quote_text_digest: string | null; extracted_text_digest: string | null;
+               in_evidence: boolean }[];
   const evidence = new Map(quoteRows.map((r) => [r.arxiv, {
     ...r,
     // The same resolver the dossier and the evidence page use (migration 015).
@@ -90,13 +99,19 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
                 {/* Straight to this paper's own place in the evidence, rather
                     than to the top of 62 screens (issue #146). The anchor is
                     built from the arXiv id, which is all this page has and all
-                    it needs: see lib/anchors.ts for why it is not an edge id. */}
-                {" · "}
-                <Link href={`/g/${id}/evidence#${paperAnchor(p.arxiv)}`}
-                  style={{ color: "var(--ink-soft)", textDecoration: "none",
-                    borderBottom: "1px solid var(--line)" }}>
-                  its evidence
-                </Link>
+                    it needs: see lib/anchors.ts for why it is not an edge id.
+                    Shown only where the paper has a place to land, which is what
+                    `in_evidence` is for. */}
+                {ev?.in_evidence && (
+                  <>
+                    {" · "}
+                    <Link href={`/g/${id}/evidence#${paperAnchor(p.arxiv)}`}
+                      style={{ color: "var(--ink-soft)", textDecoration: "none",
+                        borderBottom: "1px solid var(--line)" }}>
+                      its evidence
+                    </Link>
+                  </>
+                )}
               </div>
               {move && (
                 <h3 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.14rem",
