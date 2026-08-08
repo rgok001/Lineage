@@ -931,6 +931,17 @@ fetches nothing. The reasoning is with the other navigation costs, below.
     group head with a passage, collapsed rows), because the skeleton and the
     page having different shapes is what would bring back the CLS #140 measured
     at 0.000 here.
+  - **Three pages link in**, which is the half that serves the sceptic's actual
+    task: a thread page's paper and the map panel's selected paper both point at
+    `…/evidence#p-<arxiv>`, and each typed link on a dossier points at
+    `…/evidence#r-<pair>`. Every one of those strings is `lib/anchors.ts` over
+    ids the page already holds, so none of them costs a query. Two deviations,
+    both deliberate. The map panel links at paper level rather than per drawn
+    edge, because that panel tallies a paper's links by type instead of listing
+    them and turning the tally into a list is a change to the panel, not a link.
+    And a thread paper that takes part in no relationship has no group to land
+    on, so its link arrives at the top of the evidence page: the same place the
+    only link into evidence went before this ticket, never a wrong row.
   - Arrival is `app/app/hash-target.tsx` (issue #150), mounted **by this page**
     beside its groups. This is the longest streamed route in the product, so the
     browser applies the fragment seconds before any anchor exists and its own
@@ -1619,14 +1630,16 @@ already carries for fetching, pointed one step further. If a future page renders
 its targets inside a nested `<Suspense>`, the component goes inside that boundary
 with them: a sibling of the content, never an ancestor of the wait.
 
-Today it is mounted in exactly one place, `g/[id]/page.tsx`, beside the
-thread-list section — the second and last edit that file has taken for the tab
-strip. The evidence page gets it under #146, which is where it matters most and
-which withdrew its own `open-target.tsx` in favour of this one. A page with no
-anchor targets does not mount it. Verified from the build's route tree rather
-than from the source: `.next/server/app/g/[id]/page.js` references
-`hash-target`, and `g/[id]/layout.js`, `g/[id]/evidence/page.js` and
-`g/[id]/report/page.js` reference it zero times.
+It is mounted in exactly two places: `g/[id]/page.tsx`, beside the thread-list
+section, and — since #146 — `g/[id]/evidence/page.tsx`, beside the paper groups,
+which is where it matters most and which withdrew its own `open-target.tsx` in
+favour of this one. A page with no anchor targets does not mount it, and no
+layout does. When only the map mounted it, that was verified from the build's
+route tree rather than from the source: `.next/server/app/g/[id]/page.js`
+referenced `hash-target` and `g/[id]/layout.js`, `g/[id]/evidence/page.js` and
+`g/[id]/report/page.js` referenced it zero times. The evidence page's client
+bundle went from 177 B to 454 B with the mount, which is the same fact from the
+other side.
 
 `instant` is explicit rather than left to the default, so that a stylesheet later
 setting `scroll-behavior: smooth` cannot turn an anchor into a glide down the
@@ -1650,6 +1663,70 @@ re-scrolls to that anchor rather than restoring the reader's previous position;
 Back to a URL with no hash is untouched, which is the journey EVE measured.
 Without JavaScript the anchor lands wherever the browser puts it and nothing
 else changes: degraded, not broken.
+
+**The evidence page's anchors, measured on the deploy** (issue #146; headless
+Chrome 1440×900, hard loads only, because the defect #150 diagnosed is invisible
+when the content is instant and this route takes 3.3 s to arrive).
+
+| | before | after |
+|---|---|---|
+| elements carrying an `id` | **1** | **367** (287 relationships, 79 papers, 1 pre-existing) |
+| duplicate ids | 0 | 0 |
+| in-page links, and dead ones | 0, 0 | 366, **0** |
+| definition passages a find-in-page can reach | **0** | **78** distinct, one per paper group that has one |
+| page height at 1440×900, rows closed | 36 806 px (41 screens) | **55 850 px (62 screens)** |
+| the same height, on #151's re-run | 38 609 px | 57 620 px |
+| non-script markup | 2.29 MB | 2.51 MB |
+| relationships listed | 287 | 287 |
+| verified / inferred | 286 / 1 | 286 / 1 |
+
+**Arrival works, which is the check the anchors exist for.** A hard load of
+`/g/13/evidence#r-<pair>` at the top, the middle and the foot of the page landed
+with the row **in the viewport and open**, 19–20 px below the top (the
+`scroll-margin-top` this page sets), at `scrollY` 3 008, 27 625 and 55 282, with
+both quote-cards present. `#nosuchthing` scrolled nowhere: `scrollY` 0 at 0.2 s,
+1 s, 2 s and 3 s, no `<details>` opened, no console error and no page error. With
+all 287 rows opened by script, **287 of 287 carry exactly one "Earlier paper
+says" and one "Later paper says"** — product rule 1, counted from the DOM rather
+than argued.
+
+The two height rows are the same finding taken minutes apart by two sessions
+with different warm-ups; neither is wrong and both are kept, because a single
+figure here would be a claim about precision this measurement does not have.
+
+**The page got taller, not shorter, and that was the trade.** Grouping moved
+each paper's passage out of its rows and onto the group head, where a browser's
+find can reach it; 79 group heads and the index are +19 000 px. The design said
+this in advance and said the answer to 39 screens is the index and the anchors
+rather than the scrollbar. Before this, a reader's only instrument was
+find-in-page and it could not see a single quote, because Firefox and Safari do
+not search inside a closed `<details>`.
+
+**Timings did not move.** `curl` medians of 5 warm brotli requests, one discarded,
+same vantage as the tables above: `/g/13/evidence` 0.33 s to first byte and
+**3.26 s** complete against 3.32 s recorded after #143, with `/g/13/report`
+0.32 / 0.96 (recorded 1.00), `/g/13` 0.33 / 2.01 and `/about` 0.08 / 0.08 as
+controls. The wire body is 527 kB brotli; the ticket's "226 kB compressed" is not
+reproducible against the retired build and is not differenced here, but the same
+captures compressed locally at one quality give 125 kB before and 153 kB after,
+so the transfer grew by roughly a fifth.
+
+**CLS is 0.0000 on a plain hard load and 0.2968 on an anchored one.** The first
+is the number #140 measured and the one the skeleton reshape was at risk of
+breaking. The second is the target row *opening* after paint, which moves
+everything below it: it happens only when a reader followed an anchor, it is the
+row they asked for, and it belongs to `hash-target.tsx`'s mechanism rather than
+to this page's markup. The server never sees the fragment, so it cannot render
+that row open, and the alternative — not opening it — is the failure the ticket
+was filed about.
+
+**What the served bytes cannot answer.** The row bodies are not inside their
+`<details>` in the response: React emits `<template id="P:…"></template>`
+placeholders and streams the content into hidden divs that its runtime moves into
+place. So a grep over the HTML reports row quotes as being "outside a details"
+when in the assembled DOM they are inside one, and the find-in-page property has
+to be measured in a browser. Counted in the DOM it is 78 blockquotes outside any
+`<details>`; counted in the bytes it reads 296.
 
 **Clicking the tab you are already on no longer refetches that route** (issue
 #151). It was one behaviour in two files — `nav.tsx` since it shipped, `tabs.tsx`

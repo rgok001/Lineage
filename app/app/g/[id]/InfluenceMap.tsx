@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { paperAnchor } from "../../../lib/anchors";
 import type { InfluenceMapData, MapPaper } from "../../../lib/genealogy";
 
 /** The influence map: every dot a paper, size = how much later work built on it
@@ -364,6 +365,19 @@ export default function InfluenceMap({ id, data }: { id: number; data: Influence
                 background: "#1d3b31", color: "#bfe6d4", border: "1px solid #2f5f4d",
                 borderRadius: 8, padding: ".5rem .95rem", width: "100%" }}>
               Read the dossier →
+            </button>
+            {/* Into this paper's own place in the evidence, not the top of it
+                (issue #146). Paper-level rather than per-relationship, which is
+                a deviation from that ticket's design: this panel deliberately
+                tallies a paper's links by type rather than listing them, and
+                turning the tally into a list is a change to the panel, not a
+                link. The anchor is built from the arXiv id this component
+                already holds. */}
+            <button onClick={() => router.push(`/g/${id}/evidence#${paperAnchor(shown.arxiv)}`)}
+              style={{ font: "inherit", fontSize: ".74rem", cursor: "pointer", marginTop: ".45rem",
+                background: "none", color: "var(--ink-soft)", border: "none", padding: 0,
+                textAlign: "left", width: "100%" }}>
+              its relationships and their quotes →
             </button>
             {sel && (
               <button onClick={() => setSel(null)}

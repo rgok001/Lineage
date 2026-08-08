@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { paperAnchor } from "../../../../../lib/anchors";
 import { sql } from "../../../../../lib/db";
 import { getMapRow, readableQuote } from "../../../../../lib/genealogy";
 import { STAMP_COLOR, STAMP_LABEL, stampOf } from "../../../../../lib/stamp";
@@ -86,6 +87,16 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
                   style={{ color: "var(--ink)", textDecoration: "none", borderBottom: "1px solid var(--line)" }}>
                   {p.title}
                 </a>
+                {/* Straight to this paper's own place in the evidence, rather
+                    than to the top of 62 screens (issue #146). The anchor is
+                    built from the arXiv id, which is all this page has and all
+                    it needs: see lib/anchors.ts for why it is not an edge id. */}
+                {" · "}
+                <Link href={`/g/${id}/evidence#${paperAnchor(p.arxiv)}`}
+                  style={{ color: "var(--ink-soft)", textDecoration: "none",
+                    borderBottom: "1px solid var(--line)" }}>
+                  its evidence
+                </Link>
               </div>
               {move && (
                 <h3 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "1.14rem",

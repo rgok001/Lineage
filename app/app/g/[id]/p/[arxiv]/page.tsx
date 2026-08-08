@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { edgeAnchor } from "../../../../../lib/anchors";
 import { sql } from "../../../../../lib/db";
 import { getMapRow, readableQuote, TURNING_QUANTILE } from "../../../../../lib/genealogy";
 import { STAMP_COLOR, STAMP_LABEL, edgeStampOf, stampOf } from "../../../../../lib/stamp";
@@ -125,6 +126,17 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
             </span>
           )}
         </div>
+        {/* Straight to this relationship's own row, where both papers' quotes
+            are (issue #146). The anchor is the pair, which this row already
+            holds, so no query learns it; lib/anchors.ts says why it is never the
+            edge's database id. Where two edges share a pair this lands on the
+            first of them, which is the one that keeps the unsuffixed anchor. */}
+        <Link href={`/g/${id}/evidence#${edgeAnchor(l.src, l.dst)}`}
+          style={{ display: "inline-block", marginTop: ".3rem", fontFamily: "var(--font-mono)",
+            fontSize: ".62rem", color: "var(--ink-soft)", textDecoration: "none",
+            borderBottom: "1px solid var(--line)" }}>
+          the quotes behind this link →
+        </Link>
         {l.rationale && (
           <p style={{ margin: ".35rem 0 0", fontSize: ".82rem", lineHeight: 1.5, color: "var(--ink-soft)" }}>
             {l.rationale}
