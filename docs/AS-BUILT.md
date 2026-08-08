@@ -1789,6 +1789,35 @@ when in the assembled DOM they are inside one, and the find-in-page property has
 to be measured in a browser. Counted in the DOM it is 78 blockquotes outside any
 `<details>`; counted in the bytes it reads 296.
 
+**The mark explainer is a definition list, and the instruction comes first**
+(issue #157). It was four sentences of unbroken prose, one of them 44 words,
+sitting between the reader and the only instrument this page has, with "Click a
+row to see the evidence" last — after three symbol definitions nobody needs until
+they have clicked something. Three symbols defined in a run-on with semicolons
+also means a reader who scrolls back to check what `○` meant must re-read the
+whole block to find it.
+
+Same words, same vocabulary, same order, different shape: the instruction moved
+to the top with its owner-facing suffix intact, the three clauses became a `<dl>`
+with the glyph in a fixed column, and the scope sentence dropped the 20 words
+explaining why its case happens (the row names the other paper, so the reader who
+meets it can see why). #127 protects that paragraph's structure — three symbols,
+one clause each, in order — and a definition list *is* that structure, made
+individually findable; the clauses are byte-identical apart from dropping
+"means", which the list form now says.
+
+**Counted from the file's own text rather than a re-transcription**, reader
+branch, glyphs counted as tokens: **117 → 98**. The `◌` definition stays although
+this map never renders one (`●` appears 364 times, `○` once, `◌` not at all): a
+reader can meet it on another map or after a re-check, and a page that defines
+two of three marks is the #115 defect again. Nothing here is coloured, graded or
+scored, and `inferred` / `not re-checked` stay the only emphasis in the block.
+Two deviations from the ticket, both deliberate: it keeps "a **passage** marked
+●" rather than the ticket's "a paper marked ●", because what the mark is about is
+the passage and that precision is the whole of #135's work; and the ticket's
+"76 words" does not reproduce — its own proposed wording counts 100 by the rule
+above, so the shape is the win here and the length is a smaller one than claimed.
+
 **The two verification marks are the same size, which is also the answer to the
 design question #146 left open** (issue #156). Counted on the live page, every
 mark element on `/g/13/evidence`: 78 group-head marks (one paper's own passage)

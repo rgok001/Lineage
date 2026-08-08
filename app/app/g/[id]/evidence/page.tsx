@@ -182,24 +182,54 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
           check rather than the passage, and "the source text" named the
           published paper when what was searched is this system's own copy.
           Also "so it is marked" to "so the relationship is marked": the "it" had
-          drifted from the relationship to the quote between clauses. */}
-      <p style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 1rem" }}>
-        Each row is a typed relationship between two papers. ● means both quotes were found word
-        for word in the text this system pulled out of those papers; ○ means one of them could not
-        be found, so the relationship is marked <em>inferred</em>; ◌ means the quotes have not been
-        checked against those papers’ text as it now stands, so the relationship is
-        marked <em>not re-checked</em>.
-        {/* The one clause the regrouping owed this paragraph (issue #146):
-            there are now two kinds of mark on screen, one about a paper's own
-            passage and one about a pair, and they can legitimately differ. Said
-            in #135's vocabulary, after the three symbols rather than inside
-            them, so #127's structure is untouched. */}
-        {" "}The same three marks stand beside each paper’s own passage, above its
-        relationships, where each one is about that passage alone: a passage marked ● can sit
-        above a relationship marked ○, when it is the other paper’s quote that could not be
-        found.
-        Click a row to see the evidence
+          drifted from the relationship to the quote between clauses.
+
+          Reshaped, not rewritten (issue #157). It was 120 words of unbroken
+          prose in four sentences, one of them 44 words, standing between the
+          reader and the only instrument this page has -- and the instruction was
+          the last thing in it, after three symbol definitions nobody needs until
+          they have clicked something. The three clauses are byte-identical apart
+          from dropping "means", which the list form now says, and they are in
+          the same order, so #127's structure is kept rather than weakened: a
+          definition list is that structure, made individually findable. A reader
+          who scrolls back to check what one mark meant had to re-read the whole
+          block to find it.
+
+          The instruction goes first, where an instruction belongs, and keeps its
+          owner-facing suffix. The scope sentence keeps the case it exists for
+          and loses the 20 words explaining why that case happens; the reader who
+          meets it can see why, because the row names the other paper. It still
+          says "a passage marked", not "a paper marked": what the mark is about
+          is the passage, and that precision is the whole of #135's work.
+
+          The three definitions are not coloured, graded or emphasised. The glyph
+          in its own column is what makes one findable, and <em>inferred</em> and
+          <em>not re-checked</em> stay the only emphasis in the block. */}
+      <p style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 .55rem" }}>
+        Each row is a typed relationship between two papers.
+        {" "}Click a row to see the evidence
         {canEdit ? ", reclassify it, or remove it." : "."}
+      </p>
+      <dl style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 .55rem" }}>
+        <MarkDef mark="●">
+          both quotes were found word for word in the text this system pulled out of those papers.
+        </MarkDef>
+        <MarkDef mark="○">
+          one of them could not be found, so the relationship is marked <em>inferred</em>.
+        </MarkDef>
+        <MarkDef mark="◌">
+          the quotes have not been checked against those papers’ text as it now stands, so the
+          relationship is marked <em>not re-checked</em>.
+        </MarkDef>
+      </dl>
+      {/* The one clause the regrouping owed this paragraph (issue #146):
+          there are now two kinds of mark on screen, one about a paper's own
+          passage and one about a pair, and they can legitimately differ. Said
+          in #135's vocabulary, after the three symbols rather than inside
+          them, so #127's structure is untouched. */}
+      <p style={{ color: "var(--ink-soft)", fontSize: ".85rem", margin: "0 0 1rem" }}>
+        The same three marks stand beside each paper’s own passage, where they are about that
+        passage alone: a passage marked ● can sit above a relationship marked ○.
       </p>
 
       {/* A sibling of the targets, never an ancestor of the wait (issue #150).
@@ -832,6 +862,22 @@ function SectionTitle({ n, children }: { n: string; children: React.ReactNode })
       </span>
       {children}
     </h2>
+  );
+}
+
+/** One mark and what it means, in the definition list above section 2's rows
+ *  (issue #157). A `<div>` between `<dl>` and its pairs is valid and is what
+ *  lets one term sit beside its clause; the fixed column is what makes a mark
+ *  findable when a reader scrolls back to look one up, which is the whole point
+ *  of the list. `◌` is defined here and never appears on this map — that is
+ *  deliberate, a reader can meet it on another map or after a re-check, and a
+ *  page defining two of three marks is the #115 defect again. */
+function MarkDef({ mark, children }: { mark: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", gap: ".55rem", marginBottom: ".2rem" }}>
+      <dt style={{ flex: "0 0 auto", width: "1rem" }}>{mark}</dt>
+      <dd style={{ margin: 0 }}>{children}</dd>
+    </div>
   );
 }
 
