@@ -49,12 +49,17 @@ export default function TracePanel({
   initial,
   initialNow,
   fields,
+  defaultField,
   signedIn,
   owner,
 }: {
   initial: TraceRequest[];
   initialNow: string;
   fields: ArxivField[];
+  // Passed in rather than imported, so the one definition in lib/openalex.ts
+  // stays server-side. It was spelled "fields/17" here and in trace-actions.ts
+  // as well, three copies of one id (issue #175).
+  defaultField: string;
   signedIn: boolean;
   owner: boolean;
 }) {
@@ -112,12 +117,28 @@ export default function TracePanel({
             maxLength={60}
             style={{ ...input, flex: "1 1 150px" }}
           />
-          <select name="field_id" defaultValue="fields/17" aria-label="Subject field"
+          <select name="field_id" defaultValue={defaultField} aria-label="Subject field"
             title="Which discipline to search" style={{ ...input, flex: "1 1 150px" }}>
             {fields.map((f) => (
               <option key={f.id} value={f.id}>{f.name}</option>
             ))}
           </select>
+          {/* The picker offers all 26 fields OpenAlex finds arXiv work in, which
+              is the owner's decision 36 ("we should not discriminate"). But the
+              share varies by three orders of magnitude: measured 2026-08-08,
+              arXiv is 21.6% of mathematics and 20.6% of physics, against 0.13%
+              of medicine and 0.04% of arts and humanities. Stage A has no corpus
+              floor, so a thin field yields a small map wearing the same stamps
+              as a good one rather than a refusal — which is why this sits at the
+              control instead of only on /about (issue #175). Same wording as
+              /about's "Coverage is arXiv-only" limitation, deliberately: one
+              fact, one phrasing. */}
+          <p style={{ flexBasis: "100%", margin: 0, fontSize: ".78rem",
+            lineHeight: 1.5, color: "var(--ink-soft)" }}>
+            Lineage reads arXiv only, so fields that publish mainly through journals, conferences
+            or books are thin here or missing. If yours does not preprint, this is not the right
+            tool yet.
+          </p>
           <input
             name="gloss"
             placeholder="Which sense? e.g. “kernel methods in SVMs” (optional)"

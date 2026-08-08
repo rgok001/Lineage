@@ -7,6 +7,12 @@ export type ArxivField = { id: string; name: string; count: number };
 
 // Degraded-mode list if OpenAlex is unreachable: the arXiv-heavy fields, so a
 // request can still be made (Computer Science first, matching the default).
+//
+// This list is also the allow-list while OpenAlex is down, because isKnownField()
+// validates against whatever this function returns. So a page rendered with all
+// 26 fields and submitted during an outage can have a valid choice refused. That
+// is the deliberate trade: a refusal a reader can retry, rather than the silent
+// substitution issue #175 removed. Keep the entries here genuinely arXiv-heavy.
 const FALLBACK: ArxivField[] = [
   { id: "fields/17", name: "Computer Science", count: 0 },
   { id: "fields/31", name: "Physics and Astronomy", count: 0 },
@@ -43,7 +49,11 @@ export async function getArxivFields(): Promise<ArxivField[]> {
   }
 }
 
-/** The set of valid field ids, for server-side validation of a request. */
+/** The set of valid field ids, for server-side validation of a request.
+ *  Called by requestTrace() in trace-actions.ts. It was written for that job and
+ *  then never wired up, so from migration 006 until issue #175 the submit path
+ *  checked only the shape of the id; two designs cited this function as the
+ *  allow-list it was not (corrected in decision 37). */
 export function isKnownField(fields: ArxivField[], id: string): boolean {
   return fields.some((f) => f.id === id);
 }

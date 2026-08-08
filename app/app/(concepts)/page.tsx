@@ -1,17 +1,18 @@
 import Link from "next/link";
 import { getViewer, isOwner } from "../../lib/authz";
 import { listGenealogies } from "../../lib/genealogy";
-import { getArxivFields } from "../../lib/openalex";
 import { dbNow, listTraceRequests } from "../../lib/traces";
 
 export const dynamic = "force-dynamic"; // always read live DB state
 
 export default async function Home() {
-  const [rows, traces, now, fields, viewer] = await Promise.all([
+  // No getArxivFields() here: this page has no picker, and the fetch it awaited
+  // was discarded (issue #175). On a force-dynamic route that is an OpenAlex
+  // round-trip in the critical path of the front door on every cache miss.
+  const [rows, traces, now, viewer] = await Promise.all([
     listGenealogies(),
     listTraceRequests(),
     dbNow(),
-    getArxivFields(),
     getViewer(),
   ]);
 

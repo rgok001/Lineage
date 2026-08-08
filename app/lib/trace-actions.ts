@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getViewer, isOwner, requireOwner, requireViewer } from "./authz";
 import { sql } from "./db";
+import { getArxivFields, isKnownField } from "./openalex";
 
 /** Server Actions for the trace queue. Same security posture as actions.ts:
  *  every mutation authorises itself on its first line, because a Server Action
@@ -15,8 +16,6 @@ import { sql } from "./db";
 export type TraceFormState = { ok: boolean; message: string } | null;
 
 const CONCEPT_RE = /^[a-z0-9][a-z0-9 -]{1,59}$/;
-const FIELD_RE = /^fields\/\d{1,4}$/;
-const DEFAULT_FIELD_ID = "fields/17"; // Computer Science
 
 // Non-owner quota: an inbox for humans, not an API.
 const MAX_OPEN_PER_USER = 1;
@@ -35,11 +34,10 @@ export async function requestTrace(
     .trim().toLowerCase().replace(/\s+/g, " ");
   const note = String(formData.get("note") ?? "").trim().slice(0, 500) || null;
 
-  // Subject field: scopes the corpus to a discipline. Validate the shape (it
-  // becomes a CLI arg); a malformed value falls back to Computer Science rather
-  // than blocking the request. The dropdown only ever sends valid ids.
-  const rawField = String(formData.get("field_id") ?? "");
-  const fieldId = FIELD_RE.test(rawField) ? rawField : DEFAULT_FIELD_ID;
+  // Subject field: scopes the corpus to a discipline, and becomes a CLI arg for
+  // corpus_select.py --field. Checked for membership of the real field list
+  // below, not merely for shape.
+  const fieldId = String(formData.get("field_id") ?? "");
 
   // Sense gloss: free text, so strip control chars and bound the length. Passed
   // to subprocesses as a single argv element (no shell), and into an LLM prompt.
@@ -51,6 +49,23 @@ export async function requestTrace(
     return {
       ok: false,
       message: "Concept names are 2–60 characters: letters, numbers, spaces, and hyphens.",
+    };
+  }
+
+  // The picker is not the allow-list, because this is a public HTTP endpoint no
+  // matter what the UI renders (issue #175). The old check was a shape test,
+  // /^fields\/\d{1,4}$/, which accepted ten thousand ids for the twenty-six that
+  // exist: `fields/9999` passed, was approved, and died at Stage A with no seeds.
+  // Membership of the list the picker is drawn from is the real constraint, so
+  // ask for that list and check against it.
+  //
+  // Refusing beats the substitution this replaces. A shape failure used to be
+  // rewritten to Computer Science in silence, which answers a request for one
+  // subject with a map of another — the quieter half of the same defect.
+  if (!isKnownField(await getArxivFields(), fieldId)) {
+    return {
+      ok: false,
+      message: "That subject is not one we can search. Choose one from the list and try again.",
     };
   }
 

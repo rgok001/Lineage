@@ -1,7 +1,7 @@
 import Link from "next/link";
 import TracePanel from "../trace-panel";
 import { getViewer, isOwner } from "../../lib/authz";
-import { getArxivFields } from "../../lib/openalex";
+import { DEFAULT_FIELD_ID, getArxivFields } from "../../lib/openalex";
 import { dbNow, listTraceRequests } from "../../lib/traces";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +48,7 @@ export default async function TracePage() {
       </section>
 
       <TracePanel initial={traces} initialNow={now} fields={fields}
-        signedIn={!!viewer} owner={isOwner(viewer)} />
+        defaultField={DEFAULT_FIELD_ID} signedIn={!!viewer} owner={isOwner(viewer)} />
 
       <p style={{ fontFamily: "var(--font-mono)", fontSize: ".68rem", color: "var(--ink-faint)",
         lineHeight: 1.8, marginTop: "2rem", paddingTop: "1rem", borderTop: "1px solid var(--line-soft)" }}>

@@ -425,6 +425,28 @@ both from the row and passes them through as CLI args. The picker is at *field*
 granularity (26 fields); a finer *topic*-level picker (~4500 topics) was
 deferred as unnecessary for scoping.
 
+All 26 fields are offered, per decision 36, and `getArxivFields()` derives them
+live from OpenAlex (`indexed_in:arxiv` grouped by `primary_topic.field.id`,
+cached a day) rather than hard-coding a list. `requestTrace()` validates the
+submitted id against that same list via `isKnownField()`. Until issue #175 it
+did not: the check was the shape test `/^fields\/\d{1,4}$/`, so any of ten
+thousand ids reached the row, and an id outside the twenty-six that exist was
+approved and then failed at Stage A with no seeds. A value failing the old test
+was rewritten to `fields/17` in silence, answering a request for one subject
+with a map of another; it is now refused with a message instead. While OpenAlex
+is unreachable both the picker and the allow-list fall back to the six
+arXiv-heavy fields in `lib/openalex.ts`, so a choice made before an outage can
+be refused during one.
+
+The form states the coverage limit at the picker, in `/about`'s wording: arXiv
+only, so fields publishing mainly through journals, conferences or books are
+thin or missing. This is copy, not a constraint — nothing refuses a thin field,
+and Stage A has no corpus floor, so a field arXiv barely covers yields a small
+map carrying the same stamps as a large one. Measured 2026-08-08, arXiv as a
+share of each field's articles ranges from 21.6% (mathematics) and 20.6%
+(physics) to 0.13% (medicine) and 0.04% (arts and humanities); quality per
+field is read on each map's report after it builds, not gated before.
+
 **papers**, continued (013, 014): `extraction_verdict` (clean/suspect/damaged),
 `extraction_signals`, `extraction_check_version` and `extraction_checked_at`
 record what `check_extraction.py --write` found in that paper's extracted text
