@@ -134,8 +134,10 @@ app/                 Next.js app (Vercel root directory is app/)
                      /g/[id] (the influence map), /g/[id]/river/[sid] (a thread's
                      account), /g/[id]/p/[arxiv] (a paper's dossier),
                      /g/[id]/evidence (the old detailed view + workbench),
-                     /api/traces, /api/auth
+                     /api/traces, /api/viewer, /api/auth
                      layout.tsx + nav.tsx hold the one tab bar
+                     signin-button.tsx is a client component; lib/auth-actions.ts
+                     holds the two Server Actions it submits
                      g/[id]/layout.tsx + tabs.tsx hold the second one, the four
                      places inside a map; it fetches nothing, on purpose
                      skeleton.tsx holds the loading shapes every boundary shares
@@ -1248,6 +1250,15 @@ boundaries.
 - `/api/traces` : read-only JSON: `{ now, rows }`. `now` is Postgres `now()`;
   the client computes its clock skew from it and measures elapsed time and
   heartbeat staleness against database time, never the viewer's clock.
+- `/api/viewer` : read-only JSON: `{ login, owner }`, for the header's sign-in
+  control alone (issue #145). It takes no input of any kind, so there is nothing
+  to ask it about anyone else, and it answers only about the session its own
+  caller presented. `owner` is a boolean and `OWNER_GITHUB_LOGIN` is never
+  echoed: the client learns whether it is the curator, not who the curator is.
+  `force-dynamic` and `Cache-Control: no-store, private`, because the response is
+  one reader's identity and the worst failure available is serving it to another.
+  It grants nothing; `requireOwner()` inside every mutating action is still the
+  only lock.
 - `/api/auth/*` : Auth.js GitHub OAuth.
 
 **Server Actions** (`lib/actions.ts`, `lib/trace-actions.ts`): renameNode,
@@ -1263,8 +1274,9 @@ it server-side, nulls `trace_requests.genealogy_id` (trace history outlives
 the map), and lets edges cascade; papers and definitions survive, so deletion
 re-opens the concept for cheap re-tracing.
 
-**Every route is dynamic, so every route pays a round trip, and the reader is
-told the click landed** (issue #140). Nothing under `/g/[id]` is prerendered:
+**Every route that reads data is dynamic, so it pays a round trip, and the
+reader is told the click landed** (issue #140; `/about` and `/roadmap` are the
+exception since #145 and are prerendered). Nothing under `/g/[id]` is prerendered:
 each is `force-dynamic`, so a click costs a serverless invocation plus its
 database queries before anything reaches the browser. Measured on the live site
 from Sydney against the `iad1` functions, before any change (median of 9,
@@ -1379,8 +1391,8 @@ Sydney, clicking the global nav from `/g/13`, **1143 ms to `/` and 1347 ms to
 recorded here previously — that a root `loading.tsx` would also wrap `/about`
 and `/roadmap`, which navigate instantly — was not real: `/about` takes 591 ms,
 because the root layout renders `<SignInButton />` and that makes every route in
-the app dynamic. That cause is issue #145 and is design-pending; it removes the
-wait rather than covering it, and nothing here anticipates it.
+the app dynamic. That cause is issue #145, fixed below; it removes the wait
+rather than covering it, and nothing here anticipated it.
 
 The scoping is `app/app/(concepts)/`, a route group holding the home page and
 its `loading.tsx`. A route group changes no URL, so `/` still resolves to
@@ -1473,6 +1485,74 @@ evidence page is the wrong answer to a problem an index should solve), the
 `‹ the map` breadcrumbs and the two bottom cards on the map page stay, and no
 export control in the strip.
 
+**`/about` and `/roadmap` are now prerendered, and every other route on the site
+stopped waiting for a session** (issue #145). This is the only one of the three
+performance tickets that removes time rather than covering it. `layout.tsx`
+rendered `<SignInButton />` as an async server component calling `getViewer()`,
+and a dynamic API anywhere in the root layout opts **every route in the
+application** out of static generation — including the two pages that are fixed
+prose with no data in them. Nothing on the site was statically prefetchable, so
+clicking "How it works" from `/g/13` left the old page whole on screen for
+**547 ms** and "Roadmap" for **582 ms** (headless Chrome, 1440×900, the method
+#144 established).
+
+Three files, no schema, no migration, and no change to any authorisation check.
+`signin-button.tsx` is a client component that fetches `/api/viewer` after paint;
+the two Server Actions it used to declare inline moved to `lib/auth-actions.ts`,
+because a client component cannot declare one. `layout.tsx` itself is unchanged —
+the dynamism was never in the layout's own code, only in the component it
+renders, which is why the file needed no edit and the build is the only thing
+that can say whether the change worked.
+
+**The slot renders nothing until it knows the answer.** Not a spinner, and above
+all not "Sign in with GitHub" as a default, which would flash the wrong state at
+the one reader who is signed in. On a failed request it stays empty for the same
+reason: it never renders a state it has not been told, and the cost of that is
+recorded below. Its `min-height` is `1.77rem`, measured rather than chosen — both
+states of the control render 27.59 px tall at a 16 px root and the header row's
+height is exactly the control's, so a shorter reservation moves the nav down when
+the answer lands. 1.77rem is that height at the smallest root font worth
+covering, since the button's 1 px borders do not scale with the root; it costs
+the header 0.7 px of permanent height, which is not a shift. There is no
+`min-width`: the signed-in width is a function of the login (141 px to 260 px
+across 2 to 19 characters, measured), so no constant covers it, and the row is
+`space-between` with the slot flush right, so its width moves nothing either way.
+
+The mechanism did not change, only when the session is read. The actions are
+still Auth.js Server Actions with its own CSRF handling, deliberately not
+`next-auth/react`'s `signIn`/`signOut`, which is a different code path.
+`startSignIn` takes no argument and hard-codes `"/"`: the old component had a
+`redirectTo` prop defaulting to `"/"` that no call site ever set, and accepting
+one from the client would be an open redirect introduced by a performance fix.
+(`lib/trace-actions.ts` keeps its own server-side sign-in to `/trace`.)
+
+**Verified from the build's own route table, which is the falsifiable test of the
+whole ticket**: `○ /about`, `○ /roadmap` and `○ /_not-found` prerendered as
+static content, every other route still `ƒ`. Before the change all fourteen were
+`ƒ`. And the prerendered HTML is anonymous, which had to be asserted rather than
+assumed once the page became shared: `.next/server/app/about.html` and
+`roadmap.html` contain no login, no "Sign out", no "read-only", and no
+"Sign in with GitHub" — the slot holds only the `<noscript>` link. The
+occurrences of "curator" on `/about` are the page's own prose, which explains
+the word.
+
+**Authorisation is unmoved, and the build says so.** Comparing
+`server-reference-manifest.json` across the change: twelve Server Action ids
+before and twelve after, two removed and two added, and those two are the auth
+pair that moved file. Every other id is byte-identical, including the six
+reachable from the evidence page and the four from `/trace` — none changed id,
+none was added, none was lost. `requireOwner()` is untouched and is still the
+lock. The adversarial runtime test (`app/scripts/security-test.mjs`) was **not**
+run: it reads `DATABASE_URL` out of `.env.local` and needs a server on
+localhost, both of which an agent shell is refused, so it belongs to the Tester
+on a machine that has them.
+
+Costs, stated: one extra client request per page load, off the critical path,
+replacing a server-side session read that was on it. And a reader with
+JavaScript off loses the sign-in control, which used to be a server-rendered
+form; the slot carries a `<noscript>` link to `/api/auth/signin`, Auth.js's own
+page, which is one line and the honest answer.
+
 **Progress transport is polling, not SSE**, a deliberate deviation from the
 original plan: progress lives in Postgres anyway, serverless cannot hold
 streams open cheaply, and a 3 s poll of a tiny route gives the same live feel
@@ -1511,6 +1591,16 @@ who someone is and nothing more. Authorisation is ours alone and lives in
 - `requireViewer()` (signed in at all) gates trace *requests*; running a
   trace additionally requires the owner's approval row-state, enforced by the
   worker polling `approved` only.
+
+`/api/viewer` (issue #145) is the one place the header learns who it is talking
+to, and it grants nothing. It takes no input, so a caller cannot ask it about
+anyone but themselves; it returns `owner` as a boolean and never echoes
+`OWNER_GITHUB_LOGIN`, so the client learns whether it is the curator without
+learning who the curator is. Its response is one reader's identity, so it is
+`force-dynamic` with `Cache-Control: no-store, private` — the worst failure
+available on that route is one reader's login being served to another from a
+cache. Two-session confirmation of that, live, belongs to the Tester; the header
+is set in the code and asserted in a harness over the route's own branches.
 
 Adversarially verified at commit `3aceaf0`: 7 action ids harvested from the
 build manifest, 35 unauthenticated mutation attempts, all rejected, database
