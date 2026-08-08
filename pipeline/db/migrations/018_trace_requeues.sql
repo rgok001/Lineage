@@ -1,0 +1,41 @@
+-- 018: how many times a run has been restarted after the worker died under it.
+--
+-- Ticket #178, from a live incident on 2026-08-08: two deploys each SIGTERMed
+-- the worker mid-build, both jobs died still marked 'running', and the stale-row
+-- sweep then marked them 'failed'. Nothing retried them and nothing could: the
+-- app lifts a row into the queue only from 'requested' (approveTrace), so a
+-- failed request is a dead end and the only recovery is submitting the concept
+-- again by hand. The owner's instruction: "can you fix it so if they fail they
+-- automatically requeue. It not reasonable to expect someone to observe and
+-- retry upon failure."
+--
+-- **This column exists to bound that.** With the sweep restarting a job instead
+-- of failing it, a worker that dies every time it picks the job up would restart
+-- it forever, and every restart re-runs the pipeline. The per-paper and
+-- per-classification caches make a restart cheap, not free, and the spend cap is
+-- per trace (CLAUDE.md) rather than per job-lifetime, so an unbounded restart
+-- loop can spend an unbounded amount. `worker/run.py` counts restarts here and
+-- stops at MAX_AUTO_REQUEUES; the constant lives there, in the code that reads
+-- the column, and this file deliberately does not name a number so there is only
+-- one place to change it.
+--
+-- **It counts deaths with no goodbye, not every requeue.** The polite requeue on
+-- SIGINT/SIGTERM leaves it alone: that path only runs when something deliberate
+-- stopped the worker (a deploy, an operator), it always leaves a log line, and
+-- it cannot repeat without a person acting again. The unattended loop is the
+-- other one, where the process dies silently and the platform restarts it, and
+-- that is the loop worth capping. See the comments at both call sites.
+--
+-- Additive, as CLAUDE.md requires of every migration, and this one is additive in
+-- the strong sense as well as the weak one: no app query reads it. `traces.ts`
+-- names its columns rather than SELECT *, so the app deployed minutes before this
+-- migration lands sees exactly what it saw before. The `NOT NULL DEFAULT 0` is
+-- metadata-only on Postgres 11 and later (no table rewrite, no lock held while
+-- rows are visited), which matters because the pre-deploy step runs it while the
+-- old worker may still be mid-job with a row of this table open.
+--
+-- `lineage_ro` needs no GRANT here: its SELECT is held on the table, and a
+-- table-level grant covers columns added later. That is the difference from 016
+-- and 017, which each had to grant on a newly created view.
+
+ALTER TABLE trace_requests ADD COLUMN IF NOT EXISTS requeues INT NOT NULL DEFAULT 0;

@@ -815,6 +815,42 @@ The why behind the load-bearing choices, in one place:
     The decision itself stands unchanged; only its supporting description of
     the mechanism was wrong. Real membership validation ships under issue 175.
 
+38. **A run killed by infrastructure restarts itself; a run that failed on its
+    own does not** (2026-08-08, issue 178, after incident 15). The owner's
+    instruction was the specification: "can you fix it so if they fail they
+    automatically requeue. It not reasonable to expect someone to observe and
+    retry upon failure." Three parts, and the third is the one that decides what
+    this is worth.
+    **SIGTERM joins Ctrl-C.** Decision 31 made every push to master a worker
+    deploy; a deploy stops the old worker with SIGTERM and waits before SIGKILL,
+    and that window is now spent putting the job back on the queue. Nothing else
+    was needed for the case that actually happened.
+    **The sweep restarts rather than fails, up to three times.** A `running` row
+    with a cold heartbeat is a death with nothing to say, and there is no
+    diagnosis to lose by trying again. The cap exists because the alternative is
+    a crash-looping worker restarting one job forever: restarts are cheap, since
+    every LLM stage caches per paper, but cheap is not free and the spend cap in
+    CLAUDE.md is per trace rather than per job-lifetime. Three, because two
+    consecutive deploys landing on one build has already happened (incident 15,
+    pushes four minutes apart) and a job that has died four times will not
+    survive the fifth. The count lives in `trace_requests.requeues`, migration
+    018, and the constant that reads it is `MAX_AUTO_REQUEUES` in `worker/run.py`.
+    **A stage that exits nonzero still fails on the first try.** That is the
+    boundary, and it is drawn in one function, `classify_stage_exit`. A stage
+    failure has written diagnostics and will write them again; restarting it
+    would re-bill for a deterministic result and bury the error under repeat
+    attempts. The complaint being answered is about deaths that carry no
+    information, not about failures that carry plenty. The two cases were
+    indistinguishable before only because the worker never noticed the signal:
+    catching SIGTERM is what makes "died silently" a small residue rather than
+    the normal case, and the sweep's retry is the safety net under that residue.
+    **The polite requeue does not spend the retry budget**, deliberately: it runs
+    only when something deliberate stopped the worker, it always leaves a log
+    line, and it cannot repeat without a person acting again. Charging deploys
+    against the cap would mean four pushes during one long build permanently
+    failing a job that nothing is wrong with, which is the complaint rather than
+    a defence against it.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record

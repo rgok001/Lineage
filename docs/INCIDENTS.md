@@ -206,5 +206,38 @@ Recorded because the system's shape is partly their consequence.
     exposure: the 199 stamped rows carry the same defect one machine over, and
     the repair is item 12(e) of section 11.
 
+15. **Two deploys killed two builds in six minutes, and the queue failed both
+    and forgot them (2026-08-08, issue 178).** The Product Owner reported
+    "instrumental variable has stalled" minutes after the same mechanism had been
+    filed as theory on issue 177. Measured from `/api/traces` and
+    `git reflog show origin/master`, all times UTC: job 7 started 10:20:26 and
+    last heartbeated 10:22:29, 51 seconds after a push at 10:21:38; job 9 started
+    10:22:51 on the replacement worker instance and last heartbeated 10:26:45,
+    54 seconds after a push at 10:25:51. Both stopped at stage 2 of 13, `fetch
+    papers`, with the progress line frozen on the last file fetched. Job 7 was
+    swept at 10:32:31 into `status = 'failed'`, `error = 'worker stopped mid-run
+    (heartbeat went stale)'`; job 9 was due the same at ~10:36:45.
+    **Three things were wrong and only one of them was the signal.** First,
+    `worker/run.py` caught `KeyboardInterrupt` and nothing else, so the polite
+    requeue covered Ctrl-C and not the SIGTERM every deploy sends. Second, the
+    sweep that catches an abandoned row marked it failed, and a failed row has no
+    way back into the queue: the app promotes a request only from `requested`, so
+    the recovery was resubmitting the concept by hand, which is a recovery that
+    requires somebody to be watching. Third, the sweep ran only between jobs, so
+    a row abandoned by a dead instance stayed visibly `running` with a live-looking
+    progress feed for as long as the surviving worker's current build lasted.
+    **An app-only push is enough**, which is the part that will mislead anyone
+    reasoning from the changed paths: neither push touched `worker/` or
+    `pipeline/`, and `render.yaml` sets `autoDeploy: true` with no path filter.
+    **Cost: no model spend.** Both died upstream of every Anthropic stage, so the
+    loss was one Voyage embedding call and about six minutes of fetching across
+    the two. The expensive version of this incident is a deploy landing at stage 6
+    of 13, and nothing about the deploy makes that less likely.
+    **Closed (2026-08-08)** by decision 38: SIGTERM requeues, the sweep requeues
+    up to three times before failing, and the sweep runs from the heartbeat
+    thread. The owner's instruction was the whole specification: "can you fix it
+    so if they fail they automatically requeue. It not reasonable to expect
+    someone to observe and retry upon failure."
+
 ---
 

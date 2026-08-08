@@ -20,6 +20,12 @@ orchestrates them and streams their stdout into trace_requests.progress so the
 app can show "Reading paper 47 of 132" live. Postgres is the queue (FOR UPDATE
 SKIP LOCKED); there is no other infrastructure.
 
+Interruption is a first-class outcome here, and it is not failure: every deploy
+of this repo restarts the worker, so a build that is killed mid-run is normal
+operating weather rather than a defect (#178). A killed job goes back on the
+queue and re-runs; a stage that exits nonzero on its own still fails. The line
+between those two is drawn in `classify_stage_exit` and nowhere else.
+
 Usage:
     python worker/run.py            # poll forever
     python worker/run.py --once     # process at most one job, then exit
@@ -28,6 +34,7 @@ Usage:
 import argparse
 import json
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -41,12 +48,96 @@ from common import REPO_ROOT, data_dir, env  # noqa: E402
 
 POLL_SECONDS = 10
 STALE_RUNNING_MINUTES = 10  # 'running' + no heartbeat for this long => worker died
+# How many times the sweep will put a job back on the queue after finding it
+# abandoned, before it gives up and fails it. Three, because two consecutive
+# deploys landing on one build has already happened (#178: pushes 4 minutes
+# apart killed two builds) and three is comfortably past that, while a job that
+# has died four times is not going to survive the fifth attempt either. The cap
+# is the only thing standing between a crash-looping worker and unbounded spend:
+# restarts are cheap because every LLM stage caches per paper, but cheap is not
+# free and the spend cap in CLAUDE.md is per trace, not per job-lifetime.
+MAX_AUTO_REQUEUES = 3
 
 # Progress markers the stages already print; the worker changes no stage code.
 COUNTER_RE = re.compile(r"\[(\d+)/(\d+)\]")
 # Digits + at most one decimal part: "$0.0093." at a sentence end must not
 # capture the trailing period ([0-9.]+ did, and float() choked on it).
 SPEND_RE = re.compile(r"[Ss]pend:? \$([0-9]+(?:\.[0-9]+)?)")
+
+
+class Shutdown(Exception):
+    """Something outside this process asked it to stop: a deploy's SIGTERM, or
+    an operator's Ctrl-C. Interrupted, not broken."""
+
+
+# Set by the signal handler and read by classify_stage_exit. A module-level bool
+# because a signal handler may only touch what is safe to touch mid-instruction:
+# assigning a global is, and anything that takes a lock or a database connection
+# is not.
+_shutting_down = False
+
+
+def _on_shutdown_signal(signum: int, _frame) -> None:
+    global _shutting_down
+    _shutting_down = True
+    # Raising here is what makes the requeue happen at all. The main thread
+    # spends a build blocked on a read of the stage's stdout; PEP 475 has the
+    # interpreter run this handler when that read is interrupted and propagate
+    # whatever it raises, so the exception lands in main()'s handler with the
+    # job id still in hand. The flag matters too: the deploy's SIGTERM goes to
+    # the whole process group, so the stage subprocess dies of the same signal
+    # and its nonzero exit must not be read as a stage failure. Whichever of the
+    # two arrives at the top first, the job requeues.
+    raise Shutdown(f"received signal {signum}")
+
+
+def install_shutdown_handler() -> None:
+    """Make SIGTERM behave like Ctrl-C.
+
+    Render's deploy stops the old worker with SIGTERM and waits before SIGKILL,
+    so there is a window in which this process can put its job back on the queue
+    (docs/RUNBOOK.md, deploying the worker). Before #178 nothing caught SIGTERM:
+    KeyboardInterrupt covers SIGINT only, so every deploy killed its in-flight
+    build with the row still marked 'running' and the sweep later failed it.
+
+    Windows accepts the registration but does not deliver SIGTERM the way POSIX
+    does (a process there is terminated, not signalled), so this is a no-op for
+    `python worker/run.py` on the dev machine rather than a behaviour to test
+    locally. It is wrapped anyway: a worker that will not boot processes no
+    traces, which is the same reasoning startup_task is built on.
+    """
+    for name in ("SIGTERM", "SIGINT"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _on_shutdown_signal)
+        except (ValueError, OSError) as e:
+            # ValueError: not the main thread, or the platform refuses this one.
+            print(f"[worker] could not install a {name} handler: {type(e).__name__}: {e}")
+
+
+def classify_stage_exit(rc: int, shutting_down: bool) -> str:
+    """What a finished stage subprocess means: 'ok', 'interrupted' or 'failed'.
+
+    The whole of #178 turns on this being two different things rather than one,
+    so it is a function with no I/O that can be exercised without a worker, a
+    database or a signal.
+
+    **Interrupted is infrastructure and requeues.** The signal that stopped us
+    stopped the stage too (same process group), so its exit code is evidence
+    about the deploy and not about the stage. It is checked first for that
+    reason: a stage killed by SIGTERM reports a nonzero rc and is not a failure.
+
+    **Failed is a defect and stays failed.** A stage that chose to exit nonzero
+    while nobody was shutting us down has diagnostics attached and will exit the
+    same way next time. Restarting it automatically would re-bill for a
+    deterministic failure and bury the error under repeat attempts, which is
+    exactly what the owner did NOT ask for.
+    """
+    if shutting_down:
+        return "interrupted"
+    return "ok" if rc == 0 else "failed"
 
 
 def connect() -> psycopg.Connection:
@@ -213,6 +304,16 @@ class Heartbeat:
                         "UPDATE trace_requests SET updated_at = now() "
                         "WHERE id = %s AND status = 'running'", (self.job_id,))
                     conn.commit()
+                    # Sweep from here too, and bump first so this job's own row
+                    # can never be the one swept (#178). The main loop sweeps
+                    # once per poll, but it only polls when it is NOT running a
+                    # job: a job abandoned by a worker instance that died stayed
+                    # visibly 'running' with a frozen progress feed for as long
+                    # as this worker's current build lasted, which is up to
+                    # twenty minutes. This thread wakes every 30s regardless of
+                    # what the main thread is doing, so the correction is
+                    # seconds late instead of a build late.
+                    sweep_stale(conn)
                 except Exception as e:  # a cold heartbeat should surface, not crash
                     print(f"[heartbeat] job {self.job_id}: {type(e).__name__}: {e}")
         finally:
@@ -241,7 +342,12 @@ def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: i
                 if line.strip():
                     prog.line(line)
             rc = proc.wait()
-            if rc != 0:
+            # The one place the two kinds of ending are told apart. Read
+            # classify_stage_exit before changing either arm.
+            outcome = classify_stage_exit(rc, _shutting_down)
+            if outcome == "interrupted":
+                raise Shutdown(f"stopped during stage '{name}'")
+            if outcome == "failed":
                 raise StageFailed(f"stage '{name}' exited with code {rc}", tail)
 
     # Stage E created/updated the genealogy row for (concept, prompt_version).
@@ -287,26 +393,77 @@ def fail_job(conn: psycopg.Connection, job_id: int, message: str, tail: list[str
 def requeue_job(conn: psycopg.Connection, job_id: int) -> None:
     # Interrupted, not broken: back to 'approved'. Re-running is cheap — every
     # LLM stage caches its results, so completed work is not re-billed.
+    #
+    # `requeues` is deliberately NOT incremented here (#178). This path runs only
+    # when something deliberate stopped the worker — a deploy, an operator's
+    # Ctrl-C — which always leaves a log line on both sides and cannot repeat
+    # without a person acting again. The counter exists to bound the unattended
+    # loop, where the process dies with nothing to say and the platform restarts
+    # it; spending its budget on deploys would mean four pushes during one long
+    # build permanently failing a job that nothing is wrong with, which is the
+    # complaint this ticket exists to answer rather than a defence against it.
     conn.execute(
         """UPDATE trace_requests
            SET status = 'approved', started_at = NULL, updated_at = now(),
-               progress = progress || '{"message": "worker interrupted; requeued"}'
+               progress = progress || '{"message": "run interrupted by a restart; back in the queue"}'
            WHERE id = %s""", (job_id,))
     conn.commit()
 
 
 def sweep_stale(conn: psycopg.Connection) -> None:
-    """A 'running' row with a cold heartbeat means a worker died mid-job."""
+    """A 'running' row with a cold heartbeat means a worker died mid-job.
+
+    It used to mean the job was marked failed and left there, and a failed row
+    has no way back: the app promotes a request into the queue only from
+    'requested', so the requester's only recovery was submitting the concept
+    again by hand. The owner's instruction on #178, after a deploy killed two
+    builds in six minutes: "can you fix it so if they fail they automatically
+    requeue. It not reasonable to expect someone to observe and retry upon
+    failure."
+
+    So a job that died without saying anything goes back on the queue, up to
+    MAX_AUTO_REQUEUES times, and only then fails. **This is not the same as a
+    stage failing.** A stage that exits nonzero has written diagnostics and will
+    write them again; that path still fails on the first try and is decided in
+    classify_stage_exit. What lands here is silence — a process that stopped
+    heartbeating — which carries no diagnosis and is nearly always the platform's
+    doing rather than the pipeline's.
+    """
     rows = conn.execute(
+        # Every branch keys off `requeues`, which in an UPDATE reads the row's
+        # value from BEFORE this statement — so `requeues + 1` in the message is
+        # the attempt number this restart is, and the cap compares the count of
+        # restarts already spent.
         """UPDATE trace_requests
-           SET status = 'failed', finished_at = now(), updated_at = now(),
-               error = 'worker stopped mid-run (heartbeat went stale)'
+           SET status      = CASE WHEN requeues < %(cap)s THEN 'approved' ELSE 'failed' END,
+               requeues    = CASE WHEN requeues < %(cap)s THEN requeues + 1 ELSE requeues END,
+               started_at  = CASE WHEN requeues < %(cap)s THEN NULL ELSE started_at END,
+               finished_at = CASE WHEN requeues < %(cap)s THEN finished_at ELSE now() END,
+               error       = CASE WHEN requeues < %(cap)s THEN NULL ELSE
+                   format('This run was restarted automatically %%s times and the worker '
+                          'died mid-run every time, always without printing an error: the '
+                          'heartbeat simply went cold. Stopping rather than restarting it '
+                          'again, because a run that never survives costs money without '
+                          'finishing. Nothing here says the pipeline is broken. Check the '
+                          'worker''s deploy and restart history first.', requeues) END,
+               progress    = CASE WHEN requeues < %(cap)s THEN
+                   progress || jsonb_build_object('message',
+                       format('run interrupted; restarting automatically (attempt %%s of %%s)',
+                              requeues + 1, %(cap)s::int))
+                   ELSE progress END,
+               updated_at  = now()
            WHERE status = 'running'
-             AND updated_at < now() - make_interval(mins => %s)
-           RETURNING id""", (STALE_RUNNING_MINUTES,)).fetchall()
+             AND updated_at < now() - make_interval(mins => %(mins)s)
+           RETURNING id, status, requeues""",
+        {"cap": MAX_AUTO_REQUEUES, "mins": STALE_RUNNING_MINUTES}).fetchall()
     conn.commit()
-    for (jid,) in rows:
-        print(f"[sweep] job {jid}: stale 'running' row marked failed")
+    for jid, status, n in rows:
+        if status == "approved":
+            print(f"[sweep] job {jid}: heartbeat went stale; requeued automatically "
+                  f"(attempt {n} of {MAX_AUTO_REQUEUES})")
+        else:
+            print(f"[sweep] job {jid}: died mid-run {n} times without an error; "
+                  f"marked failed rather than restarted again")
 
 
 def claim(conn: psycopg.Connection) -> tuple[int, str, int, str, str | None] | None:
@@ -350,6 +507,9 @@ def main() -> None:
     ap.add_argument("--poll", type=int, default=POLL_SECONDS, help="poll interval seconds")
     args = ap.parse_args()
 
+    # Before anything that can be interrupted, including the startup migration.
+    install_shutdown_handler()
+
     # Two things that used to wait on somebody running a command by hand, on a
     # machine that does not exist. Neither is optional, both are idempotent, and
     # the worker is the only process that has the disk, the database and the repo
@@ -369,34 +529,49 @@ def main() -> None:
 
     conn = connect()
     print(f"Worker up. Polling every {args.poll}s for approved trace requests…")
-    while True:
-        sweep_stale(conn)
-        job = claim(conn)
-        if job is None:
-            if args.once:
-                print("No approved jobs. Exiting (--once).")
+    # The outer arm is for a signal that arrives with no job in hand — while
+    # polling, while claiming, or during the startup tasks above. There is
+    # nothing to requeue then, and the point of catching it is that the log says
+    # the worker was stopped rather than showing a traceback that reads like a
+    # crash. A signal arriving mid-job is caught by the inner arm, which has the
+    # job id.
+    try:
+        while True:
+            sweep_stale(conn)
+            job = claim(conn)
+            if job is None:
+                if args.once:
+                    print("No approved jobs. Exiting (--once).")
+                    return
+                time.sleep(args.poll)
+                continue
+
+            job_id, concept, corpus_limit, field, gloss = job
+            print(f'[job {job_id}] claimed: "{concept}" (field {field}, corpus limit {corpus_limit}'
+                  f'{", glossed" if gloss else ""})')
+            try:
+                run_job(conn, job_id, concept, corpus_limit, field, gloss)
+            except StageFailed as e:
+                print(f"[job {job_id}] FAILED: {e}")
+                fail_job(conn, job_id, str(e), e.tail)
+            # Shutdown is SIGTERM (a deploy) and KeyboardInterrupt is SIGINT
+            # (Ctrl-C); both mean the same thing to the job, and both must be
+            # caught above the generic Exception arm below, which would
+            # otherwise mark a deploy's victim failed. This arm is the whole
+            # deploy path: it has a grace window measured in tens of seconds and
+            # spends it on one UPDATE.
+            except (Shutdown, KeyboardInterrupt) as e:
+                print(f"\n[job {job_id}] interrupted ({e or 'Ctrl-C'}) — requeueing as 'approved'")
+                requeue_job(conn, job_id)
                 return
-            time.sleep(args.poll)
-            continue
+            except Exception as e:  # worker bug or DB hiccup: fail loud, keep living
+                print(f"[job {job_id}] ERROR: {type(e).__name__}: {e}")
+                fail_job(conn, job_id, f"{type(e).__name__}: {e}", [])
 
-        job_id, concept, corpus_limit, field, gloss = job
-        print(f'[job {job_id}] claimed: "{concept}" (field {field}, corpus limit {corpus_limit}'
-              f'{", glossed" if gloss else ""})')
-        try:
-            run_job(conn, job_id, concept, corpus_limit, field, gloss)
-        except StageFailed as e:
-            print(f"[job {job_id}] FAILED: {e}")
-            fail_job(conn, job_id, str(e), e.tail)
-        except KeyboardInterrupt:
-            print(f"\n[job {job_id}] interrupted — requeueing as 'approved'")
-            requeue_job(conn, job_id)
-            return
-        except Exception as e:  # worker bug or DB hiccup: fail loud, keep living
-            print(f"[job {job_id}] ERROR: {type(e).__name__}: {e}")
-            fail_job(conn, job_id, f"{type(e).__name__}: {e}", [])
-
-        if args.once:
-            return
+            if args.once:
+                return
+    except (Shutdown, KeyboardInterrupt) as e:
+        print(f"\n[worker] stopping ({e or 'Ctrl-C'}). No job in hand to requeue.")
 
 
 if __name__ == "__main__":

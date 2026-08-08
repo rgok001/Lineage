@@ -75,6 +75,36 @@ fourth. Success looks like "Worker up. Polling every 10s for approved trace
 requests" in the logs. An auto-deploy restarts the worker; an in-flight trace is
 killed and requeued, which is accepted at current trace volume (decision 31).
 
+**What a deploy does to a run in flight, and what it no longer does** (decision
+38, issue #178). Render stops the old worker with SIGTERM and allows a grace
+window before SIGKILL. The worker catches SIGTERM, puts its job back to
+`approved` and exits, so the new instance picks the same job up and the pipeline
+resumes from its caches. In the log that reads `[job N] interrupted (received
+signal 15) — requeueing as 'approved'`. Until 2026-08-08 it caught only SIGINT,
+so every deploy left its build marked `running` and the sweep failed it ten
+minutes later; the failure was terminal, because a failed request cannot be
+re-approved. Two consequences worth holding:
+
+- **An app-only push still restarts the worker.** `autoDeploy: true` has no path
+  filter, so a push touching only `app/` or `docs/` redeploys the worker and
+  kills whatever it is building. Blast radius does not follow the changed paths.
+- **If the row still goes stale** (SIGKILL beat the update, or the process died
+  without a signal), the sweep now requeues it rather than failing it, up to
+  three times, counting in `trace_requests.requeues`. The log line is `[sweep]
+  job N: heartbeat went stale; requeued automatically (attempt 1 of 3)`. At the
+  cap it fails with an error saying it died repeatedly, and that error is a
+  statement about the worker's restart history, not about the pipeline: read the
+  Render events for that window before resubmitting. A failed row cannot be
+  re-approved from the UI (the Approve button lifts a row only from
+  `requested`), so put it back by hand once the cause is fixed:
+  `UPDATE trace_requests SET status = 'approved', requeues = 0, error = NULL,
+  started_at = NULL, finished_at = NULL WHERE id = N;`. The partial unique index
+  on open concepts means this fails if the same concept has since been
+  resubmitted, which is the right answer: one of the two rows is redundant.
+- **A stage that exits nonzero is not retried at all**, then or ever. That is
+  deliberate: it has diagnostics attached and will fail the same way. Only
+  silence is retried.
+
 **Backup and restore.** Stage E's JSON exports under `data/` are the map
 backups; re-export after curating. Restore with
 `python pipeline/restore_genealogy.py data/genealogy_<concept>_<pv>.json`

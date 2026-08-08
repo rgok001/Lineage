@@ -467,10 +467,13 @@ extraction_check_version IS DISTINCT FROM <this version>`, so moving a threshold
 re-measures the corpus at the worker's next start with nobody remembering to ask
 (decision 25).
 
-**trace_requests** (005, 006): the request inbox and the job queue in one table.
-Status flow: `requested -> approved -> running -> complete`, plus `rejected`
-and `failed`. `progress` JSONB is written live by the worker; `updated_at`
-doubles as the worker heartbeat; `genealogy_id` links the finished map. A
+**trace_requests** (005, 006, and migration 018, `018_trace_requeues.sql`): the
+request inbox and the job queue in one table. Status flow: `requested -> approved -> running -> complete`, plus
+`rejected` and `failed`, and `running -> approved` when a run is interrupted and
+put back on the queue. `progress` JSONB is written live by the worker;
+`updated_at` doubles as the worker heartbeat; `requeues` (018) counts how many
+times a run has been restarted after dying without an error, and is read only by
+the worker's sweep, never by the app; `genealogy_id` links the finished map. A
 partial unique index allows only one open request per concept, enforced at the
 database level because app-level checks can be raced by simultaneous submits.
 
@@ -599,8 +602,8 @@ file.
 
 ## 5. The trace worker
 
-`worker/run.py`, ~230 lines, one process, no threads. Full walkthrough
-knowledge condensed:
+`worker/run.py`, ~580 lines, one process and one background thread (the
+heartbeat, which also sweeps). Full walkthrough knowledge condensed:
 
 - **Startup housekeeping.** Before polling, the worker applies database
   migrations and runs the extraction audit over papers nobody has audited
@@ -637,12 +640,37 @@ knowledge condensed:
   has priced itself the figure is a measurement and a later zero is added to it
   as one. The worker's own completion line says "not recorded" in the null case
   and prints four decimals otherwise, so the log and the report agree.
-- **Failure paths, all first-class.** Stage exits nonzero: job marked
-  `failed` with the message and the last 30 output lines (shown only to the
-  owner in the UI). Ctrl-C: job requeued to `approved`, because every
-  expensive stage caches and a re-run is nearly free. Sudden death: the next
-  poll's sweep marks any `running` row with a heartbeat older than 10 minutes
-  as failed, so a zombie spinner cannot outlive its worker by more than that.
+- **Failure paths, all first-class, and split in two since #178.** The split is
+  decided in one function, `classify_stage_exit(rc, shutting_down)`, which has
+  no I/O so the branch can be exercised without a worker or a database.
+  - *A defect fails.* A stage that exits nonzero while nobody asked the worker
+    to stop: job marked `failed` with the message and the last 30 output lines
+    (shown only to the owner in the UI). It is never retried automatically,
+    because it has diagnostics attached and will fail the same way.
+  - *An interruption requeues.* SIGTERM (every deploy sends one; decision 31
+    makes every push a deploy) and Ctrl-C both raise into the same arm, which
+    sets the row back to `approved` and exits inside Render's grace window.
+    A flag set by the handler backs this up: the signal reaches the stage
+    subprocess too, so if the child dies before the parent's exception lands,
+    the stage's nonzero exit is still read as an interruption rather than a
+    failure. Re-running is nearly free because every expensive stage caches.
+  - *Sudden death requeues too, up to a cap.* A `running` row whose heartbeat
+    is older than 10 minutes goes back to `approved` with
+    `trace_requests.requeues` incremented and a progress message reading "run
+    interrupted; restarting automatically (attempt N of 3)". At
+    `MAX_AUTO_REQUEUES = 3` it fails, with an error saying it died repeatedly
+    and that the worker's restart history is the place to look. The cap is what
+    stops a crash-looping worker re-billing a job forever. The polite requeue
+    above does not increment the counter: it needs a person to act and cannot
+    loop on its own. Before this the sweep failed such a row outright, and a
+    failed request has no way back into the queue (the app promotes only from
+    `requested`), so the requester's only recovery was resubmitting by hand.
+  - The sweep runs on every poll **and** from the heartbeat thread every ~30s,
+    which matters because the main loop only polls when it is not running a
+    job: a row abandoned by a dead instance used to sit visibly `running` with
+    a frozen progress feed for as long as the surviving worker's build lasted.
+    The heartbeat bumps its own row before sweeping, so it can never sweep the
+    job it is beating for.
 - **Completion.** Looks up the genealogy Stage E wrote for
   (concept, PROMPT_VERSION), stamps the job `complete` with `genealogy_id`.
 
