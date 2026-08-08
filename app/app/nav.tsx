@@ -15,6 +15,11 @@ const TABS: { href: string; label: string; match: (p: string) => boolean }[] = [
   { href: "/trace", label: "Map a new concept", match: (p) => p.startsWith("/trace") },
   { href: "/about", label: "How it works", match: (p) => p.startsWith("/about") },
   { href: "/roadmap", label: "Roadmap", match: (p) => p.startsWith("/roadmap") },
+  // The site has no footer, which is where a terms link would normally sit
+  // (issue #160 assumed one). This strip is where /about and /roadmap are
+  // linked from, so it is where /terms goes; it is last, and last is the
+  // weight it should carry.
+  { href: "/terms", label: "Terms", match: (p) => p.startsWith("/terms") },
 ];
 
 export default function Nav() {

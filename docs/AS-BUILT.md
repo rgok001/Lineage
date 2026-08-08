@@ -130,7 +130,7 @@ pipeline/            stages A-H + auxiliaries (Python, CLI-first; the worker
                      verdicts; gitignored). The role prompts are NOT here
 worker/run.py        the trace worker (queue consumer)
 app/                 Next.js app (Vercel root directory is app/)
-  app/               routes: /, /trace (request a map), /about, /roadmap,
+  app/               routes: /, /trace (request a map), /about, /roadmap, /terms,
                      /g/[id] (the influence map), /g/[id]/river/[sid] (a thread's
                      account), /g/[id]/p/[arxiv] (a paper's dossier),
                      /g/[id]/evidence (the old detailed view + workbench),
@@ -1314,6 +1314,25 @@ fetches nothing. The reasoning is with the other navigation costs, below.
   wiring than invention". "Bring your own corpus" is kept as a title, because it
   is a phrase a researcher recognises. "The pipeline drafts; a person decides" is
   the one place the word "pipeline" earns its keep on this page and is untouched.
+- `/terms` : the terms of use (issue #160). Fixed prose, no data, prerendered
+  (`○`) like its two neighbours. Six sections: what Lineage is, whose words the
+  papers and quotes are, what signing in stores and enables, no warranty and the
+  liability limitation, the code's license as a separate instrument, and that the
+  terms can change. It carries a single `VERSION_DATE` constant, printed in the
+  header and again in the changes section, because a terms page whose date
+  disagrees with itself is worse than one with no date at all.
+  **The two guarantees are restated here in the settled words, not new ones**,
+  and drawn as the same left-bordered cards `/about`'s trust tiers use so a
+  reader recognises them as one claim: the shape of a map is "the tool's reading"
+  (product rule 3), and a verified quote "was found word for word in the text
+  this system pulled out of the paper" (rule 2 and the wording law of #129/#135,
+  recorded in `app/lib/stamp.ts`). A terms page is the last surface that may
+  state the promise more strongly than the product supports; the page's own
+  comment says so, and says the page moves if the wording law moves.
+  **It sits in the tab strip rather than a footer**, which is what #160 asked
+  for, because the site has no footer and the strip is where `/about` and
+  `/roadmap` are linked from. It is last in `nav.tsx`'s `TABS`, which is the
+  weight it should carry.
 - `/api/traces` : read-only JSON: `{ now, rows }`. `now` is Postgres `now()`;
   the client computes its clock skew from it and measures elapsed time and
   heartbeat staleness against database time, never the viewer's clock.
@@ -1432,7 +1451,8 @@ re-opens the concept for cheap re-tracing.
 
 **Every route that reads data is dynamic, so it pays a round trip, and the
 reader is told the click landed** (issue #140; `/about` and `/roadmap` are the
-exception since #145 and are prerendered). Nothing under `/g/[id]` is prerendered:
+exception since #145 and are prerendered, and `/terms` joined them on the same
+terms in #160). Nothing under `/g/[id]` is prerendered:
 each is `force-dynamic`, so a click costs a serverless invocation plus its
 database queries before anything reaches the browser. Measured on the live site
 from Sydney against the `iad1` functions, before any change (median of 9,
