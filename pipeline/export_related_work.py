@@ -63,11 +63,50 @@ def cite_key(authors: list[str], year: int | None, title: str, taken: set[str]) 
     return key
 
 
+TEX_ESCAPES = {
+    "\\": r"\textbackslash{}",
+    "{": r"\textbraceleft{}",
+    "}": r"\textbraceright{}",
+    "~": r"\textasciitilde{}",
+    "^": r"\textasciicircum{}",
+    "&": r"\&",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "_": r"\_",
+}
+TEX_SPECIALS = re.compile(r"[\\{}~^&%$#_]")
+
+
 def tex_escape(s: str) -> str:
-    for a, b in [("\\", r"\textbackslash{}"), ("&", r"\&"), ("%", r"\%"),
-                 ("$", r"\$"), ("#", r"\#"), ("_", r"\_")]:
-        s = s.replace(a, b)
-    return s
+    r"""The ten characters TeX reserves, and nothing else (issue #141).
+
+    Byte-for-byte the twin of `texEscape` in app/lib/export.ts, down to the
+    character set and the replacement for each one: the same title has to come
+    out of both exports the same way, or a paper cited from the CLI and the same
+    paper cited from the app differ in somebody's .bib.
+
+    **The order is that there is no order.** This used to be a chain of
+    `str.replace`, backslash first and then `& % $ # _`; adding `{` and `}` to a
+    chain like that rewrites the first rule's own output, `\textbackslash{}`, on
+    a later pass. One `re.sub` over the whole class consumes each input
+    character exactly once and never rescans what it wrote.
+
+    **Every replacement is itself brace-balanced, and that is the load-bearing
+    property.** BibTeX finds the end of a field by counting braces and does not
+    honour a backslash while doing it, so the obvious `\{` is LaTeX-correct and
+    still breaks the file: a title reading "Unbalanced \{ brace" swallows the
+    rest of the entry. Measured, not assumed — that version lost 2 of 12 entries
+    through a real BibTeX parser (#141). `\textbraceleft{}` and
+    `\textbraceright{}` carry one of each brace, so no input can change the
+    depth the exporter opened the field at.
+
+    Braces are escaped rather than passed through, which loses the arXiv
+    convention of `{BERT}` to protect capitalisation. The field is already
+    wrapped in a second pair of braces for that purpose, and honouring an inner
+    brace means honouring an unbalanced one too.
+    """
+    return TEX_SPECIALS.sub(lambda m: TEX_ESCAPES[m.group()], s)
 
 
 def clean_quote(q: str) -> str:

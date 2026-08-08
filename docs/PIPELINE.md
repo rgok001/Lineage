@@ -604,6 +604,20 @@ em dash: it was not among #135's seven surfaces and was left rather than swept.
 whose author metadata is missing, and that paper is then skipped in the `.bib` and
 reported only on stdout. Same bare `[?]` as above, arriving by the route
 `edge_cite` does not cover.
+**Its `tex_escape` covers the ten characters TeX reserves and is byte-for-byte
+the twin of `texEscape` in `app/lib/export.ts`** (issue #141, from CodeQL alert
+1). It escaped `\ & % $ # _` in a chain of replaces and let `{ } ~ ^` through
+raw, so a title from OpenAlex or arXiv carrying an unbalanced brace broke the
+`.bib` a researcher pastes into a manuscript. Now one pass over the whole class,
+so no rule rewrites another's output, and every replacement is itself
+brace-balanced (`\textbraceleft{}`, not `\{`) because BibTeX counts braces to
+find the end of a field and does not honour a backslash while it counts.
+Measured on 12 adversarial titles through both real exporters: 12 of 12 entries
+parse, each title un-escapes back to its input character for character, and no
+entry gains a field; the pre-fix escaper failed 10 of the 12 and the `\{` form
+lost 2 entries outright. Braces are escaped rather than passed through, so the
+arXiv `{BERT}` capitalisation trick no longer takes effect; the field is already
+double-braced for that purpose.
 `snapshot_map.py`: the whole of one map to a timestamped JSON, before anything
 rewrites it. Stage E's export is the documented backup and holds `nodes` and
 `edges`; it does not hold `streams` (threads and their claims), `user_edits` (the

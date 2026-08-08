@@ -53,8 +53,51 @@ function citeKey(authors: string[], year: number | null, title: string, taken: S
   return key;
 }
 
-const texEscape = (s: string) =>
-  s.replace(/\\/g, "\\textbackslash{}").replace(/([&%$#_])/g, "\\$1");
+/**
+ * The ten characters TeX reserves, and nothing else (issue #141, CodeQL
+ * js/incomplete-sanitization on this line). Titles and author names come from
+ * OpenAlex and arXiv, so they are external input landing in a .bib file a
+ * researcher pastes into their own manuscript: a raw `}` there closes the field
+ * early and everything after it becomes BibTeX syntax.
+ *
+ * **The order is that there is no order.** This used to be two chained
+ * `replace`s, backslash first and then `& % $ # _`; adding `{` and `}` to a
+ * chain like that turns the first rule's own output, `\textbackslash{}`, into
+ * `\textbraceleft{}...` on the next pass. One regex over the whole class, with
+ * a lookup for the replacement, consumes each input character exactly once and
+ * never rescans what it wrote, so no rule can reach another rule's output. The
+ * substitution function is also what stops `$&` and friends in a title being
+ * read as replacement patterns.
+ *
+ * **Every replacement is itself brace-balanced, and that is the load-bearing
+ * property.** BibTeX finds the end of a field by counting braces and does not
+ * honour a backslash while doing it, so the obvious `\{` for a brace is
+ * LaTeX-correct and still breaks the file: a title reading "Unbalanced \{
+ * brace" swallows the rest of the entry. Measured, not assumed — that version
+ * of this function lost 2 of 12 entries through a real BibTeX parser (#141).
+ * `\textbraceleft{}` and `\textbraceright{}` carry one of each brace, so no
+ * input can change the depth the exporter opened the field at.
+ *
+ * Braces are escaped rather than passed through, which loses the arXiv
+ * convention of `{BERT}` to protect capitalisation. That is the right trade:
+ * the field is already wrapped in a second pair of braces for exactly that
+ * reason, so the inner ones buy nothing, and honouring them means honouring an
+ * unbalanced one too.
+ */
+const TEX_ESCAPES: Record<string, string> = {
+  "\\": "\\textbackslash{}",
+  "{": "\\textbraceleft{}",
+  "}": "\\textbraceright{}",
+  "~": "\\textasciitilde{}",
+  "^": "\\textasciicircum{}",
+  "&": "\\&",
+  "%": "\\%",
+  "$": "\\$",
+  "#": "\\#",
+  "_": "\\_",
+};
+
+const texEscape = (s: string) => s.replace(/[\\{}~^&%$#_]/g, (c) => TEX_ESCAPES[c]);
 
 /** The river is generated JSON, so a field typed as a string is not guaranteed
  *  to be one. The thread page guards the same way; anything that is not a

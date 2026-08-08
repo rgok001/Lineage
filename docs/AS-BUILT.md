@@ -813,6 +813,29 @@ was a back-link in whatever corner each page happened to use.
   for edge endpoints (#79) and which the app export marks at the point of use
   ("citation incomplete: no author metadata for this paper"). Found while
   verifying #130, predates it, and is #136.
+  **Both exports now escape all ten characters TeX reserves, in one pass, with
+  every replacement brace-balanced** (issue #141, from CodeQL alert 1,
+  js/incomplete-sanitization on `texEscape`). They escaped `\ & % $ # _` in a
+  chain of replaces and let `{ } ~ ^` through raw. Titles and author names come
+  from OpenAlex and arXiv, so that is external input landing in a `.bib` a
+  researcher pastes into their own manuscript, and an unbalanced brace in a
+  title ends the field early and turns whatever follows into BibTeX syntax
+  (rule 4: what leaves here is real metadata or nothing). The chain was replaced
+  by a single regex over the whole class with a lookup for the replacement, so
+  no rule can rewrite another's output; and `{` and `}` became
+  `\textbraceleft{}` / `\textbraceright{}` rather than `\{` / `\}`, because
+  BibTeX finds the end of a field by counting braces and does not honour a
+  backslash while counting, so the LaTeX-correct form still breaks the file.
+  Measured through both real exporters on 12 adversarial titles (backslashes,
+  lone and paired braces, `~`, `^`, `\end{document}\input{...}`, a title that is
+  itself `\textbackslash{}`, and a field-closing `}, note = {pwned}` payload):
+  12 of 12 entries parse under a real BibTeX parser, every title un-escapes back
+  to its input character for character, no entry gains a sixth field, and the
+  app and CLI emit identical bytes. The pre-fix escaper failed 10 of those 12,
+  and an intermediate `\{` version lost 2 entries outright, which is why the
+  brace form is the one it is. The cost is that the arXiv convention of writing
+  `{BERT}` in a title to protect its capitalisation no longer has any effect;
+  the field is already wrapped in a second pair of braces for that purpose.
 - `/g/[id]/p/[arxiv]` : a paper's dossier. What it contributed (novelty claims,
   labelled **"in the tool's words, not the paper's"**; they read "extracted, not
   verbatim", from which a reader could not tell whether extracted meant taken

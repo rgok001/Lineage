@@ -750,6 +750,29 @@ The why behind the load-bearing choices, in one place:
     that ease ends if a contribution is ever accepted without a contributor
     agreement.
 
+34. **A BibTeX escape is chosen for BibTeX's brace counter, not for LaTeX**
+    (2026-08-08, issue 141, from CodeQL alert 1). Completing the escape set for
+    the export meant deciding what `{` and `}` become, and the obvious answer,
+    `\{` and `\}`, is what every LaTeX reference gives. It is wrong here.
+    BibTeX finds the end of a field by counting braces and does not look at
+    backslashes while counting, so a title reading `Unbalanced { brace` escaped
+    to `Unbalanced \{ brace` still swallows the rest of the entry. That was
+    measured, not reasoned: the `\{` version lost 2 of 12 adversarial entries
+    through a real BibTeX parser before `\textbraceleft{}` and
+    `\textbraceright{}` replaced it. Those carry one brace of each kind, so the
+    whole escape table is brace-balanced and no input can change the depth the
+    exporter opened the field at. The same argument sets the shape of the
+    function: one regex pass over the ten reserved characters with a lookup for
+    the replacement, never a chain of replaces, because a chain rescans its own
+    output and `\textbackslash{}` contains three characters the later rules
+    would escape again.
+    The accepted cost is that a title written `{BERT}` on arXiv to protect its
+    capitalisation loses that protection. The field is already wrapped in a
+    second pair of braces for exactly that purpose, so the inner pair buys
+    nothing; and honouring an inner brace means honouring an unbalanced one,
+    which is the defect. A researcher's `.bib` staying parseable outranks a
+    capital letter.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record
