@@ -177,6 +177,85 @@ reservation displaced exactly 30 papers, every one of them from 1996-2016, and
 cosmon paper decision 4 exists to protect is still in the corpus. That is the
 selection-time reading of control 1; the map-level control is #183.
 
+**Pass two's selection** (`pass_two_select.py <concept> --recent-since YEAR
+--pass-two-seats R --json PATH`; issue #191, designing #184). A second
+corpus-producing CLI, and the only one that reads a map. Stage A chooses papers
+before the system knows anything about the concept; this one runs *after* a
+pass-one map exists and asks that map what came next. **Nothing calls it yet** —
+the orchestration that would put it inside a build is #192 — so today it is a
+standalone, read-only instrument that writes a file and nothing else.
+**What nominates: every concept-state, equally, two nominators each** — the
+member with the most edges touching it in either direction, and the newest member
+by year, ties broken by year then arXiv id so two runs nominate the same papers.
+Per state and not per map, and the reason is F5's own reason one level up:
+nominating the map's globally top papers asks "what happened next" only where the
+map is already dense, which reproduces the popularity bias this line of work
+exists to remove. A strand of three papers gets the same two questions as a
+strand of forty. **Not Stage F magnitude, deliberately**: F, G and H run once
+after pass two (Stage H roughly doubles a map's cost, decision 17, and has no
+cross-run cache), so nomination has to work from what exists at the end of Stage
+D — and edge degree plus recency does, with no model call. One paper can be both
+nominators and a one-paper state always is; it is then listed once.
+**The population is `genealogies.nodes`, not the `definitions` table**, the same
+correction #190 forced on Stage D: since Stage C can be scoped to a corpus, a
+definition of the concept can exist outside the map, and nominating from the
+table would aim pass two at papers the map does not contain.
+**The fetch is #180's `expand_forward`, re-aimed** at the map's defining papers
+instead of the search seeds — same batching, same `FORWARD_SORTS` control under
+two orderings, same politeness. **The gate is two signals, both binding, neither
+an absolute threshold**: cites at least `FORWARD_MIN_SEEDS_CITED` = 2 of the
+map's papers, and survives to the top 3R by relevance among those
+(`RELEVANCE_POOL_MULTIPLE`). Top-K, not a cosine floor — decision 3 holds and
+`--min-relevance` deliberately does not exist on this CLI at all. Decision 4 is
+untouched: `expand_one_hop` is not called here, and this population is the
+opposite one, written after the term's name settled.
+**The rank inside that set is nominators-cited first**, then relevance rounded to
+`RECENT_TIEBREAK_PRECISION`, then citations per year, then arXiv id. Nominator
+count leads because it is the new information pass two has and pass one did not;
+relevance has already done gate-adjacent work at signal 2, and ranking on it
+again would build a slightly better #181 rather than a two-stage method.
+**`Filled X of R pass-two seats` prints unconditionally**, with the whole funnel
+beside it (fetched, cite >= 2, eligible, after the top-3R, seated), the seats'
+spread across nominating concept-states, a loud line under-filled and a louder
+one below half. The spread is read as **coverage** — how many nominating states
+have anyone seated behind them — and not as concentration: a paper cites several
+states' nominators at once, so a per-state share above half is what a healthy
+spread looks like, and #184's actual worry is small strands getting nothing.
+**The degraded case is a finding and it prints.** Zero candidates means no recent
+arXiv work cites two of this map's papers; the sentence names the citation graph
+and stops, the run exits clean, and an empty `[]` corpus file is still written so
+that "pass two nominates nothing" and "the run fell over" do not read the same to
+#192.
+**The output** is a corpus file in the shape `fetch_papers.py` reads and
+`stage_b_extract.py --corpus` / `stage_c_cluster.py --corpus` (#190) scope by,
+plus `pass: 2`, `nominators_cited`, `nominator_arxiv_ids` and `nominating_states`
+per paper, so #192 can take the union of the two passes' files. A corpus file
+with **no** `pass` key is a pass-one file; nothing writes `pass: 1`, because the
+absence is what every file already written says. `in_corpus_refs` is null rather
+than 0 for a pass-two paper: it was never in the pool `score()` ranks, and 0
+would claim a measurement nobody took.
+**Cost: no LLM call, with or without `--dry-run`** — OpenAlex metadata on the
+polite pool plus one Voyage batch over the gate-passers. `--dry-run` selects and
+prints exactly as a real run does and writes no file.
+Measured 2026-08-09 against a fixture map rebuilt from /g/17's own published
+papers (79 papers, its six threads as concept-states plus one state for the
+papers the export places in none, 374 relationships taken from the real citation
+links across states), `--field fields/31 --recent-since 2021 --pass-two-seats 15`:
+**13 nominators across 7 states; 611 works fetched over 2 batches x 2 orderings;
+383 cite two or more of the map's papers; top 45 by relevance; 15 of 15 seats
+filled, and all 7 nominating states have a seated descendant.** The seats are the
+DESI-era line the 2016 map is missing — *Extended dark energy analysis using DESI
+DR2 BAO measurements* (2025, 6 nominators), *Dark Energy in the DESI Era* (2026,
+6), *Dynamical dark energy in light of the DESI DR2 baryonic acoustic
+oscillations* (2025, 5), *DESI 2024: reconstructing dark energy using crossing
+statistics* (2024, 3). With `--no-relevance-filter` on the same map the citation
+signal alone puts *Teleparallel gravity: from theory to cosmology* first, which
+is the ritual-citation admission the second signal exists to veto. **Caveat on
+that reading**: there is no `VOYAGE_API_KEY` on the machine that took it, so the
+relevance half ran on a deterministic hashed bag-of-words stand-in rather than on
+Voyage, exactly as #181's numbers were taken; the citation-signal figures are
+exact and the ordering within the top-3R is not Voyage's.
+
 **Acquisition** (`fetch_papers.py <corpus.json>`, `extract_text.py`).
 LaTeX source preferred, PDF fallback, 1 request per 3 seconds against arXiv.
 Gotcha: some arXiv "LaTeX" source is really a PDF inside an `\includepdf`

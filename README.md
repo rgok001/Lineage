@@ -58,6 +58,16 @@ python pipeline/corpus_select.py "attention" --limit 150 --json corpus.json
 #   --gloss "..."    : disambiguate a polysemous sense; becomes the relevance
 #                      query (e.g. "kernel" --gloss "kernel methods in SVMs")
 
+# Pass two's selection: the recent papers an ALREADY-BUILT map nominates.
+# Reads the map (nodes + edges), writes a corpus file, changes nothing. No LLM
+# call, with or without --dry-run. Nothing calls this yet (#192 is the
+# orchestration); run it by hand to read its table.
+python pipeline/pass_two_select.py "dark energy" --field fields/31 \
+    --recent-since 2021 --pass-two-seats 15 --json corpus_pass2.json
+python pipeline/pass_two_select.py "attention" --dry-run   # select, print, write nothing
+#   the output is a corpus file --corpus reads, with pass/nominators_cited added,
+#   so it can be concatenated with the pass-one file
+
 # Acquisition: download arXiv source (LaTeX-first) into DATA_DIR + papers table
 python pipeline/fetch_papers.py corpus.json --dry-run   # preview, no downloads
 python pipeline/fetch_papers.py corpus.json --limit 10  # fetch (1 req / 3s)
