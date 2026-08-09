@@ -973,6 +973,22 @@ concept-states, no relationships and no threads. On the same fixtures before the
 change, both published maps' reports named all four unpublished maps as
 reference points and printed the sample size as 6.
 
+**Live on the deploy, 2026-08-09, commit `463728f`.** All four maps' reports
+render, each one's comparison rows name exactly the other three, and all four
+print "of the 4 maps in this system". **CLS is 0.00000 with zero layout-shift
+entries and page height 6706 px on all four, unchanged**: the same measurement
+was taken on the same four URLs immediately before the push and after the deploy
+(headless Chrome 1280x900, cache off, `PerformanceObserver` on `layout-shift`
+with `hadRecentInput` excluded, `networkidle0` then waiting for a string only the
+assembled page emits, then 2.5 s of quiet). Probing ids 1 to 20 and 999, exactly
+10, 13, 17 and 18 serve a report and every other id 404s — and all fifteen answer
+HTTP 200, because this route's loading boundary flushes the shell before the page
+runs, so the verdict is read from the digest in the RSC stream and never from the
+status line (#159). **The refusal itself cannot be observed in production while
+every map is `complete`**, which is the state today: the live reading says
+nothing regressed, and the per-status behaviour is only ever provable against
+fixtures, which is why it was taken there.
+
 **Routes.**
 - `/` : the map list, with a link to `/trace` showing how many runs are in
   flight. Its closing line used to read "then curated by hand", unconditionally,
