@@ -1417,6 +1417,23 @@ fetches nothing. The reasoning is with the other navigation costs, below.
   is rendered rather than reasoned about): 21 checks, including that the
   migration-behind state never claims the map was built in one pass and never
   reaches the view its probe said was absent.
+  **Live on the deploy, all four maps, 2026-08-09.** Every one reads "This map
+  was built in one pass: nothing in its record marks a paper as read in a second
+  one. 0 of the 4 maps in this system were built in more than one pass", and no
+  pass figure row is drawn on any of them, which is the whole of what this
+  instrument can say until #192 records a pass. The Render pre-deploy had applied
+  `020` before the first request reached the new page, so the migration-behind
+  branch was not observed live and was taken against fabricated data instead —
+  that state is only ever provable at build time, which is why it was rendered
+  deliberately. **CLS is 0.00000 with zero layout-shift entries on all four report
+  pages, unchanged**: the same measurement was taken on the same four URLs
+  immediately before the push and after the deploy (headless Chrome 1280x900,
+  `PerformanceObserver` on `layout-shift` with `hadRecentInput` excluded,
+  `networkidle0` then waiting for a string only the assembled page emits, then
+  2.5 s of quiet; waiting on `networkidle0` alone measures the streaming skeleton
+  and says nothing). Page height went from 6407 px to 6706 px on every one of the
+  four: the block is server-rendered inside the streamed content, so it lengthens
+  the page without anything arriving late to push something down.
   **The years section leads with the papers-per-year chart, and the three
   quantile rows are cut** (issue #113). Lower quartile, median and upper quartile were a
   harder-to-read summary of the distribution the chart draws directly, in
