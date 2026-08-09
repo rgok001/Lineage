@@ -221,9 +221,21 @@ def main() -> None:
                   WHERE d.concept=%s AND d.prompt_version=%s AND d.defines_concept=true
               """, (args.concept, prompt_version)).fetchall()}
 
-    corpus_ids = set(papers)
+    # THIS STAGE'S POPULATION IS THE MAP, NOT THE DEFINITIONS TABLE. Stage C can
+    # now be scoped to a corpus (#190), so a definition of this concept can exist
+    # and sit outside this map; before that, every defining definition was in the
+    # map and this intersection was the identity. Without it `node_of[citing]`
+    # raises KeyError on the first such paper — reproduced on a four-of-eight
+    # corpus before it was written. Stage D deliberately does NOT take --corpus
+    # of its own (#190): a second, independent scope is a second thing to keep in
+    # agreement, and `nodes` is the one Stage C has just decided.
+    corpus_ids = set(papers) & set(node_of)
+    outside = len(papers) - len(corpus_ids)
     print(f'Finding citation links among {len(corpus_ids)} defining papers '
           f"across {len(nodes)} concept-states…")
+    if outside:
+        print(f"  ({outside} paper(s) define this concept but are not in this map, "
+              f"so they are not candidates. That is what --corpus on Stage C means.)")
 
     # candidate edges: citing (newer, descendant) -> cited (older, ancestor), cross-node
     candidates = []

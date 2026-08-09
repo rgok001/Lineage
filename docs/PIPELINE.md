@@ -483,7 +483,33 @@ read it (`corpus_select.py` takes citation counts live from OpenAlex on every
 run), and this ORDER BY was its last reader. Anyone wanting an age-normalised
 number for the report must fetch citations rather than read that column.
 
-**Stage C: clustering** (`stage_c_cluster.py <concept>`).
+**Stage C: clustering** (`stage_c_cluster.py <concept> [--corpus JSON]`).
+**`--corpus` scopes which papers the map may hold**, the same flag and the same
+semantics as Stage B's, and the worker now passes the same file to both (issue
+#190). Without it a map's membership is whatever is in `definitions` for this
+concept and prompt version — table state rather than the papers the run
+selected — so any definition row arriving by any route joins the map at the next
+clustering. That is #169 seen from the other side: there table state silently
+removes a member, here it silently adds one. It is also what makes #184's pass
+two abandonable, because "re-cluster the pass-one corpus" has to name a set of
+papers rather than a table. The scope is an **intersection, not an assertion**: a
+file naming a paper with no definition row, or one whose row says it does not
+define the concept, is the ordinary case (verified: a 10-id file over 8 papers,
+one of them non-defining and two of them unknown, clustered the 7 that qualified
+and did not error). Absent, the formatted query is byte-identical to the
+pre-change one and so is the `nodes` blob it writes from the same input, both
+checked against the file taken out of git. A file that leaves fewer than two
+definitions exits without touching the map and says the scope in the message
+rather than telling an operator to re-run the stage that costs money (verified at
+one match, zero matches and an empty file).
+**Stage D does not take `--corpus` and must not**, for the reason #190 gives: its
+population is `genealogies.nodes`, which Stage C has just written, and a second
+independent scope is a second thing to keep in agreement. It now takes that
+population as `definitions ∩ nodes` rather than as every defining definition of
+the concept — before scoping existed those were the same set, and afterwards the
+difference was a `KeyError` on the first defining paper outside the map
+(reproduced on a four-of-eight corpus). Papers excluded that way are counted on
+the stage's own first line.
 Embeds definitions via the Voyage hosted API (1024-dim, cached in
 `definitions.embedding`), then agglomerative clustering with cosine distance
 and no fixed k. `DEFAULT_THRESHOLD = 0.28`, recalibrated for Voyage vectors on

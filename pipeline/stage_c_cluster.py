@@ -19,6 +19,7 @@ Writes one genealogies row per (concept, prompt_version) with nodes as JSON.
 
 Usage:
   python pipeline/stage_c_cluster.py "attention"
+  python pipeline/stage_c_cluster.py "attention" --corpus data/corpus_attention.json
   python pipeline/stage_c_cluster.py "attention" --distance-threshold 0.30
   python pipeline/stage_c_cluster.py "attention" --no-label
 """
@@ -59,13 +60,30 @@ from stage_b_extract import PRICING, cost_usd  # noqa: E402
 DEFAULT_THRESHOLD = 0.28
 LABEL_MODEL = "claude-sonnet-5"
 
+# Without --corpus a map's membership is whatever is in `definitions` for this
+# concept and prompt version, which is table state rather than the papers a run
+# selected: any definition row arriving by any route joins the map at the next
+# clustering (issue #190). That is #169 seen from the other side — there table
+# state silently REMOVES a member, here it silently ADDS one — and it is what
+# makes #184's pass two abandonable, because "re-cluster the pass-one corpus"
+# has to name a set of papers rather than a table.
+#
+# The filter is Stage B's, in the same words, and the scope is an INTERSECTION,
+# not an assertion: a corpus file naming a paper with no definition row, or one
+# whose row says it does not define the concept, is the ordinary case and is
+# exactly what "papers that do not define the term" counts on the report.
+#
+# Absent, the formatted string is byte-identical to the query this stage has
+# always run, so nothing existing moves.
 SELECT_DEFS = """
 SELECT d.id, p.arxiv_id, p.year, p.title, d.definition, d.embedding::text
 FROM definitions d JOIN papers p ON p.id = d.paper_id
 WHERE d.concept = %(concept)s AND d.prompt_version = %(prompt_version)s
   AND d.defines_concept = true
-ORDER BY p.year NULLS LAST, p.arxiv_id
+{corpus_filter}ORDER BY p.year NULLS LAST, p.arxiv_id
 """
+
+CORPUS_FILTER = "  AND p.arxiv_id = ANY(%(arxiv_ids)s)\n"
 
 
 def embed_definitions(conn, rows, force: bool) -> np.ndarray:
@@ -249,6 +267,11 @@ def main() -> None:
     ap.add_argument("concept")
     ap.add_argument("--distance-threshold", type=float, default=DEFAULT_THRESHOLD,
                     help=f"cosine-distance cutoff for merging (default {DEFAULT_THRESHOLD})")
+    ap.add_argument("--corpus", metavar="JSON",
+                    help="restrict the map to the arxiv_ids in this corpus JSON "
+                         "(from corpus_select --json), the same flag and the same "
+                         "semantics as stage_b_extract.py; without it, EVERY "
+                         "definition this concept has at this prompt version")
     ap.add_argument("--no-label", action="store_true", help="skip LLM node labels (offline)")
     ap.add_argument("--force", action="store_true", help="re-embed even if cached")
     ap.add_argument("--embed-only", action="store_true",
@@ -258,12 +281,29 @@ def main() -> None:
     args = ap.parse_args()
 
     prompt_version = env("PROMPT_VERSION", "v1")
+    params: dict = {"concept": args.concept, "prompt_version": prompt_version}
+    corpus_filter = ""
+    if args.corpus:
+        corpus = json.loads(Path(args.corpus).read_text(encoding="utf-8"))
+        params["arxiv_ids"] = [p["arxiv_id"] for p in corpus]
+        corpus_filter = CORPUS_FILTER
+
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
-    rows = conn.execute(SELECT_DEFS, {"concept": args.concept,
-                                      "prompt_version": prompt_version}).fetchall()
+    rows = conn.execute(SELECT_DEFS.format(corpus_filter=corpus_filter), params).fetchall()
     if len(rows) < 2:
+        # The advice has to name the scope, or an operator who passed the wrong
+        # corpus file is told to re-run the one stage that costs money.
+        if args.corpus:
+            sys.exit(f"Need at least 2 definitions to cluster; found {len(rows)} for "
+                     f'"{args.concept}" at prompt {prompt_version} among the '
+                     f"{len(params['arxiv_ids'])} paper(s) named by {args.corpus}.\n"
+                     f"  Either Stage B has not run for these papers, or this is not "
+                     f"the corpus file this map was built from.")
         sys.exit(f"Need at least 2 definitions to cluster; found {len(rows)} for "
                  f'"{args.concept}" at prompt {prompt_version}. Run Stage B first.')
+    if args.corpus:
+        print(f"Scoped to the {len(params['arxiv_ids'])} paper(s) named by {args.corpus}: "
+              f"{len(rows)} of them define this concept at prompt {prompt_version}.")
 
     # Clustering writes genealogies.nodes wholesale (ON CONFLICT DO UPDATE), so a
     # curated map does not survive a re-run. --embed-only exists so a refreshed

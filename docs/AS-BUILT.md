@@ -678,7 +678,9 @@ heartbeat, which also sweeps). Full walkthrough knowledge condensed:
   `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED) RETURNING`, so
   two workers can never take the same job and Postgres itself is the queue.
 - **Execution.** Runs the pipeline stages as subprocesses (`python -u`,
-  unbuffered) in order, passing `--corpus` to Stage B. Subprocesses were
+  unbuffered) in order, passing `--corpus` to Stage B and, since #190, the
+  same file to Stage C — the first stops a past trace's corpus being re-billed,
+  the second stops it being clustered into this map. Subprocesses were
   chosen over imports so the pipeline stays CLI-first, a stage crash cannot
   kill the loop, and stdout is a parseable stream.
 - **Progress.** Stages already print `[i/N]` counters and `spend $X` lines;
@@ -2584,7 +2586,9 @@ semantically they should be 403, accepted as open polish.
 
 Money controls, layered: owner approval before any run; per-user request
 quotas; `TRACE_SPEND_CAP_USD` aborts a stage mid-run; Stage B `--corpus`
-scoping prevents cross-corpus billing; and an account-level cap at
+scoping prevents cross-corpus billing; Stage D's classification cache (#172)
+means an aborted or repeated run re-bills only what genuinely changed; and an
+account-level cap at
 console.anthropic.com (owner action, recommended, **attestation pending**).
 
 That last one is an **attested claim**, and this file is its one home. It is a

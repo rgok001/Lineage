@@ -170,7 +170,13 @@ def stages_for(concept: str, corpus_limit: int, field: str,
         # would be re-billed against the new concept.
         ("extract definitions", py + ["pipeline/stage_b_extract.py", concept,
                                       "--corpus", corpus_json] + gloss_arg),
-        ("cluster concept-states", py + ["pipeline/stage_c_cluster.py", concept]),
+        # --corpus again, and for the second half of the same reason: without it
+        # a map's membership is whatever is in the definitions table for this
+        # concept, so any row arriving by any other route joins the map at the
+        # next clustering (#190). Stage B's flag stops a past trace's corpus
+        # being re-billed; this one stops it being clustered in.
+        ("cluster concept-states", py + ["pipeline/stage_c_cluster.py", concept,
+                                         "--corpus", corpus_json]),
         ("classify edges", py + ["pipeline/stage_d_edges.py", concept]),
         # Free, and it runs immediately before grounding for the same reason
         # Stage E re-copies the edge quotes there: a stamp must not be older than
