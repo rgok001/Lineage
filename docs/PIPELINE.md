@@ -64,6 +64,7 @@ recomputes the definition stamps against the text actually on disk (decision 19)
 and `enrich_authors.py` fills the author metadata the export cannot invent.
 
 ```
+BEFORE    save the current map (snapshot_map.py --allow-missing)
 PASS ONE  select corpus, fetch papers, extract text, audit extracted text,
           extract definitions (B), cluster concept-states (C), classify edges (D),
           re-check definition quotes, ground & assemble pass one (E --no-publish),
@@ -79,6 +80,26 @@ FINISH    record how this build's second pass ended, fill author metadata,
           score magnitude (F), compose threads (G), check each claim (H),
           ground & publish (E)
 ```
+
+**Nothing is destroyed before the old map is saved** (issue #173). Decision 12
+refuses a second map for a concept, so a trace against a term that already has
+one is a rebuild, and Stage C's `UPSERT_GENEALOGY` is where the old one starts
+disappearing: it overwrites `nodes`, sets `status` back to `running`, and
+`CLEAR_STALE_EDGES` takes the relationships whose meaning moved. The build's first
+act is therefore `snapshot_map.py --allow-missing --result-json`, which writes the
+whole row and everything hanging off it to a timestamped file under
+`DATA_DIR/snapshots/`. It runs ahead of corpus selection rather than beside Stage
+C for two reasons: `fetch_papers.py` and `extract_text.py` rewrite the extracted
+text on disk that the live map's verified quotes were checked against, so a step
+before Stage C already erodes what a snapshot is worth; and a snapshot that cannot
+be taken should cost the build nothing, which here means no arXiv politeness and
+no money. Once per job, not once per pass — by the time pass two re-clusters, pass
+one has already overwritten the map, and there is nothing left that this snapshot
+does not hold. **A failure, or a success that leaves no readable record of itself,
+fails the job while the map is still untouched.** The step's own path and counts
+go into the requester's progress feed. `data/genealogy_<concept>_<pv>.json` is
+therefore a deliverable again rather than incident 4's improvised backup;
+`docs/RUNBOOK.md` holds the restore procedure.
 
 **Publication is one act, at the end.** Every assembly before it runs
 `--no-publish`, so `status` never reaches `complete` — which since #168 is the
@@ -783,8 +804,11 @@ good quotes on where a line happened to break, and a rejection renders as
 copied correctly; otherwise it renders
 dotted and is labelled inferred, never upgraded, never hidden. Writes the
 genealogy JSON export to `data/genealogy_<concept>_<pv>.json` and marks the
-genealogy complete. **These exports are the de-facto backups** (section 10,
-incident 4). Re-run Stage E after curating.
+genealogy complete. These exports **were** the de-facto backups (section 10,
+incident 4) and stopped being so with #173: the worker now snapshots a map before
+it rebuilds it, and a snapshot holds the threads, the curatorial audit trail and
+the definitions an export does not. An export is a deliverable, and a partial one
+as a backup. Re-run Stage E after curating.
 **One matcher, and it now says where.** `grounded_span` returns the half-open
 character offsets of the leftmost match, or None. The unit is **Unicode code
 points, as Python indexes them, not UTF-16 code units, so JavaScript must not
@@ -1015,19 +1039,35 @@ lost 2 entries outright. Braces are escaped rather than passed through, so the
 arXiv `{BERT}` capitalisation trick no longer takes effect; the field is already
 double-braced for that purpose.
 `snapshot_map.py`: the whole of one map to a timestamped JSON, before anything
-rewrites it. Stage E's export is the documented backup and holds `nodes` and
+rewrites it. Stage E's export holds `nodes` and
 `edges`; it does not hold `streams` (threads and their claims), `user_edits` (the
 curatorial audit trail), or the definitions the edges quote, which a repair
 overwrites in place. Incident 4 was recovered from that export with its audit
-trail lost, which is the same gap. Restoring is deliberately not automated: the
+trail lost, which is the same gap. **Since #173 the worker runs this as the first
+step of every build** (§4 above), which is what stopped the export doing a
+backup's job. Two flags exist for that caller: `--allow-missing`, so that a first
+build of a term reports "nothing to snapshot" and exits 0 rather than failing a
+build that has nothing to save, and `--result-json PATH`, which writes
+`{existed, path, genealogy_id, status, nodes, edges, definitions, user_edits,
+threads, bytes}` for a caller that has to decide on a file rather than parse a
+stage's prose. Without `--allow-missing` a missing map still exits 1, which is the
+operator's path and is unchanged. A snapshot that cannot be written exits non-zero
+naming the path, and one whose record cannot be written exits non-zero saying the
+snapshot itself is safe and where. Restoring is deliberately not automated: the
 file is plain JSON and a restore is a decision. It prints the curatorial edits
 rather than counting them, and since decision 18 it prints each one's actor with
 the basis for the name: this is the forensic tool for "who changed this map", so
 the answer belongs where the owner is already looking. Entries written before
 decision 18 print as `actor not recorded`, which is the whole truth about them.
 `restore_snapshot.py`: puts a map back the way `snapshot_map.py` found it, by id
-so nothing is orphaned: concept-states, threads, every edge, and each
-definition's quote, verdict and magnitude scores. `user_edits` is the one thing
+so nothing is orphaned: concept-states, threads, **the map's `status`**, every
+edge, and each
+definition's quote, verdict and magnitude scores. `status` came back into scope
+with #173: Stage C sets it to `running` at the moment it overwrites a map and
+since #168 the app serves only `complete`, so a restore that left it standing
+would hand back a map nobody can open. Whatever the snapshot recorded is what
+comes back, and the run prints it, adding that the map is invisible to a reader
+where the restored value is not `complete`. `user_edits` is the one thing
 not overwritten; the restore appends itself to it with `||` in the database,
 because a restore is an event in a map's history rather than a way to un-happen
 one, and because read-modify-write on that array loses a concurrent web edit. It cannot restore the

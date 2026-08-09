@@ -113,9 +113,12 @@ re-approved. Two consequences worth holding:
 **Watching a two-stage build** (#192). The feed narrates the passes: `pass one
 complete: N paper(s) read, M meaning(s), K relationship(s). Not yet published.`,
 then `pass two: X recent paper(s) cite this map, Y cite two or more of it, Z
-cleared both signals. Reading the top R.`, then the finish. A build runs up to 28
+cleared both signals. Reading the top R.`, then the finish. A build runs up to 29
 stages and the feed's total is corrected downward the moment a pass is skipped,
-with the reason on the same flush. **The map is invisible for the whole of it**:
+with the reason on the same flush. Its first line is either `saved the current map
+before rebuilding it: … -> <path>` or `no existing map for this term to save: this
+is its first build.` — see the backup paragraph below. **The map is invisible for
+the whole of it**:
 `status` stays `running` until the last stage, and since #168 the read path
 refuses anything that is not `complete`.
 
@@ -153,12 +156,65 @@ sentence, not a code. A map that should read "built in one pass" has its record
 removed rather than set to `passes = 1`:
 `DELETE FROM map_build_passes WHERE genealogy_id = N;`.
 
-**Backup and restore.** Stage E's JSON exports under `data/` are the map
-backups; re-export after curating. Restore with
-`python pipeline/restore_genealogy.py data/genealogy_<concept>_<pv>.json`
-(refuses if the genealogy already exists). Papers, texts, and definitions are
-not covered by exports; they live in Postgres and `DATA_DIR` and are cheap to
-regenerate except for LLM spend, which the caches mostly protect.
+**Backup and restore.** **The backup of record is the snapshot the worker takes
+before every build** (issue #173), at `DATA_DIR/snapshots/<concept>_<pv>_<stamp>.json`
+— on Render that is `/data/snapshots/`. It holds the genealogy row, its
+concept-states, its threads, its curatorial audit trail, its `status`, every edge
+with its quotes and stamp columns, and every definition the quotes come from.
+Stage E's JSON exports under `data/` are deliverables and hold only `nodes` and
+`edges`; they are not the backup and have not been since #173. Papers, texts and
+definitions are not covered by an export at all; they live in Postgres and
+`DATA_DIR` and are cheap to regenerate except for LLM spend, which the caches
+mostly protect.
+
+**Retention is a sentence rather than a mechanism, deliberately: nothing prunes
+these and nothing should.** One JSON per build of one concept, and a build takes
+about fifty minutes, so the arrival rate is a handful a week at most. Size scales
+with the map: the attention export (156 papers, 287 verified edges) is 235 KB and
+a snapshot holds that plus the definitions and threads, so budget under a megabyte
+each. If the worker's disk ever becomes the constraint, delete the oldest by hand
+after checking that the map they describe is still live; do not automate it, and
+never delete the newest snapshot of a map that is currently being rebuilt.
+
+**Restoring a map a re-trace destroyed.** This is the recovery path when a build
+dies after Stage C — the map is then invisible, because Stage C set `status =
+'running'` and the site serves only `complete`. It needs `DATABASE_URL`, so it is
+run from a terminal with database access and never from an agent shell.
+
+```sh
+# 1. find the snapshot. The newest one for the concept is the build that broke it.
+ls -t /data/snapshots/ | head
+
+# 2. read it back before writing anything: the counts now vs the counts in the file.
+python pipeline/restore_snapshot.py /data/snapshots/<file>.json --dry-run
+
+# 3. restore.
+python pipeline/restore_snapshot.py /data/snapshots/<file>.json --confirm
+
+# 4. re-ground, free, because the restore cannot restore the extracted text.
+python pipeline/stage_e_ground.py "<concept>"
+
+# 5. confirm the map satisfies the rules that built it.
+python pipeline/check_map.py "<concept>"
+```
+
+Four things about it that are not obvious from the commands. It restores **into
+an existing row** by id; if the row itself is gone, `restore_genealogy.py` from an
+export is the only path and it recreates a row with a new id. It restores the
+snapshot's `status`, so a map that was `complete` comes back visible on the site
+and a map that was already mid-build comes back mid-build, and the run prints
+which. It does **not** overwrite `user_edits`: the audit trail is append-only, and
+the restore appends itself to it, so the map's history says it was restored rather
+than pretending nothing happened. And step 4 is not optional if the papers were
+re-extracted since the snapshot — the verdicts coming back describe text that may
+no longer be on disk, and Stage E is what makes the verified count true again,
+even if it comes back lower.
+
+Verified end to end on fixtures rather than on a live map (#173): snapshot a
+curated map, destroy it with Stage C's own `UPSERT_GENEALOGY` plus Stage D's edge
+delete plus a definition refresh, restore, and the concept-states, threads,
+status, all edge columns and all definition columns come back identical, with one
+`restore` entry appended to the audit trail.
 
 If Stage E ends with "Publishing the export then FAILED" (on **stderr**, like
 every other refusal the stage makes), the database has the new map and the file
@@ -231,7 +287,8 @@ step 1 and re-run step 2; nothing is damaged, but nothing is published either.
    selectable as the re-extraction queue later.
 
 2. **Live-data step 2, the re-ground.** Per map, and **take the snapshot first**
-   (incident 4: the exports are the de-facto backups):
+   (the worker takes one before a build since #173; a hand-run repair is not a
+   build, so this one is yours to take):
 
    ```
    python pipeline/snapshot_map.py "attention"

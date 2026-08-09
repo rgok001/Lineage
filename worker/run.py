@@ -9,6 +9,7 @@ corpus the way it always did and assembles a map from it; pass two then asks tha
 map which of its papers were the turning points, reads the recent work that cites
 them, and re-clusters over both passes together. Only then is the map published.
 
+    BEFORE    save the current map, if this concept already has one
     PASS ONE  select corpus -> fetch -> extract -> audit -> B -> C -> D
                   -> reground -> E --no-publish -> record pass one
     PASS TWO  pass_two_select -> fetch -> extract -> audit -> B --dry-run
@@ -17,8 +18,19 @@ them, and re-clusters over both passes together. Only then is the map published.
     FINISH    record the build -> enrich authors -> F -> G -> H
                   -> E (the one publish)
 
-Three things carry that shape and each has a reason that would be expensive to
+Four things carry that shape and each has a reason that would be expensive to
 rediscover.
+
+**Nothing is destroyed before the old map is saved.** A trace against a concept
+that already has a map is a rebuild, and Stage C's first write is where the old
+one starts disappearing. The build's first act is therefore `snapshot_map.py`,
+which writes the whole row and everything hanging off it — the threads and the
+curatorial edits Stage E's export does not hold — to a timestamped file under
+DATA_DIR. It runs ahead of corpus selection rather than beside Stage C because a
+snapshot that cannot be taken should cost the build nothing, and because fetching
+and extraction rewrite the text on disk the live map's quotes were checked
+against. A failure, or a success that leaves no record of itself, fails the job
+while the map is still untouched (#173).
 
 **Publication happens once, at the very end.** Every assembly before it runs
 `--no-publish`, so `status` never reaches 'complete' while the map is still being
@@ -242,6 +254,10 @@ def trace_paths(concept: str) -> dict[str, str]:
         "corpus_union": str(d / f"corpus_{slug}_union.json"),
         "pass_two_stats": str(d / f"pass2_stats_{slug}.json"),
         "pass_two_estimate": str(d / f"pass2_estimate_{slug}.json"),
+        # Not the snapshot itself — that is timestamped and kept forever under
+        # DATA_DIR/snapshots/. This is the note saying where the last one went,
+        # and it is overwritten every build on purpose.
+        "snapshot_result": str(d / f"snapshot_{slug}.json"),
     }
 
 
@@ -263,6 +279,32 @@ def plan_for(concept: str, corpus_limit: int, field: str,
     # Stage B's extraction question. The field scopes the corpus to a discipline.
     gloss_arg = ["--gloss", gloss] if gloss else []
     seats = pass_two_seats(corpus_limit)
+
+    # ── before anything ─────────────────────────────────────────────────────
+    #
+    # The first step of every build, ahead of even corpus selection, and a phase
+    # of its own so that the worker can read what it wrote before the next stage
+    # starts (#173).
+    #
+    # **Why first rather than immediately before Stage C**, which is where the
+    # design put it and which is the actual moment of destruction (`UPSERT_GENEALOGY`
+    # rewrites `nodes` and sets `status = 'running'`; `CLEAR_STALE_EDGES` takes the
+    # relationships whose meaning moved). Two reasons, and neither is tidiness.
+    # Between here and Stage C sit `fetch_papers.py` and `extract_text.py`, which
+    # rewrite the extracted text on disk that the live map's verified quotes were
+    # checked against — so a step of this build damages the snapshot's usefulness
+    # before Stage C is reached. And a snapshot that fails should cost the build
+    # nothing: here it costs no arXiv politeness and no money, and the refusal is
+    # unambiguously upstream of every write, which is the property this step is for.
+    #
+    # Once per job, not once per pass. Pass two re-clusters the same map, and by
+    # then pass one has already overwritten it: there is nothing left to save that
+    # this snapshot does not hold.
+    snapshot = [
+        ("save the current map", py + ["pipeline/snapshot_map.py", concept,
+                                       "--allow-missing",
+                                       "--result-json", paths["snapshot_result"]]),
+    ]
 
     pass_one = [
         ("select corpus", py + ["pipeline/corpus_select.py", concept,
@@ -422,7 +464,8 @@ def plan_for(concept: str, corpus_limit: int, field: str,
         ("ground & publish", py + ["pipeline/stage_e_ground.py", concept]),
     ]
 
-    return {"pass_one": pass_one, "pass_two_select": pass_two_select_phase,
+    return {"snapshot": snapshot,
+            "pass_one": pass_one, "pass_two_select": pass_two_select_phase,
             "pass_two_fetch": pass_two_fetch_phase, "pass_two_read": pass_two_read_phase,
             "pass_two_fallback": pass_two_fallback_phase, "finish": finish,
             "seats": seats, "paths": paths}
@@ -438,7 +481,7 @@ def stages_for(concept: str, corpus_limit: int, field: str,
     fallback.
     """
     p = plan_for(concept, corpus_limit, field, gloss)
-    return (p["pass_one"] + p["pass_two_select"] + p["pass_two_fetch"]
+    return (p["snapshot"] + p["pass_one"] + p["pass_two_select"] + p["pass_two_fetch"]
             + p["pass_two_read"] + p["finish"])
 
 
@@ -832,22 +875,60 @@ def run_pass_two(conn: psycopg.Connection, job_id: int, runner: "StageRunner",
                                         cleared=stats.get("cleared")), counts
 
 
+def run_snapshot(runner: "StageRunner", plan: dict, concept: str) -> None:
+    """Save whatever map this concept already has, before the build replaces it.
+
+    Decision 12 refuses a second map for a concept, so a trace against a term that
+    already has one is a rebuild: Stage C writes over `nodes`, sets the status back
+    to `running` and clears the relationships whose meaning moved. Until #173 the
+    only thing standing behind that was Stage E's export, which holds `nodes` and
+    `edges` and does not hold the threads, the curatorial audit trail, or the
+    definitions the quotes come from. Incident 4 was recovered from it with the
+    audit trail lost. `snapshot_map.py` holds all of it and existed for this.
+
+    **A failure here fails the build, and the build has destroyed nothing yet.**
+    That is the reason this runs first rather than beside Stage C. There are two
+    ways to fail and both refuse: the stage exits non-zero (StageRunner raises), or
+    it exits zero having written no record this worker can read, which is the same
+    situation as far as anyone asking "is the old map saved" is concerned. Neither
+    is a place to carry on and hope.
+    """
+    runner.run_all(plan["snapshot"])
+    result = read_json_file(plan["paths"]["snapshot_result"], "record of the saved map")
+    if result is None:
+        raise StageFailed(
+            "the step that saves the existing map exited cleanly but left no record "
+            "of what it saved, so nothing here can say whether there is a copy to go "
+            "back to. Stopping before the build overwrites anything; the map is "
+            "exactly as it was.", runner.tail)
+    if not result.get("existed"):
+        # A first build of a term. Said out loud rather than passed over, because
+        # "no snapshot was taken" has two causes and only one of them is fine.
+        runner.prog.note("no existing map for this term to save: this is its first build.")
+        return
+    runner.prog.note(
+        f"saved the current map before rebuilding it: {result.get('nodes')} meaning(s), "
+        f"{result.get('edges')} relationship(s), {result.get('user_edits')} curatorial "
+        f"edit(s) -> {result.get('path')}")
+
+
 def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: int,
             field: str, gloss: str | None) -> None:
     plan = plan_for(concept, corpus_limit, field, gloss)
     seats = plan["seats"]
-    nominal = (plan["pass_one"] + plan["pass_two_select"] + plan["pass_two_fetch"]
-               + plan["pass_two_read"] + plan["finish"])
+    nominal = (plan["snapshot"] + plan["pass_one"] + plan["pass_two_select"]
+               + plan["pass_two_fetch"] + plan["pass_two_read"] + plan["finish"])
     one_pass_only = seats <= 0
     # Initialised from the plan that is expected to run, and corrected the moment
     # a phase is skipped (Progress.set_total says why).
     prog = Progress(conn, job_id,
-                    (len(plan["pass_one"]) + len(plan["finish"])) if one_pass_only
-                    else len(nominal))
+                    (len(plan["snapshot"]) + len(plan["pass_one"]) + len(plan["finish"]))
+                    if one_pass_only else len(nominal))
     runner = StageRunner(prog, job_id)
     pv = prompt_version()
 
     with Heartbeat(job_id):
+        run_snapshot(runner, plan, concept)
         runner.run_all(plan["pass_one"])
 
         summary = map_summary(conn, concept, pv)

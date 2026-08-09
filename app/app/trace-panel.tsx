@@ -319,10 +319,11 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
           <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink)" }}>
             {/* The worker always writes `stages`; the fallback only covers a row
                 whose progress predates it, and it still has to track what
-                stages_for() returns, or a live run reads as "stage 13 of 7".
-                28 since #192: a build runs two passes, and the worker corrects
-                the total downward when it skips the second one. */}
-            stage {p.stage_no ?? "?"}/{p.stages ?? 28} · {p.stage ?? "…"}
+                the worker's plan returns, or a live run reads as "stage 13 of 7".
+                29 since #173: 28 in the nominal two-pass plan, plus the step that
+                records how the second pass ended. The worker corrects the total
+                downward when it skips a pass. */}
+            stage {p.stage_no ?? "?"}/{p.stages ?? 29} · {p.stage ?? "…"}
             {p.current != null && p.total != null && <> · {p.current} of {p.total}</>}
           </div>
           {p.message && (

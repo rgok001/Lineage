@@ -8,9 +8,21 @@ earlier held all of it.
 Restores, by id so nothing is orphaned:
   genealogies.nodes         the concept-states, with their labels and members
   genealogies.streams       the threads and their claims, if the snapshot had them
+  genealogies.status        the map's publication state, and see below
   edges                     every edge with its type, confidence, quotes and basis
   definitions               quote, verdict, section, claims, model, and the two
                             magnitude scores
+
+**`status` came back into scope with #173**, and without it this script could not
+undo the thing it now exists to undo. Stage C's upsert sets `status = 'running'`
+at the moment it overwrites a map, and since #168 the app serves only `complete`,
+so a build that died after Stage C leaves the map invisible on the site. A
+restore that put the concept-states and the edges back and left `running`
+standing would return a map nobody can open, under a summary saying it had been
+restored. The snapshot records what the status was; this writes that value back,
+whatever it is, and prints it — a snapshot taken of a map that was already
+`running` restores `running`, because the job is to put the row back rather than
+to decide what it ought to say.
 
 Deliberately NOT restored: `user_edits`. The audit trail is append-only by
 design, and a restore is an event in a map's history rather than a way to
@@ -55,19 +67,20 @@ def main() -> None:
     gen_id, concept, pv = g["id"], g["concept"], g["prompt_version"]
 
     with psycopg.connect(env("DATABASE_URL")) as conn:
-        live = conn.execute("SELECT id FROM genealogies WHERE id = %s", (gen_id,)).fetchone()
+        live = conn.execute("SELECT id, status, nodes FROM genealogies WHERE id = %s",
+                            (gen_id,)).fetchone()
         if not live:
             sys.exit(f"Genealogy {gen_id} no longer exists. This script restores content "
                      f"into an existing row; use restore_genealogy.py to recreate one.")
+        now_status, now_nodes = live[1], len(live[2])
         now_edges = conn.execute("SELECT count(*) FROM edges WHERE genealogy_id = %s",
                                  (gen_id,)).fetchone()[0]
-        now_nodes = len(conn.execute("SELECT nodes FROM genealogies WHERE id = %s",
-                                     (gen_id,)).fetchone()[0])
 
         print(f'Restoring "{concept}" (genealogy {gen_id}, prompt {pv}) from {snap["snapshot_at"]}')
         print(f"  concept-states: {now_nodes} now -> {len(g['nodes'])} from the snapshot")
         print(f"  edges:          {now_edges} now -> {len(snap['edges'])} from the snapshot")
         print(f"  definitions:    {len(snap['definitions'])} rows to rewrite in place")
+        print(f"  status:         {now_status} now -> {g['status']} from the snapshot")
         if args.dry_run:
             print("\n[dry-run] nothing written.")
             return
@@ -76,10 +89,10 @@ def main() -> None:
         # stable, while a papers row id is not something a backup should trust.
         pids = {r[0]: r[1] for r in conn.execute("SELECT arxiv_id, id FROM papers").fetchall()}
 
-        conn.execute("UPDATE genealogies SET nodes = %s, streams = %s, updated_at = now() "
-                     "WHERE id = %s",
+        conn.execute("UPDATE genealogies SET nodes = %s, streams = %s, status = %s, "
+                     "updated_at = now() WHERE id = %s",
                      (json.dumps(g["nodes"]), json.dumps(g["streams"]) if g["streams"] else None,
-                      gen_id))
+                      g["status"], gen_id))
 
         conn.execute("DELETE FROM edges WHERE genealogy_id = %s", (gen_id,))
         restored = skipped = pre_015 = 0
@@ -145,6 +158,8 @@ def main() -> None:
 
     print(f"\n  {restored} edges restored" + (f", {skipped} skipped (paper gone)" if skipped else ""))
     print(f"  {len(snap['definitions'])} definitions rewritten, {len(g['nodes'])} concept-states")
+    print(f"  status is {g['status']}" + ("" if g["status"] == "complete" else
+          " — the site serves only 'complete', so this map is not visible to a reader"))
     print("\n  The quotes are back, and their verdicts are the ones the snapshot held.")
     if pre_015:
         print(f"  {pre_015} of the restored edges came from a snapshot taken before "

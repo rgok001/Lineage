@@ -869,6 +869,24 @@ heartbeat, which also sweeps). Full walkthrough knowledge condensed:
   the second stops it being clustered into this map. Subprocesses were
   chosen over imports so the pipeline stays CLI-first, a stage crash cannot
   kill the loop, and stdout is a parseable stream.
+- **The first stage saves the map the build is about to replace** (issue #173).
+  `snapshot_map.py --allow-missing --result-json` writes the genealogy row, its
+  threads, its curatorial audit trail, its status, every edge and every definition
+  the quotes come from, to `DATA_DIR/snapshots/<concept>_<pv>_<stamp>.json`. It is
+  the first stage rather than the one before Stage C — which is where the
+  destruction actually happens — because fetching and extraction rewrite the text
+  on disk the live map's quotes were checked against, and because a snapshot that
+  cannot be taken should cost the build nothing. Once per job: pass two re-clusters
+  a map pass one has already overwritten. The worker reads the step's result file
+  rather than its prose, prints the path and the counts into the progress feed, and
+  **fails the job on either a non-zero exit or an unreadable result**, both of which
+  happen while the map is untouched. **`data/genealogy_<concept>_<pv>.json` is
+  therefore no longer the backup of record**; it is a deliverable, and it never held
+  `streams`, `user_edits` or the definitions (incident 4 was recovered from it with
+  the audit trail lost). `restore_snapshot.py` is the way back and since #173 it
+  restores `status` too, without which a restored map stays invisible under #168's
+  publish filter. Procedure in `docs/RUNBOOK.md`; retention is a documented sentence
+  and not a mechanism, at under a megabyte per build.
 - **Progress.** Stages already print `[i/N]` counters and `spend $X` lines;
   two regexes lift these into `trace_requests.progress` JSONB, flushed at most
   once per second. Each flush bumps `updated_at`, which is the heartbeat.
