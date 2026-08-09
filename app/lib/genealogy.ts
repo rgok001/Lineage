@@ -94,9 +94,11 @@ const ACTOR_MAX = 64;
  * first. A requester watching their own build sees it in the live trace panel,
  * which only offers a link to the map once the run is complete.
  *
- * This does not cover `/g/<id>/report`, which reads `map_report` through
- * `lib/report.ts` and lists every map as a reference point beside the one asked
- * for. That is a fourth read path in another file and it is noted on #168.
+ * `/g/<id>/report` is the fourth read path, and it is covered as of issue #194:
+ * `listMapReports` in `lib/report.ts` imports this constant and tests
+ * `map_report.status`, which migration 016's view selects straight through from
+ * `genealogies`. It is imported and not respelled there because publication is
+ * one fact — see that function for why it leaked twice.
  */
 export const PUBLISHED_STATUS = "complete";
 

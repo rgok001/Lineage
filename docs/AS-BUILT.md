@@ -940,16 +940,38 @@ serve: `/` does not list it, `/g/<id>` redirects to the evidence view and that
 exception for the owner, on the design's reasoning that "visible to them, not to
 others" is a second visibility rule to keep in agreement with the first; a
 requester watching their own build sees it in the live trace panel, which only
-offers a link to the map once the run is complete. **`/g/<id>/report` is not
-covered**: it reads `map_report` through `lib/report.ts`, which is a fourth read
-path in another file, and it lists every map as a reference point beside the one
-asked for. Noted on #168.
+offers a link to the map once the run is complete.
 
-Measured against a real PostgreSQL holding one fixture map per status, driving
-the compiled read functions: a `complete` map is listed and returned by both
-single-map functions; `running`, `pending`, `failed` and `aborted_spend_cap` are
-absent from the list and null from both, including an in-progress-shaped map with
-Stage C's concept-states, no relationships and no threads.
+**The fourth read path is `/g/<id>/report`, and it was closed by issue #194.**
+It reads `map_report` through `listMapReports` in `lib/report.ts`, which carried
+no predicate, so an unpublished map leaked there twice over: its own report
+rendered, and it appeared with its half-built figures among "the other maps in
+this system" on every *other* map's report, because one function answers both
+questions the page asks. `listMapReports` now imports `PUBLISHED_STATUS` from
+`lib/genealogy.ts` rather than respelling the word, and tests
+`map_report.status`, which is `genealogies.status` selected straight through by
+migration 016's view — the same column the other three read functions test, so
+no migration was needed here either. The page needed no conditional for either
+leak: it already 404s when the id is not in what the function returns, which is
+how it has always handled an id nobody minted, and the reference-point rows are
+the rest of that same array. The sample size the page prints ("N of the M maps
+in this system") therefore now counts published maps, which is what it should
+always have meant. `pipeline/map_report.py` is deliberately unchanged and still
+reads every map with each map's status in its own header: it is the Operator's
+instrument, seeing a mid-build map is most of its job, and it diverges the same
+way `check_map.py` does. The two can still not disagree about a figure for a map
+they both show.
+
+Measured against a real PostgreSQL with 001 to 021 applied, holding one fixture
+map per status, driving the compiled read functions and the compiled route: a
+`complete` map is listed and returned by both single-map functions and its
+report renders; `running`, `pending`, `failed` and `aborted_spend_cap` are absent
+from every list and null from both single-map functions, and their reports throw
+the same `NEXT_HTTP_ERROR_FALLBACK;404` as an id nobody ever minted, which was
+the control. The `running` fixture is in-progress-shaped: Stage C's
+concept-states, no relationships and no threads. On the same fixtures before the
+change, both published maps' reports named all four unpublished maps as
+reference points and printed the sample size as 6.
 
 **Routes.**
 - `/` : the map list, with a link to `/trace` showing how many runs are in
@@ -1370,7 +1392,12 @@ Stage C's concept-states, no relationships and no threads.
   views and migration 017's third by `lib/report.ts` and computed nowhere else,
   so this page and
   `pipeline/map_report.py` cannot disagree about a figure they both print (which
-  is no longer every figure: see the subset invariant below). Sections: how much
+  is no longer every figure: see the subset invariant below).
+  **Published maps only, as of issue #194**, and both the map named in the URL
+  and the reference-point maps beside it come from the one filtered read: an
+  unpublished map 404s here exactly as it does on the other three surfaces, and
+  it is named on nobody else's report. The refusal and its reasoning are above
+  in this section, under "only published maps are readable". Sections: how much
   was read, evidence (the three stamp states for definitions and for
   relationships), the same counts split by source, shape, when the papers were
   written with a per-year histogram, the run, and a closing list of the three

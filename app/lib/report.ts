@@ -1,4 +1,5 @@
 import { sql } from "./db";
+import { PUBLISHED_STATUS } from "./genealogy";
 
 /**
  * The map report (issue #30, `[F2]`), read from migration 016's two views,
@@ -494,6 +495,32 @@ async function passesFor(ids: number[]): Promise<Map<number, PassFigures> | null
  * the other maps themselves, and the sample size is the length of this array —
  * `count(*)` over the view — never a literal written into a page that would age
  * the moment a third map exists.
+ *
+ * **Published maps only** (issue #194, completing #168). This was the fourth
+ * read path and the one #168 left open, and it leaked an unpublished map twice
+ * over, because this one function answers both questions the report page asks.
+ * The map named in the URL is found in this array — so an unfinished map's own
+ * report rendered — and every *other* map on the page is the rest of this same
+ * array, so an unfinished map appeared with its half-built figures as a
+ * reference point on every other map's report, on every build, from the moment
+ * Stage C wrote its row. The page needs no conditional for either: it already
+ * 404s when the id is not in what this returns, which is how it has always
+ * handled an id nobody minted.
+ *
+ * The predicate is `PUBLISHED_STATUS` imported from `lib/genealogy.ts` rather
+ * than the string spelled again here. Publication is one fact; a second copy is
+ * a second thing to change when the word does, and a page that disagreed with
+ * `/` about which maps exist is precisely the defect. `map_report.status` is
+ * `genealogies.status` selected straight through by migration 016's view, so
+ * this is the same column the other three read functions test.
+ *
+ * **`n` therefore counts published maps**, which is what the page's "N of the M
+ * maps in this system" should always have meant. `pipeline/map_report.py` still
+ * reads every map, unfiltered and with each map's status printed in its own
+ * header: it is the Operator's instrument and being able to see a map that is
+ * mid-build is most of its job. The two commands can still not disagree about a
+ * figure for a map they both show; the command shows more maps, deliberately,
+ * the same way `check_map.py` does.
  */
 export async function listMapReports(): Promise<MapReport[]> {
   // `sql.unsafe` is the driver's documented escape for a raw fragment, and what
@@ -501,7 +528,9 @@ export async function listMapReports(): Promise<MapReport[]> {
   // anywhere else in it. Naming the columns in one place is what lets
   // `pipeline/map_report.py`'s list be compared with this one.
   const rows = (await sql`
-    SELECT ${sql.unsafe(COLUMNS)} FROM map_report ORDER BY genealogy_id DESC
+    SELECT ${sql.unsafe(COLUMNS)} FROM map_report
+    WHERE status = ${PUBLISHED_STATUS}
+    ORDER BY genealogy_id DESC
   `) as Record<string, unknown>[];
   const ids = rows.map((r) => Number(r.genealogy_id));
   // In parallel, so #162's two extra round trips, #182's two and #193's two
