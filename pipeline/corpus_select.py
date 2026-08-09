@@ -81,12 +81,22 @@ FORWARD_SORTS = ("cited_by_count:desc", "publication_date:desc")
 # is there to be read by a person deciding whether the hop found the lineage.
 FORWARD_TABLE_ROWS = 30
 
-# ── the reserved partition (issue #181) ─────────────────────────────────────
+# ── the reserved partition (issue #181, halved by #192) ─────────────────────
 #
-# A fifth of the seats, 30 of 150, compete only within the recency window. The
+# A tenth of the seats, 15 of 150, compete only within the recency window. The
 # divisor is a constant rather than a literal because the seat count follows
 # --limit: a 50-paper corpus reserving 30 would be a different product.
-RECENT_SEATS_DIVISOR = 5
+#
+# **It was a fifth (30 of 150) until the two-stage build landed** (#192, the
+# design on #184). Pass two now reads its own 15 papers, chosen by asking the
+# built map what came next rather than by asking a query that knows nothing yet,
+# and the two populations overlap: both are recent arXiv work attached to this
+# lineage by citation. Keeping 30 here as well as 15 there would pay twice for
+# the same papers. The reservation is not retired, because a build that abandons
+# pass two at the pre-flight spend gate would otherwise publish a map with no
+# recent work in it at all — the /g/17 failure again, arriving on the bad day.
+# Same total seats, better aimed, and the floor survives.
+RECENT_SEATS_DIVISOR = 10
 
 # The fallback candidate set: one page of the same search the seeds come from,
 # restricted to the window and sorted by relevance. A young field, or a concept
@@ -407,7 +417,7 @@ def main() -> None:
                     help=f"keep the top N seeds by relevance (default {DEFAULT_KEEP_SEEDS})")
     ap.add_argument("--recent-seats", type=int, metavar="R",
                     help=f"seats reserved for the recency window (default "
-                         f"--limit // {RECENT_SEATS_DIVISOR}, i.e. 30 of 150; "
+                         f"--limit // {RECENT_SEATS_DIVISOR}, i.e. 15 of 150; "
                          f"0 disables the reservation)")
     ap.add_argument("--recent-since", type=int, metavar="YEAR",
                     help=f"first year of the recency window (default: this year "

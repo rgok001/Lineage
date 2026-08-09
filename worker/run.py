@@ -2,13 +2,49 @@
 
 Polls Postgres for rows with status='approved' (and ONLY approved — a request
 a stranger submitted sits at 'requested' until the owner promotes it), claims
-one atomically, then runs the pipeline stages as subprocesses in order:
+one atomically, then runs the pipeline stages as subprocesses.
 
-    corpus_select -> fetch_papers -> extract_text
-        -> stage_b_extract -> stage_c_cluster -> stage_d_edges
-        -> stage_b_extract --reground -> stage_e_ground
-        -> enrich_authors -> stage_f_magnitude -> stage_g_threads
-        -> stage_h_claims
+**A build runs in two passes** (#192, the design on #184). Pass one selects a
+corpus the way it always did and assembles a map from it; pass two then asks that
+map which of its papers were the turning points, reads the recent work that cites
+them, and re-clusters over both passes together. Only then is the map published.
+
+    PASS ONE  select corpus -> fetch -> extract -> audit -> B -> C -> D
+                  -> reground -> E --no-publish -> record pass one
+    PASS TWO  pass_two_select -> fetch -> extract -> audit -> B --dry-run
+                  -> [the spend gate] -> B -> union -> C -> D
+                  -> reground -> E --no-publish -> record pass two
+    FINISH    record the build -> enrich authors -> F -> G -> H
+                  -> E (the one publish)
+
+Three things carry that shape and each has a reason that would be expensive to
+rediscover.
+
+**Publication happens once, at the very end.** Every assembly before it runs
+`--no-publish`, so `status` never reaches 'complete' while the map is still being
+re-clustered underneath it — which since #168 is the same thing as saying no
+reader can see a half-built map. It is last rather than at the end of pass two
+because Stage G writes the threads clause 6 of the publish invariant reads
+(#171's residue): publishing at Stage E means the invariant judges the PREVIOUS
+build's threads over the new concept-states, and refuses a re-trace after every
+paid step. Recomposing the threads before the gate reads them is the repair, and
+it is free.
+
+**Pass two is bounded and abandonable.** It gets a seat count, not a second
+spend cap — the per-trace cap is the one number protecting the owner from a
+runaway, and a cap beside it is a way to exceed it. Before pass two buys
+anything the cost is estimated and checked against what is left of that one cap;
+if it does not fit, pass one's map is published and the reason is written into
+the progress feed and the map's own record. Pass one is a complete, coherent,
+publishable map by construction, which is what converts the spend cap from a
+build-killer into a degradation.
+
+**A pass-two failure degrades to pass one rather than failing the build.** The
+same fallback covers all of them: re-cluster over the pass-one corpus, re-classify
+(free, #172), re-assemble, publish. A build that read 150 papers should not be
+thrown away because the optional second pass broke — but it never happens
+silently: the outcome sentence names the stage that failed, and it is on the
+report, in the log and in the feed.
 
 Everything after grounding is what the reader actually meets: the authors its
 citations need, the scores and threads its front door reads, and the checked
@@ -17,8 +53,11 @@ has nothing to open on, so they are part of a finished trace rather than extras.
 
 The pipeline stays CLI-first: the worker adds nothing to the stages, it just
 orchestrates them and streams their stdout into trace_requests.progress so the
-app can show "Reading paper 47 of 132" live. Postgres is the queue (FOR UPDATE
-SKIP LOCKED); there is no other infrastructure.
+app can show "Reading paper 47 of 132" live. What the worker does decide is which
+phases run, and every one of those decisions is taken from a file a stage wrote —
+the pass-two funnel counts and the pre-flight estimate — rather than from a regex
+over a stage's prose. Postgres is the queue (FOR UPDATE SKIP LOCKED); there is no
+other infrastructure.
 
 Interruption is a first-class outcome here, and it is not failure: every deploy
 of this repo restarts the worker, so a build that is killed mid-run is normal
@@ -45,6 +84,10 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 from common import REPO_ROOT, data_dir, env  # noqa: E402
+# The seat count's divisor has one home, in the stage that owns the flag, and the
+# worker reads it rather than restating it: a constant restated in a second file
+# is a constant with two values as soon as one of them moves.
+from pass_two_select import PASS_TWO_SEATS_DIVISOR  # noqa: E402
 
 POLL_SECONDS = 10
 STALE_RUNNING_MINUTES = 10  # 'running' + no heartbeat for this long => worker died
@@ -146,14 +189,82 @@ def connect() -> psycopg.Connection:
     return psycopg.connect(env("DATABASE_URL"))
 
 
-def stages_for(concept: str, corpus_limit: int, field: str,
-               gloss: str | None) -> list[tuple[str, list[str]]]:
+def prompt_version() -> str:
+    """The prompt version this build's stages will write under.
+
+    One reading, in one place. It was `env("PROMPT_VERSION", "v2")` here and
+    `env("PROMPT_VERSION", "v1")` in every stage, so on a machine with the
+    variable unset the worker looked up a map at a version nothing had written
+    and reported the finished trace with no genealogy_id. Both real environments
+    set it, so the divergence never bit; it is corrected here because #192 adds
+    three more places in this file that have to agree with the stages about which
+    map is being built.
+    """
+    return env("PROMPT_VERSION", "v1")
+
+
+def pass_two_seats(corpus_limit: int) -> int:
+    """R: how many papers pass two may add.
+
+    `corpus_limit // 10` by default, which is 15 of 150 — the divisor rather than
+    a literal for #181's reason, because the seat count has to follow the corpus
+    cap or a 50-paper build gets a 15-paper second pass and is a different
+    product. PASS_TWO_SEATS overrides it, and **0 disables the second pass
+    entirely**: that is the one way to ask this worker for a genuinely one-pass
+    build, and such a build writes no build record at all, so its report says "this
+    map was built in one pass" and draws no pass figures (#193's seam semantics).
+    """
+    override = env("PASS_TWO_SEATS", "").strip()
+    if override:
+        try:
+            return max(0, int(override))
+        except ValueError:
+            # Not fatal: a mistyped seat count should not stop a build that has an
+            # obvious right answer, but it must not be read as 0 either, which
+            # would silently turn every build one-pass.
+            print(f"[worker] PASS_TWO_SEATS={override!r} is not a whole number; "
+                  f"using the default instead")
+    return max(0, corpus_limit // PASS_TWO_SEATS_DIVISOR)
+
+
+def trace_paths(concept: str) -> dict[str, str]:
+    """Every file this build hands from one stage to another, named once.
+
+    The pass-one corpus keeps the name it has always had, so a requeued build
+    (#178) finds the file its killed predecessor wrote and re-reads it rather than
+    re-selecting a corpus from an OpenAlex that has moved since.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "_", concept.lower())
+    d = data_dir()
+    return {
+        "corpus_one": str(d / f"corpus_{slug}.json"),
+        "corpus_two": str(d / f"corpus_{slug}_pass2.json"),
+        "corpus_union": str(d / f"corpus_{slug}_union.json"),
+        "pass_two_stats": str(d / f"pass2_stats_{slug}.json"),
+        "pass_two_estimate": str(d / f"pass2_estimate_{slug}.json"),
+    }
+
+
+def plan_for(concept: str, corpus_limit: int, field: str,
+             gloss: str | None) -> dict[str, list[tuple[str, list[str]]]]:
+    """Every phase of a two-pass build, as (name, argv) pairs.
+
+    Phases rather than one flat list, because which of them run is decided while
+    the build runs: pass two may be skipped before it is selected, abandoned at
+    the spend gate, or fall back after a stage of it fails. The names are what the
+    progress feed shows a requester, so they say what is happening in the register
+    the feed already uses — a count of something done, never a claim about the
+    field.
+    """
     py = [sys.executable, "-u"]  # -u: unbuffered, so progress streams live
-    corpus_json = str(data_dir() / f"corpus_{re.sub(r'[^a-z0-9]+', '_', concept.lower())}.json")
+    paths = trace_paths(concept)
+    corpus_json = paths["corpus_one"]
     # The gloss disambiguates a polysemous sense; it steers corpus relevance and
     # Stage B's extraction question. The field scopes the corpus to a discipline.
     gloss_arg = ["--gloss", gloss] if gloss else []
-    return [
+    seats = pass_two_seats(corpus_limit)
+
+    pass_one = [
         ("select corpus", py + ["pipeline/corpus_select.py", concept,
                                 "--limit", str(corpus_limit), "--field", field,
                                 "--json", corpus_json] + gloss_arg),
@@ -190,7 +301,97 @@ def stages_for(concept: str, corpus_limit: int, field: str,
         # concept that came in some other way.
         ("re-check definition quotes", py + ["pipeline/stage_b_extract.py", concept,
                                              "--reground"]),
-        ("ground & assemble", py + ["pipeline/stage_e_ground.py", concept]),
+        # --no-publish: pass one's map is complete and coherent and nobody may see
+        # it yet (#192). It is assembled anyway, rather than left at Stage D,
+        # because the export is the de-facto backup (incident 4) and because pass
+        # two nominates from a map whose edges have been swept of orphans.
+        ("ground & assemble pass one", py + ["pipeline/stage_e_ground.py", concept,
+                                             "--no-publish"]),
+        ("record what pass one read", py + ["pipeline/record_pass.py", concept,
+                                            "--pass", "1", "--corpus", corpus_json]),
+    ]
+
+    # ── pass two ────────────────────────────────────────────────────────────
+    #
+    # Split into three phases because two decisions sit between them, and each
+    # decision is taken from a file rather than from a stage's prose: the funnel
+    # counts `pass_two_select.py --stats-json` writes, and the estimate
+    # `stage_b_extract.py --dry-run --estimate-json` writes.
+    pass_two_select_phase = [
+        ("pass two: ask the map what came next",
+         py + ["pipeline/pass_two_select.py", concept, "--field", field,
+               "--pass-two-seats", str(seats), "--pass-one-limit", str(corpus_limit),
+               "--json", paths["corpus_two"],
+               "--stats-json", paths["pass_two_stats"]] + gloss_arg),
+    ]
+    # Fetching and extracting cost time and arXiv politeness and no money, and the
+    # estimate is a token count over the text on disk — so the text has to exist
+    # before there is anything to estimate. The spend gate therefore sits AFTER
+    # this phase and before the one below it, which is the first that can bill
+    # anything. The design says the estimate comes before pass two spends
+    # anything, and it does: what is spent before it is patience.
+    pass_two_fetch_phase = [
+        ("pass two: fetch the nominated papers",
+         py + ["pipeline/fetch_papers.py", paths["corpus_two"]]),
+        ("pass two: extract text", py + ["pipeline/extract_text.py"]),
+        ("pass two: audit extracted text",
+         py + ["pipeline/check_extraction.py", "--only-unchecked", "--write"]),
+        ("pass two: estimate what reading them costs",
+         py + ["pipeline/stage_b_extract.py", concept, "--corpus", paths["corpus_two"],
+               "--dry-run", "--estimate-json", paths["pass_two_estimate"]] + gloss_arg),
+    ]
+    pass_two_read_phase = [
+        ("pass two: read the nominated papers",
+         py + ["pipeline/stage_b_extract.py", concept,
+               "--corpus", paths["corpus_two"]] + gloss_arg),
+        ("pass two: join both passes' corpora",
+         py + ["pipeline/corpus_union.py", "--json", paths["corpus_union"],
+               corpus_json, paths["corpus_two"]]),
+        # Stage C re-clusters EVERYTHING rather than assigning the new papers
+        # incrementally. Incremental assignment is cheaper and wrong: it is a
+        # different algorithm, so a two-stage map would not be the map a one-stage
+        # build over the same papers produces, and `meanings` on the report would
+        # quietly mean something else on two-stage maps. Pre-publish, decision
+        # 20's edge-clearing costs money and nothing else.
+        ("pass two: re-cluster over both passes",
+         py + ["pipeline/stage_c_cluster.py", concept, "--corpus", paths["corpus_union"]]),
+        # Nearly free: #172 caches a classification on the two papers' definitions
+        # and citation contexts, and #189 makes a cluster's label a function of its
+        # membership, so an unchanged pair comes back from disk for $0. That pair
+        # of tickets is what makes this design affordable at all.
+        ("pass two: classify edges", py + ["pipeline/stage_d_edges.py", concept]),
+        ("pass two: re-check definition quotes",
+         py + ["pipeline/stage_b_extract.py", concept, "--reground"]),
+        ("pass two: ground & assemble", py + ["pipeline/stage_e_ground.py", concept,
+                                              "--no-publish"]),
+        ("record what pass two read", py + ["pipeline/record_pass.py", concept,
+                                            "--pass", "2", "--corpus", paths["corpus_two"]]),
+    ]
+    # The abandonment fallback, and the same one covers every way pass two can
+    # fail after it has touched the map: re-cluster over the pass-one corpus
+    # alone, which is what #190 exists to make nameable, then re-classify and
+    # re-assemble. With #172 and #189 it costs $0 and a few minutes.
+    pass_two_fallback_phase = [
+        ("fall back: re-cluster over pass one alone",
+         py + ["pipeline/stage_c_cluster.py", concept, "--corpus", corpus_json]),
+        ("fall back: classify edges", py + ["pipeline/stage_d_edges.py", concept]),
+        ("fall back: re-check definition quotes",
+         py + ["pipeline/stage_b_extract.py", concept, "--reground"]),
+        ("fall back: ground & assemble", py + ["pipeline/stage_e_ground.py", concept,
+                                               "--no-publish"]),
+        # Recorded even though the map is pass one's. Pass two DID read these
+        # papers — Stage B bought their definitions and the report's population is
+        # the definitions rows (#123) — so leaving them unmarked would put them in
+        # `papers_read_pass_unmarked`, which the report calls a build that recorded
+        # itself incompletely. What separates this from a successful second pass on
+        # the report is the outcome sentence and the count of pass-two papers
+        # carrying a relationship into a first-pass meaning, which is zero here
+        # because none of them is in the map.
+        ("record what pass two read", py + ["pipeline/record_pass.py", concept,
+                                            "--pass", "2", "--corpus", paths["corpus_two"]]),
+    ]
+
+    finish = [
         # Authors are needed by nothing upstream and by the export absolutely: a
         # citation without them is omitted from the BibTeX rather than guessed,
         # so a corpus that skips this produces a document whose \cite keys do not
@@ -199,14 +400,116 @@ def stages_for(concept: str, corpus_limit: int, field: str,
         ("fill author metadata", py + ["pipeline/enrich_authors.py",
                                        "--concept", concept]),
         ("score magnitude", py + ["pipeline/stage_f_magnitude.py", concept]),
+        # Before the publish, not after it, and that ordering is the whole repair
+        # of #171's residue: clause 6 of the publish invariant compares the stored
+        # threads against the map's papers, so a gate that runs before Stage G
+        # judges the previous build's threads over this build's concept-states and
+        # refuses a re-trace at the last step for a state it is about to fix.
         ("compose threads", py + ["pipeline/stage_g_threads.py", concept]),
         # The most expensive stage after extraction, and the one that decides
         # whether an account can be audited sentence by sentence or only trusted
         # paragraph by paragraph. It roughly doubles what a map costs; that is
         # the price of the product's central claim, so it runs by default rather
-        # than being something a curator has to remember.
+        # than being something a curator has to remember. It runs ONCE, after both
+        # passes, which is the single largest cost decision in the two-stage
+        # design: it has no cross-run cache, so running it inside pass one would
+        # buy an account of a map that is about to be re-clustered.
         ("check each claim", py + ["pipeline/stage_h_claims.py", concept]),
+        # The one publish. Grounding again costs nothing — it reads files and
+        # compares digests — and this run is the one that asks the publish
+        # invariant and moves the status, with the threads Stage G has just
+        # written under clause 6.
+        ("ground & publish", py + ["pipeline/stage_e_ground.py", concept]),
     ]
+
+    return {"pass_one": pass_one, "pass_two_select": pass_two_select_phase,
+            "pass_two_fetch": pass_two_fetch_phase, "pass_two_read": pass_two_read_phase,
+            "pass_two_fallback": pass_two_fallback_phase, "finish": finish,
+            "seats": seats, "paths": paths}
+
+
+def stages_for(concept: str, corpus_limit: int, field: str,
+               gloss: str | None) -> list[tuple[str, list[str]]]:
+    """The nominal sequence: both passes run and nothing is skipped.
+
+    What the progress feed's stage count is initialised from, and the one flat
+    view of a build for anyone reading this file or driving it from a harness. A
+    real build runs a subset of it plus, at most, one build-record step and the
+    fallback.
+    """
+    p = plan_for(concept, corpus_limit, field, gloss)
+    return (p["pass_one"] + p["pass_two_select"] + p["pass_two_fetch"]
+            + p["pass_two_read"] + p["finish"])
+
+
+# ── what the second pass may say about itself ──────────────────────────────
+#
+# One author for the sentence a reader meets under "why the second pass ended"
+# on the report (#193's rule: `pass_two_outcome` is reader-ready text and never a
+# code, because nothing between here and the page translates it).
+#
+# **Five states, all counts and no adjectives.** The design names four; the fifth
+# is a pass that failed and fell back, which cannot be inferred from any count.
+# None of them may say the idea moved recently, that the map is current, or
+# anything that blends these numbers into a score — `Filled 15 of 15` says we
+# filled our seats and nothing more (#184, and decision 15's reason).
+def pass_two_outcome_sentence(state: str, *, seats: int = 0, selected: int = 0,
+                              since: int | None = None, cleared: int | None = None,
+                              estimate: float | None = None, remaining: float | None = None,
+                              cap: float | None = None, stage: str | None = None) -> str:
+    if state == "filled":
+        return (f"The second pass filled all {seats} of its seats and read them.")
+    if state == "under_filled":
+        return (f"The second pass filled {selected} of its {seats} seats and read them: "
+                f"the candidates ran out before the seats did.")
+    if state in ("none_found", "none_seated", "map_has_no_openalex_ids"):
+        if state == "map_has_no_openalex_ids":
+            return ("The second pass could not run: none of this map's papers carries an "
+                    "OpenAlex id, so the citation graph could not be asked what cites them.")
+        if state == "none_seated":
+            return (f"The second pass seated nobody: {cleared} recent paper(s) cleared both "
+                    f"signals of the gate and none of them could be seated.")
+        return (f"The second pass found nobody to read: no arXiv paper from "
+                f"{since if since is not None else 'the recency window'} or later cites "
+                f"two or more of this map's papers. That is a fact about the citation "
+                f"graph, not about the field.")
+    if state == "abandoned_spend_cap":
+        return (f"The second pass was not run: reading its papers was estimated at "
+                f"US${estimate:.2f} and US${remaining:.2f} of the US${cap:.2f} spend cap "
+                f"was left. Pass one's map was published as it stood.")
+    if state == "abandoned_no_estimate":
+        return ("The second pass was not run: the estimate of what it would cost could "
+                "not be read, and nothing here spends on an unmeasured basis. Pass one's "
+                "map was published as it stood.")
+    if state == "failed":
+        return (f"The second pass failed while '{stage}' was running and the build fell "
+                f"back to pass one's map, which was published as it stood.")
+    # A state nobody has taught this function about is still a sentence rather
+    # than a code on the page, and it says plainly that it cannot account for
+    # itself — the alternative is a page reading `unknown`.
+    return (f"The second pass ended in a state this build could not account for "
+            f"({state}). Pass one's map was published as it stood.")
+
+
+def read_json_file(path: str, what: str) -> dict | None:
+    """A file one stage wrote and the next decision depends on.
+
+    Returns None rather than raising: every caller here has a defined answer for
+    "the file is not there or is not readable", and it is never "carry on as if it
+    said yes". The reason is printed, because a build that quietly abandoned its
+    second pass over an unreadable file is indistinguishable in a log from one
+    whose field had no recent work.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[worker] could not read the {what} at {path}: {type(exc).__name__}: {exc}")
+        return None
+    if not isinstance(data, dict):
+        print(f"[worker] the {what} at {path} is not an object; it holds "
+              f"{type(data).__name__}")
+        return None
+    return data
 
 
 class Progress:
@@ -239,6 +542,44 @@ class Progress:
         self.state.update(stage=name, stage_no=no, message=f"starting: {name}",
                           current=None, total=None)
         self.flush(force=True)
+
+    def set_total(self, n_stages: int) -> None:
+        """How many stages this build will actually run.
+
+        It moves, because a two-stage build decides while it is running whether
+        its second pass happens (#192). It is initialised from the nominal plan —
+        both passes, nothing skipped — and corrected downward the moment a pass is
+        skipped or abandoned, with the reason going into the feed as a message on
+        the same flush. A total that silently stayed at 28 while the build ran 16
+        stages would leave a requester's progress bar stuck at 57% on a finished
+        map.
+        """
+        self.n_stages = n_stages
+        self.state["stages"] = n_stages
+        self.flush(force=True)
+
+    def note(self, text: str) -> None:
+        """A line the WORKER says, in the same feed the stages write to.
+
+        The pass boundaries are the only things in a build that no single stage
+        can narrate, because they are about the build's shape rather than about
+        any stage's work. Same register as the stages: a count of something done,
+        never a claim about the field (#184).
+        """
+        print(f"    [feed] {text}")
+        self.state["message"] = text.strip()[:300]
+        self.flush(force=True)
+
+    def spent(self) -> float:
+        """What the stages have said they spent so far, this job.
+
+        The same figure `spend_usd` publishes, and it carries the same weakness:
+        it is a regex over what the stages print (#85), because per-stage spend is
+        recorded nowhere (#47). It is what the pre-flight gate has to decide on,
+        so the gate prints it and names its basis rather than implying a
+        precision it does not have.
+        """
+        return round(self.base_spend + self.stage_spend, 4)
 
     def line(self, text: str) -> None:
         self.state["message"] = text.strip()[:300]
@@ -327,37 +668,223 @@ class Heartbeat:
                 conn.close()
 
 
+class StageRunner:
+    """Runs one stage as a subprocess and decides what its ending meant.
+
+    Lifted out of `run_job` when the build stopped being one flat list (#192).
+    The body is unchanged: same Popen, same line streaming into Progress, same
+    `classify_stage_exit` deciding between interrupted and failed, and it is
+    still the only place that decision is taken. What it adds is a running stage
+    number, so phases that are decided while the build runs still number
+    continuously in the feed.
+    """
+
+    def __init__(self, prog: "Progress", job_id: int):
+        self.prog, self.job_id = prog, job_id
+        self.no = 0
+        self.tail: list[str] = []  # last lines, kept for the error report on failure
+
+    def run(self, name: str, cmd: list[str]) -> None:
+        self.no += 1
+        self.prog.start_stage(self.no, name)
+        print(f"[job {self.job_id}] stage {self.no}/{self.prog.n_stages}: {name}")
+        proc = subprocess.Popen(
+            cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace")
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            print(f"    {line.rstrip()}")
+            self.tail.append(line.rstrip())
+            del self.tail[:-30]
+            if line.strip():
+                self.prog.line(line)
+        rc = proc.wait()
+        # The one place the two kinds of ending are told apart. Read
+        # classify_stage_exit before changing either arm.
+        outcome = classify_stage_exit(rc, _shutting_down)
+        if outcome == "interrupted":
+            raise Shutdown(f"stopped during stage '{name}'")
+        if outcome == "failed":
+            raise StageFailed(f"stage '{name}' exited with code {rc}", self.tail)
+
+    def run_all(self, stages: list[tuple[str, list[str]]]) -> None:
+        for name, cmd in stages:
+            self.run(name, cmd)
+
+
+def map_summary(conn: psycopg.Connection, concept: str, pv: str) -> tuple | None:
+    """(genealogy_id, papers, meanings, relationships) for the map being built.
+
+    Read from the database rather than scraped off Stage E's summary line,
+    because the feed's pass-one sentence is the requester's only view of a map
+    nobody may look at yet, and a count taken from prose is a count that moves
+    when the prose does (#85 is the standing example).
+    """
+    row = conn.execute(
+        """SELECT g.id,
+                  (SELECT count(*) FROM definitions d
+                    WHERE d.concept = g.concept AND d.prompt_version = g.prompt_version),
+                  CASE WHEN jsonb_typeof(g.nodes) = 'array'
+                       THEN jsonb_array_length(g.nodes) ELSE 0 END,
+                  (SELECT count(*) FROM edges e WHERE e.genealogy_id = g.id)
+             FROM genealogies g
+            WHERE g.concept = %s AND g.prompt_version = %s
+            ORDER BY g.id DESC LIMIT 1""", (concept, pv)).fetchone()
+    return row
+
+
+def run_pass_two(conn: psycopg.Connection, job_id: int, runner: "StageRunner",
+                 plan: dict, concept: str) -> tuple[int, str, dict]:
+    """The second pass, and every way it can decline to happen.
+
+    Returns `(passes, outcome, counts)`: how many passes actually read papers,
+    the sentence a reader meets under "why the second pass ended", and the three
+    citation-graph counts the record keeps beside it. It raises nothing a caller
+    has to handle except `Shutdown`, which must always travel: a deploy's SIGTERM
+    during pass two is an interruption to be requeued (#178) and never an outcome
+    to record on a map.
+
+    **Every exit from here is narrated and recorded.** The design's own risk list
+    has "the pre-flight gate is wrong and pass two is abandoned when it would have
+    fitted", and its control is that the estimate and the remaining cap are
+    printed on every abandonment, so the decision is auditable rather than a
+    silent branch.
+    """
+    prog, paths, seats = runner.prog, plan["paths"], plan["seats"]
+    cap = float(env("TRACE_SPEND_CAP_USD", "10"))
+
+    # The three counts the record keeps beside the sentence, and NULL until a run
+    # has actually taken them: `020` prints a NULL as "not recorded" rather than
+    # as a zero, which would claim the citation graph was asked and said nothing.
+    counts: dict = {"seats": seats, "candidates": None, "cleared": None}
+
+    # ── does the map nominate anybody? ──────────────────────────────────────
+    runner.run_all(plan["pass_two_select"])
+    stats = read_json_file(paths["pass_two_stats"], "pass-two funnel counts")
+    if stats is None:
+        prog.note("pass two: the selection wrote no counts this build could read; "
+                  "publishing pass one")
+        return 1, pass_two_outcome_sentence("abandoned_no_estimate"), counts
+    state = str(stats.get("state") or "unknown")
+    selected = int(stats.get("selected") or 0)
+    counts["candidates"] = stats.get("fetched")
+    counts["cleared"] = stats.get("cleared")
+    if not selected:
+        # Not a failure and never reported as one. For a mature term "nobody
+        # recent cites two of this map's papers" is worth knowing; for a young one
+        # it is expected. The sentence names the citation graph and stops.
+        prog.note(f"pass two nominated nobody to read: {stats.get('fetched') or 0} recent "
+                  f"paper(s) cite this map, {stats.get('cite_min_seeds') or 0} cite two or "
+                  f"more. Publishing pass one.")
+        return 1, pass_two_outcome_sentence(
+            state, seats=seats, selected=selected, since=stats.get("since"),
+            cleared=stats.get("cleared")), counts
+    prog.note(f"pass two: {stats.get('fetched') or 0} recent paper(s) cite this map, "
+              f"{stats.get('cite_min_seeds') or 0} cite two or more of it, "
+              f"{stats.get('cleared') or 0} cleared both signals. Reading the top "
+              f"{selected}.")
+
+    # ── the pre-flight spend gate ───────────────────────────────────────────
+    runner.run_all(plan["pass_two_fetch"])
+    est = read_json_file(paths["pass_two_estimate"], "pass-two cost estimate")
+    if est is None or not isinstance(est.get("estimate_usd"), (int, float)):
+        prog.note("pass two: the estimate of what it would cost could not be read, so "
+                  "nothing was bought. Publishing pass one.")
+        return 1, pass_two_outcome_sentence("abandoned_no_estimate"), counts
+    estimate = float(est["estimate_usd"])
+    spent = prog.spent()
+    remaining = cap - spent
+    basis = ("nothing measurable has been spent yet: no stage has printed a spend line"
+             if prog.state.get("spend_usd") is None else f"US${spent:.2f} spent so far")
+    print(f"[job {job_id}] pass-two spend gate: estimate US${estimate:.2f} for "
+          f"{est.get('papers')} paper(s) on {est.get('model')}; {basis}; "
+          f"US${remaining:.2f} of the US${cap:.2f} cap remains.")
+    if estimate > remaining:
+        prog.note(f"pass two skipped: reading its {selected} paper(s) was estimated at "
+                  f"US${estimate:.2f} and US${remaining:.2f} of the US${cap:.2f} cap is "
+                  f"left. Publishing pass one.")
+        return 1, pass_two_outcome_sentence(
+            "abandoned_spend_cap", seats=seats, selected=selected, estimate=estimate,
+            remaining=remaining, cap=cap), counts
+
+    # ── read them, re-cluster over both passes, re-assemble ─────────────────
+    try:
+        runner.run_all(plan["pass_two_read"])
+    except StageFailed as exc:
+        # Pass one is a complete, publishable map and this is the whole value of
+        # the staging: a second pass that broke costs the build its second pass
+        # and not its map. It is never silent — the sentence names the stage, and
+        # it lands on the report, in this log and in the requester's feed.
+        stage = str(exc).split("'")[1] if "'" in str(exc) else "an unnamed stage"
+        print(f"[job {job_id}] pass two FAILED ({exc}); falling back to pass one's "
+              f"corpus and publishing that map.")
+        prog.note(f"pass two failed at '{stage}'; re-clustering over pass one alone and "
+                  f"publishing that map.")
+        runner.run_all(plan["pass_two_fallback"])
+        # Two passes RAN, and the record says so; what the map holds is pass one's
+        # papers, and the outcome sentence is what says that. `passes` counts the
+        # passes the build ran rather than the passes that survived, because the
+        # figures beside it are counts of what was read.
+        return 2, pass_two_outcome_sentence("failed", stage=stage), counts
+
+    return 2, pass_two_outcome_sentence(state, seats=seats, selected=selected,
+                                        since=stats.get("since"),
+                                        cleared=stats.get("cleared")), counts
+
+
 def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: int,
             field: str, gloss: str | None) -> None:
-    stages = stages_for(concept, corpus_limit, field, gloss)
-    prog = Progress(conn, job_id, len(stages))
-    tail: list[str] = []  # last lines, kept for the error report on failure
+    plan = plan_for(concept, corpus_limit, field, gloss)
+    seats = plan["seats"]
+    nominal = (plan["pass_one"] + plan["pass_two_select"] + plan["pass_two_fetch"]
+               + plan["pass_two_read"] + plan["finish"])
+    one_pass_only = seats <= 0
+    # Initialised from the plan that is expected to run, and corrected the moment
+    # a phase is skipped (Progress.set_total says why).
+    prog = Progress(conn, job_id,
+                    (len(plan["pass_one"]) + len(plan["finish"])) if one_pass_only
+                    else len(nominal))
+    runner = StageRunner(prog, job_id)
+    pv = prompt_version()
 
     with Heartbeat(job_id):
-        for no, (name, cmd) in enumerate(stages, start=1):
-            prog.start_stage(no, name)
-            print(f"[job {job_id}] stage {no}/{len(stages)}: {name}")
-            proc = subprocess.Popen(
-                cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace")
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                print(f"    {line.rstrip()}")
-                tail.append(line.rstrip())
-                del tail[:-30]
-                if line.strip():
-                    prog.line(line)
-            rc = proc.wait()
-            # The one place the two kinds of ending are told apart. Read
-            # classify_stage_exit before changing either arm.
-            outcome = classify_stage_exit(rc, _shutting_down)
-            if outcome == "interrupted":
-                raise Shutdown(f"stopped during stage '{name}'")
-            if outcome == "failed":
-                raise StageFailed(f"stage '{name}' exited with code {rc}", tail)
+        runner.run_all(plan["pass_one"])
+
+        summary = map_summary(conn, concept, pv)
+        if summary:
+            _gid, papers, meanings, rels = summary
+            prog.note(f"pass one complete: {papers} paper(s) read, {meanings} meaning(s), "
+                      f"{rels} relationship(s). Not yet published.")
+
+        if one_pass_only:
+            # A build asked for one pass writes NO build record, so its report
+            # reads "this map was built in one pass" and draws no pass figures.
+            # A row saying `passes = 1` would draw five rows of zeroes about a
+            # pass that was never attempted (#193, and #30's defect before it).
+            print(f"[job {job_id}] pass two is disabled (PASS_TWO_SEATS=0): one pass, "
+                  f"and no build record will be written.")
+            passes, outcome, counts = 1, None, {}
+        else:
+            passes, outcome, counts = run_pass_two(conn, job_id, runner, plan, concept)
+
+        if outcome is not None:
+            record_cmd = [sys.executable, "-u", "pipeline/record_pass.py", concept,
+                          "--build", "--passes", str(passes), "--outcome", outcome]
+            # Only counts a run actually took are passed. An absent flag leaves the
+            # column NULL, which `020` prints as "not recorded"; passing 0 would
+            # say the citation graph was asked and answered nothing.
+            for flag, value in (("--seats", counts.get("seats")),
+                                ("--candidates", counts.get("candidates")),
+                                ("--cleared", counts.get("cleared"))):
+                if isinstance(value, int):
+                    record_cmd += [flag, str(value)]
+            runner.run("record how this build's second pass ended", record_cmd)
+
+        # Now that every phase that was going to run has, the total is knowable.
+        prog.set_total(runner.no + len(plan["finish"]))
+        runner.run_all(plan["finish"])
 
     # Stage E created/updated the genealogy row for (concept, prompt_version).
-    pv = env("PROMPT_VERSION", "v2")
     row = conn.execute(
         "SELECT id FROM genealogies WHERE concept = %s AND prompt_version = %s "
         "ORDER BY id DESC LIMIT 1", (concept, pv)).fetchone()

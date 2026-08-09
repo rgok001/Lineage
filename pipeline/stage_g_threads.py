@@ -64,11 +64,11 @@ def main() -> None:
     concept, pv = args.concept, args.prompt_version
 
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
-    gen = conn.execute("SELECT id FROM genealogies WHERE concept = %s AND prompt_version = %s",
+    gen = conn.execute("SELECT id, nodes FROM genealogies WHERE concept = %s AND prompt_version = %s",
                        (concept, pv)).fetchone()
     if not gen:
         sys.exit(f'No map for "{concept}" at prompt {pv}. Run Stage C and E first.')
-    gen_id = gen[0]
+    gen_id, nodes = gen
 
     rows = conn.execute("""
         SELECT p.arxiv_id, p.year, p.title, d.definition, d.novelty_claims
@@ -76,8 +76,28 @@ def main() -> None:
         WHERE d.concept = %s AND d.prompt_version = %s AND d.defines_concept = true
         ORDER BY p.year, p.arxiv_id
     """, (concept, pv)).fetchall()
+
+    # THIS STAGE'S POPULATION IS THE MAP, NOT THE DEFINITIONS TABLE — the same
+    # correction #190 forced on Stage D and #191 made in nomination, and here it is
+    # load-bearing rather than tidy. Since Stage C can be scoped to a corpus, a
+    # definition of this concept can exist and sit outside this map: a re-trace
+    # with a smaller corpus leaves them, and so does #192's fallback, where pass
+    # two reads papers and the map is then re-clustered over pass one alone. A
+    # thread composed over those papers names a paper the map does not hold, which
+    # is exactly what clause 6 of the publish invariant refuses (migration 021) —
+    # so the unscoped population would have the build refuse its own publish, at
+    # the last step, over threads this stage had just written.
+    in_map = {m.get("arxiv_id") for n in (nodes if isinstance(nodes, list) else [])
+              if isinstance(n, dict)
+              for m in (n.get("members") or []) if isinstance(m, dict)}
+    outside = [r for r in rows if r[0] not in in_map]
+    rows = [r for r in rows if r[0] in in_map]
     if not rows:
-        sys.exit(f'No definitions for "{concept}" at prompt {pv}.')
+        sys.exit(f'No definitions for "{concept}" at prompt {pv} inside this map. '
+                 f"({len(outside)} paper(s) define the concept but are not in it.)")
+    if outside:
+        print(f"  ({len(outside)} paper(s) define this concept but are not in this map, "
+              f"so no thread may name them. That is what --corpus on Stage C means.)")
     P = [{"arxiv": r[0], "year": r[1], "title": r[2], "def": r[3] or "",
           "nov": (r[4][0] if r[4] else "")} for r in rows]
 

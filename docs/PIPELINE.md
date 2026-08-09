@@ -52,18 +52,64 @@ Eight lettered stages, A to H, each a standalone CLI script reading root `.env`.
 The pipeline is CLI-first by rule: the worker orchestrates these same commands
 and adds nothing to them.
 
-**The worker runs thirteen steps, not eight**, and the difference is not
-decoration: three things that began as optional auxiliaries are now part of a
-finished trace. `check_extraction.py` audits the text the grounding check is
-about to rest on (incident 11), `stage_b_extract.py --reground` recomputes the
-definition stamps against the text actually on disk (decision 19), and
-`enrich_authors.py` fills the author metadata the export cannot invent. In
-order: select corpus, fetch papers, extract text, audit extracted text,
-extract definitions (B), cluster concept-states (C), classify edges (D),
-re-check definition quotes, ground and assemble (E), fill author metadata,
-score magnitude (F), compose threads (G), check each claim (H). Earlier drafts
-of this section said "eight stages plus auxiliaries", which was true of the
-letters and wrong about what a trace actually consists of.
+**The worker runs a build in TWO PASSES, twenty-eight steps at most, and
+publishes once at the very end** (issue #192, the design on #184). The passes are
+what the letters cannot show: pass one selects a corpus the way it always did and
+assembles a map from it, pass two asks that map which of its papers were the
+turning points and reads the recent work citing them, and the map is published
+only after both. Three things that began as optional auxiliaries are part of every
+trace and appear in both passes: `check_extraction.py` audits the text the
+grounding check is about to rest on (incident 11), `stage_b_extract.py --reground`
+recomputes the definition stamps against the text actually on disk (decision 19),
+and `enrich_authors.py` fills the author metadata the export cannot invent.
+
+```
+PASS ONE  select corpus, fetch papers, extract text, audit extracted text,
+          extract definitions (B), cluster concept-states (C), classify edges (D),
+          re-check definition quotes, ground & assemble pass one (E --no-publish),
+          record what pass one read
+PASS TWO  ask the map what came next (pass_two_select), fetch the nominated
+          papers, extract text, audit extracted text, estimate what reading them
+          costs (B --dry-run)   ← the spend gate decides here
+          read the nominated papers (B), join both passes' corpora (corpus_union),
+          re-cluster over both passes (C), classify edges (D), re-check
+          definition quotes, ground & assemble (E --no-publish),
+          record what pass two read
+FINISH    record how this build's second pass ended, fill author metadata,
+          score magnitude (F), compose threads (G), check each claim (H),
+          ground & publish (E)
+```
+
+**Publication is one act, at the end.** Every assembly before it runs
+`--no-publish`, so `status` never reaches `complete` — which since #168 is the
+same thing as saying no reader can see it — while the map is still being
+re-clustered underneath. It is after Stage G rather than at the end of pass two
+because clause 6 of the publish invariant reads the stored threads (#171's
+residue): a gate that ran before Stage G would judge the previous build's threads
+over this build's concept-states and refuse a re-trace after every paid step.
+Grounding again costs nothing, so the last Stage E is a free re-check plus the
+publish.
+
+**Pass two is bounded and abandonable, and every way out of it is recorded.**
+Its seat count is `PASS_TWO_SEATS` or `corpus_limit // 10`; `0` disables it and
+that is the only way to ask this worker for a one-pass build. Before it buys
+anything, `stage_b_extract.py --dry-run --estimate-json` prices it and the worker
+compares that with what is left of the ONE per-trace spend cap — not a second cap
+beside it, which would be a way to exceed the first. If it does not fit, pass
+one's map is published and the estimate and the remaining cap are printed and
+recorded, so an abandonment is auditable rather than a silent branch. The gate
+sits after fetching and extraction because the estimate is a token count over the
+text on disk: what is spent before it is patience, not money.
+**A pass-two stage that fails degrades to pass one** rather than failing the
+build: re-cluster over the pass-one corpus (which is what #190 makes nameable),
+re-classify, re-assemble, publish. Measured on the harness below, that fallback's
+Stage D reused 4 of 4 classifications and spent `$0.0000`. It is never silent —
+the recorded outcome names the stage that failed and the report prints it.
+**An interruption is not an outcome.** A deploy's SIGTERM mid-pass-two travels
+past all of this and requeues the job (#178); the resumed build re-runs from the
+start, and because every LLM stage caches and `record_pass.py --pass 1` clears the
+map's pass record before re-stating it, it converges on the same map rather than
+adding to a half-built one.
 
 **Stage A part 1: corpus selection**
 (`corpus_select.py <concept> --limit N --field fields/K --gloss "..." --json PATH`).
@@ -125,7 +171,13 @@ As shipped in #180 it took no seat and only printed its table; #181 then gave it
 seats to fill.
 
 **The reserved partition** (`--recent-seats R`, default `--limit //
-RECENT_SEATS_DIVISOR` = 30 of 150; issue #181). R of the seats are competed for
+RECENT_SEATS_DIVISOR` = **15 of 150 since #192**, 30 of 150 before it; issue
+#181). It was halved when the two-stage build landed, because pass two now reads
+its own 15 papers out of the same recency window and keeping 30 here as well
+would pay twice for overlapping populations; it is not retired, because a build
+that abandons pass two at the spend gate would otherwise publish a map with no
+recent work in it at all. Same total seats, better aimed, and the floor survives.
+R of the seats are competed for
 only within the recency window, and a candidate must pass **two signals that can
 each veto**: it cites at least two of the seeds (it is attached to this lineage)
 and it ranks well on the same embedding relevance check the seeds go through (it
@@ -181,9 +233,10 @@ selection-time reading of control 1; the map-level control is #183.
 --pass-two-seats R --json PATH`; issue #191, designing #184). A second
 corpus-producing CLI, and the only one that reads a map. Stage A chooses papers
 before the system knows anything about the concept; this one runs *after* a
-pass-one map exists and asks that map what came next. **Nothing calls it yet** —
-the orchestration that would put it inside a build is #192 — so today it is a
-standalone, read-only instrument that writes a file and nothing else.
+pass-one map exists and asks that map what came next. **The worker calls it as
+the first step of pass two** (#192); it stays a read-only instrument that writes
+files and never a row, so it can also be run by hand against a live map at any
+time without touching what a reader is being served.
 **What nominates: every concept-state, equally, two nominators each** — the
 member with the most edges touching it in either direction, and the newest member
 by year, ties broken by year then arXiv id so two runs nominate the same papers.
@@ -226,6 +279,13 @@ arXiv work cites two of this map's papers; the sentence names the citation graph
 and stops, the run exits clean, and an empty `[]` corpus file is still written so
 that "pass two nominates nothing" and "the run fell over" do not read the same to
 #192.
+**`--stats-json` writes the funnel as a file** (#192), on every exit including the
+degraded ones, because the build records the citation-graph counts either side of
+the gate on the map and the report prints them: a caller scraping them out of the
+funnel line above would be deciding what a map claims on a column width. Its
+`state` is the one code in this strand and it stays a code — `worker/run.py` turns
+it into the sentence a reader meets, so the outcome has exactly one author and
+nothing between there and the page translates anything.
 **The output** is a corpus file in the shape `fetch_papers.py` reads and
 `stage_b_extract.py --corpus` / `stage_c_cluster.py --corpus` (#190) scope by,
 plus `pass: 2`, `nominators_cited`, `nominator_arxiv_ids` and `nominating_states`
@@ -835,16 +895,29 @@ nothing: the counts and the verdict come from the view, so an Operator checking 
 map by hand and this gate cannot disagree about it. A missing view is a refusal
 too, with the driver's own message and the name of the migration, rather than an
 `UndefinedTable` traceback nine steps into a thirteen-step run.
+**`--no-publish` assembles without publishing** (#192): the status is not touched
+and the invariant is not asked, because publishing is what the invariant gates. A
+two-stage build grounds and assembles three times — at the end of pass one, at the
+end of pass two, and after Stage G — and must be public exactly once, at the end,
+or readers would be shown pass one's map and then have it re-clustered underneath
+them. The counts and the export are identical on both endings; only the first
+sentence differs, `Genealogy complete` against `Genealogy assembled and NOT
+published`, because that is the line an operator reads to decide whether anyone
+can see it.
 Two consequences, both in the runbook. A **re-ground of an unrepaired map now
 refuses**, which leaves that map serving exactly what it was serving and makes
 the repair a prerequisite (#170 is the worked example); a full **rebuild** is
 unaffected, because Stage C rewrites `nodes` wholesale from the definitions it
 admits today. And **clause 6 is read against the threads the map already has**:
-Stage G runs after Stage E, so on a re-trace the gate sees the previous run's
-threads over the new concept-states, and a paper that has left the map's
-membership refuses the publish until `stage_g_threads.py` has run again. That
-ordering is the residue of publishing at Stage E rather than after Stage H, and
-is noted on #171.
+on a re-trace the gate sees whatever `genealogies.streams` holds, so a paper that
+has left the map's membership refuses the publish until `stage_g_threads.py` has
+run again. **A worker build no longer meets that**, and the repair was the whole
+reason the publish moved to the end (#192): Stage G runs immediately before the
+publishing Stage E, so the threads the gate reads are this build's. Stage G was
+also given the map as its population rather than the definitions table, so it
+cannot compose a thread over a paper the map does not hold. What remains is a
+Stage E run BY HAND after a re-cluster, which still refuses until Stage G is run;
+that is the sequence in the runbook and the residue #171 recorded.
 **And the assembled JSON gains `stamp` per edge** (the resolved three-state
 value, computed against each paper's own stored digest, so the JSON and the page
 agree by construction). `verified` stays on every edge, so
@@ -857,6 +930,25 @@ count (issue #59). The stage's own summary counts the same way, because a summar
 that folds stale into verified is the same overclaim as a page doing it.
 
 **Auxiliaries.**
+`corpus_union.py --json OUT IN...`: joins the two passes' corpus files into the
+one file the union re-cluster is scoped by (#192). Order is pass one's then
+whatever pass two adds, duplicates keeping their FIRST position, because
+`stage_b_extract.py --corpus` reads in corpus-rank order (#185) and re-ordering
+the union would re-order a re-run's extraction for nothing. It exists as a file
+and a command rather than a set the worker holds in memory because since #190 a
+map's membership IS the corpus file, and an Operator repairing a build has to be
+able to reproduce it rather than reconstruct it with `jq`.
+`record_pass.py <concept> [--pass N --corpus PATH | --build … | --show]`: writes
+which pass read which papers and how the second pass ended, into
+`map_build_pass_papers` and `map_build_passes` (migration 022), which is what
+#193's report figures read through the `map_pass_papers` and `map_pass_build`
+views. It records and does not decide: every number comes from a file the run
+already produced or an argument the worker printed in the feed, and the papers
+come from the same corpus file Stage B and Stage C were scoped by, so the record
+and the map cannot disagree about the membership. **`--pass 1` clears the map's
+whole pass record first**, so a requeued or re-run build re-states what it read
+instead of adding to it — that is what makes #178's requeue converge. `--show`
+reads it back through the same views the report reads.
 `workbench.py`: CLI curation (merge, rename, split-out, delete, reclassify);
 every edit appends to `user_edits`, carrying `by_asserted` (decision 18): this
 script authenticates nobody, so the name is what the process says about itself,
@@ -1035,10 +1127,11 @@ other surface, because it answers a question for whoever sets the seat count and
 not for somebody reading a map. The section also prints the two falsifiers rather
 than leaving a reader to add up: the ranked papers against the papers the second
 pass read, and `papers read = N in the first pass + N in the second + N in
-neither`, each marked when it does not match. **Every figure in the section reads
-"built in one pass" on every map in this database today**, because nothing records
-a paper's pass until #192's orchestration lands and migration `020` ships the
-question over an empty seam; `passes the build recorded` prints its own words,
+neither`, each marked when it does not match. **The figures are drawn for a map
+whose build recorded itself in passes and for no other** — migration `022` (#192)
+points `020`'s two seam views at `map_build_pass_papers` and `map_build_passes`,
+so a map built before that, or built in one pass on purpose, has no build record;
+`passes the build recorded` prints its own words,
 "nothing recorded how this map was built", rather than the conclusion drawn from
 its own absence. **It reads `LINEAGE_READ_URL`
 and never `DATABASE_URL`, and issues no statement but `SELECT`** — the second
@@ -1165,6 +1258,15 @@ fragment per paper and stored it, and the model returned paraphrase, which the
 thread page then rendered under a verified stamp (section 10, incident 8).
 Evidence is not regenerated: the app reads `definitions.verbatim_quote`, the
 span Stage E actually matched.
+**Its population is the MAP, not the definitions table** (#192), the same
+correction #190 forced on Stage D and #191 made in nomination, and here it is
+load-bearing rather than tidy: a definition of the concept can sit outside this
+map — a re-trace with a smaller corpus leaves them, and so does the two-stage
+build's fallback, where pass two reads papers and the map is then re-clustered
+over pass one alone — and a thread naming one of those is exactly what clause 6
+of the publish invariant refuses. Unscoped, the build would refuse its own
+publish over threads this stage had just written. The papers dropped are counted
+on the stage's own line, in Stage D's words.
 
 **Stage H: claim-level evidence** (`stage_h_claims.py <concept> [--thread SID]`).
 Asks each paper for 2-4 things it did for the term, each with the passage that

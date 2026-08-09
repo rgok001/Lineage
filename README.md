@@ -59,14 +59,15 @@ python pipeline/corpus_select.py "attention" --limit 150 --json corpus.json
 #                      query (e.g. "kernel" --gloss "kernel methods in SVMs")
 
 # Pass two's selection: the recent papers an ALREADY-BUILT map nominates.
-# Reads the map (nodes + edges), writes a corpus file, changes nothing. No LLM
-# call, with or without --dry-run. Nothing calls this yet (#192 is the
-# orchestration); run it by hand to read its table.
+# Reads the map (nodes + edges), writes files, changes no row. No LLM call, with
+# or without --dry-run. The worker runs this as the first step of pass two
+# (#192); by hand it is a read-only instrument, safe against a live map.
 python pipeline/pass_two_select.py "dark energy" --field fields/31 \
-    --recent-since 2021 --pass-two-seats 15 --json corpus_pass2.json
+    --recent-since 2021 --pass-two-seats 15 --json corpus_pass2.json \
+    --stats-json pass2_stats.json
 python pipeline/pass_two_select.py "attention" --dry-run   # select, print, write nothing
-#   the output is a corpus file --corpus reads, with pass/nominators_cited added,
-#   so it can be concatenated with the pass-one file
+#   the output is a corpus file --corpus reads, with pass/nominators_cited added
+#   --stats-json : the funnel counts, which the build records on the map
 
 # Acquisition: download arXiv source (LaTeX-first) into DATA_DIR + papers table
 python pipeline/fetch_papers.py corpus.json --dry-run   # preview, no downloads
@@ -92,8 +93,24 @@ python pipeline/stage_d_edges.py "attention" --dry-run             # links, and 
                                                                    # are already cached
 python pipeline/stage_d_edges.py "attention"
 
-# Stage E: grounding check + assemble genealogy JSON
+# Stage E: grounding check + assemble genealogy JSON, and publish the map
 python pipeline/stage_e_ground.py "attention"
+python pipeline/stage_e_ground.py "attention" --no-publish   # assemble, leave it
+                                                             # unpublished and unasked
+                                                             # (a two-stage build's
+                                                             # intermediate assemblies)
+
+# The two passes' corpora, joined into the file the union re-cluster is scoped by
+python pipeline/corpus_union.py --json corpus_union.json corpus.json corpus_pass2.json
+
+# Which pass read which papers, and how the second pass ended (the report's
+# pass figures read this; migration 022)
+python pipeline/record_pass.py "attention" --pass 1 --corpus corpus.json
+python pipeline/record_pass.py "attention" --pass 2 --corpus corpus_pass2.json
+python pipeline/record_pass.py "attention" --build --passes 2 \
+    --outcome "The second pass filled all 15 of its seats and read them." \
+    --seats 15 --candidates 611 --cleared 45
+python pipeline/record_pass.py "attention" --show   # what is recorded; writes nothing
 
 # Stage F: per-paper magnitude (attention + displacement). Run after Stage D,
 # which populates the citation cache it reads

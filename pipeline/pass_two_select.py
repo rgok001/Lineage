@@ -221,6 +221,10 @@ def main() -> None:
                          "the two signals then does not run and the seats say so")
     ap.add_argument("--json", metavar="PATH",
                     help="write the pass-two corpus here, in the shape --corpus reads")
+    ap.add_argument("--stats-json", metavar="PATH",
+                    help="write the funnel counts here as JSON: the citation-graph "
+                         "facts either side of the gate, which the build records on "
+                         "the map (#192) and the report prints (#193)")
     ap.add_argument("--dry-run", action="store_true",
                     help="select and print, write no file. Nothing in this stage calls "
                          "an LLM either way; the dry run also skips writing the corpus")
@@ -235,8 +239,9 @@ def main() -> None:
         # Said before anything is read or fetched. A zero-seat run that still
         # paged OpenAlex would spend somebody's quota to produce a table nobody
         # can act on.
-        print(f"Pass two is DISABLED (--pass-two-seats {seats}). Nothing was read, "
-              f"nothing was fetched, no file was written.")
+        print(f"Pass two is DISABLED (--pass-two-seats {seats}). No map was read and "
+              f"nothing was fetched.")
+        _write(args, [], seats, state="disabled", funnel={"since": since})
         return
 
     # The map is read BEFORE a single HTTP request goes out. A run that cannot
@@ -298,7 +303,9 @@ def main() -> None:
         print(f"\nNone of this map's {n_members} paper(s) carries an OpenAlex id, so the "
               f"citation graph cannot be asked what cites them. Nothing was fetched.")
         print(f"\nFilled 0 of {seats} pass-two seats.")
-        _write(args, [], seats)
+        _write(args, [], seats, state="map_has_no_openalex_ids",
+               funnel={"since": since, "nominators": len(nominators),
+                       "nominating_states": 0})
         return
     print(f'{len(seed_works)} of the map\'s {n_members} paper(s) carry an OpenAlex id '
           f'and aim the hop'
@@ -349,7 +356,12 @@ def main() -> None:
         print(f"  That is a fact about the citation graph, not about the field. Pass one's "
               f"map stands as it is.")
         print(f"\nFilled 0 of {seats} pass-two seats.")
-        _write(args, [], seats)
+        _write(args, [], seats, state="none_found",
+               funnel={"since": since, "fetched": stats["fetched"],
+                       "cite_min_seeds": len(forward),
+                       "eligible": 0, "cleared": 0,
+                       "nominators": len(nominators),
+                       "nominating_states": len({p["node_id"] for p in nom_oa.values()})})
         return
 
     # ── gate, signal 2: top 3R by relevance, never a cosine floor ───────────
@@ -456,11 +468,20 @@ def main() -> None:
         print(f"  ⚠⚠ fewer than half the pass-two seats could be filled. Read the table "
               f"before trusting any figure taken from a map built on this file.")
 
-    _write(args, selected, seats, rel_by_id, cited_map_papers)
+    _write(args, selected, seats, rel_by_id, cited_map_papers,
+           state=("filled" if len(selected) >= seats
+                  else "under_filled" if selected else "none_seated"),
+           funnel={"since": since, "fetched": stats["fetched"],
+                   "cite_min_seeds": len(forward),
+                   "eligible": len(eligible), "cleared": len(qualified),
+                   "nominators": len(nominators), "nominating_states": len(nominating),
+                   "states_with_a_seated_descendant": len(tally),
+                   "relevance_filter": not args.no_relevance_filter})
 
 
 def _write(args, selected: list[dict], seats: int,
-           rel_by_id: dict | None = None, cited_map_papers: Counter | None = None) -> None:
+           rel_by_id: dict | None = None, cited_map_papers: Counter | None = None,
+           state: str = "unknown", funnel: dict | None = None) -> None:
     """The pass-two corpus file. Written even when it is empty, and here is why.
 
     An absent file and a run that fell over read identically to whatever calls
@@ -468,7 +489,26 @@ def _write(args, selected: list[dict], seats: int,
     finding rather than an absence of one. An empty `[]` is a corpus file the
     existing readers already handle: `stage_c_cluster.py --corpus` exits naming
     the scope, which is exactly the fallback #184 wants.
+
+    **`--stats-json` is written on every one of those exits too**, for the same
+    reason one level up: #192 records the citation-graph counts either side of the
+    gate on the map and the report prints them, and a caller that had to scrape
+    them out of the funnel line above would be deciding what a map claims on a
+    column width. `state` is the only code in it, and it stays a code: the worker
+    turns it into the sentence a reader sees, so the four states the design names
+    have exactly one author and nothing between here and the page translates
+    anything (#193's rule that `pass_two_outcome` is words and not a code).
     """
+    if args.stats_json and not args.dry_run:
+        stats = {"concept": args.concept, "state": state, "seats": seats,
+                 "selected": len(selected), "since": None,
+                 "fetched": None, "cite_min_seeds": None, "eligible": None,
+                 "cleared": None, "nominators": None, "nominating_states": None,
+                 "states_with_a_seated_descendant": None, "relevance_filter": None}
+        stats.update(funnel or {})
+        Path(args.stats_json).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.stats_json).write_text(json.dumps(stats, indent=2), encoding="utf-8")
+        print(f"Wrote this run's funnel counts to {args.stats_json} (state: {state}).")
     if not args.json:
         return
     rel_by_id = rel_by_id or {}

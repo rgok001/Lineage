@@ -31,7 +31,8 @@ resolves here.
 | `VOYAGE_MODEL` | optional | defaults to `voyage-3` (1024-dim, matches the column) |
 | `LLM_MODEL` | root `.env` | `claude-sonnet-5` (see decision record) |
 | `PROMPT_VERSION` | root `.env` | `v2`; part of the Stage B cache key |
-| `TRACE_SPEND_CAP_USD` | root `.env` | 15 |
+| `TRACE_SPEND_CAP_USD` | root `.env` | 15. **One cap per trace, covering both passes** (#192): the worker prices pass two against what is left of it and abandons the pass rather than exceeding it |
+| `PASS_TWO_SEATS` | optional, root `.env`/Render | how many papers the second pass may add; default `corpus_limit // 10` = 15 of 150 (#192). **`0` disables the second pass**, and such a build writes no build record, so its report says the map was built in one pass. A value that is not a whole number is ignored with a line in the log, never read as 0 |
 | `DATA_DIR` | root `.env`, Render (`/data`) | absolute paths honoured |
 | `OPENALEX_MAILTO` | root `.env`, Render | polite-pool contact |
 | `LINEAGE_NO_DB` | set per shell, never committed | any non-blank value and every Python entry point refuses to hand out `DATABASE_URL` (decision 22). Set it in any shell running pipeline code to inspect it rather than to operate on real data. Does not reach the Node side |
@@ -103,7 +104,54 @@ re-approved. Two consequences worth holding:
   resubmitted, which is the right answer: one of the two rows is redundant.
 - **A stage that exits nonzero is not retried at all**, then or ever. That is
   deliberate: it has diagnostics attached and will fail the same way. Only
-  silence is retried.
+  silence is retried. **The one exception is a stage of pass two** (#192), which
+  costs the build its second pass and not its map: the build falls back to
+  re-clustering over the pass-one corpus, publishes that, and records an outcome
+  naming the stage that failed. Look for `pass two FAILED` in the log and for
+  "The second pass failed while '…'" on the map's report.
+
+**Watching a two-stage build** (#192). The feed narrates the passes: `pass one
+complete: N paper(s) read, M meaning(s), K relationship(s). Not yet published.`,
+then `pass two: X recent paper(s) cite this map, Y cite two or more of it, Z
+cleared both signals. Reading the top R.`, then the finish. A build runs up to 28
+stages and the feed's total is corrected downward the moment a pass is skipped,
+with the reason on the same flush. **The map is invisible for the whole of it**:
+`status` stays `running` until the last stage, and since #168 the read path
+refuses anything that is not `complete`.
+
+Three things to check on a build that came out one-pass, in this order, all of
+them from the map's own report or from `python pipeline/record_pass.py <concept>
+--show`:
+
+- `The second pass was not run: … estimated at US$X and US$Y of the US$Z spend
+  cap was left.` The gate did its job. Either raise `TRACE_SPEND_CAP_USD`, or
+  lower `PASS_TWO_SEATS`, and re-trace; nothing is wrong.
+- `The second pass found nobody to read: no arXiv paper from YEAR or later cites
+  two or more of this map's papers.` A fact about the citation graph. For a
+  mature term it is worth knowing; for a young one it is expected. It is never
+  reported as the field going quiet.
+- `The second pass failed while '…' was running.` A defect. The stage's own
+  output is in the worker log for that build; the map is pass one's and is
+  correct.
+
+**Recording a pass by hand.** If a build's record is wrong or missing —
+`papers the record puts in neither pass` above zero on
+`pipeline/map_report.py` is the symptom — it is re-stated with the same corpus
+files the build used:
+
+```sh
+python pipeline/record_pass.py "<concept>" --pass 1 --corpus data/corpus_<slug>.json
+python pipeline/record_pass.py "<concept>" --pass 2 --corpus data/corpus_<slug>_pass2.json
+python pipeline/record_pass.py "<concept>" --build --passes 2 --outcome "…" \
+    --seats 15 --candidates 611 --cleared 45
+python pipeline/record_pass.py "<concept>" --show
+```
+
+`--pass 1` clears the map's whole pass record first, so this is a re-statement
+and not an addition. `--outcome` is printed verbatim on the report: it must be a
+sentence, not a code. A map that should read "built in one pass" has its record
+removed rather than set to `passes = 1`:
+`DELETE FROM map_build_passes WHERE genealogy_id = N;`.
 
 **Backup and restore.** Stage E's JSON exports under `data/` are the map
 backups; re-export after curating. Restore with
@@ -371,11 +419,14 @@ them:
   A full rebuild is not affected: Stage C rewrites `nodes` wholesale from the
   definitions it admits today, so the state clause 1 is about does not survive
   one.
-- **Clause 6 is read against the threads the map already has.** Stage G runs
-  after Stage E, so on a re-trace the gate sees the *previous* run's threads over
-  the new concept-states; a paper that has left the map's membership since then
-  refuses the publish. The repair is to run `stage_g_threads.py` and then Stage E
-  again, and the ordering is noted on #171.
+- **Clause 6 is read against the threads the map already has**, so a Stage E run
+  BY HAND after a re-cluster sees the *previous* threads over the new
+  concept-states, and a paper that has left the map's membership refuses the
+  publish. The repair is to run `stage_g_threads.py` and then Stage E again.
+  **A worker build no longer meets this** (#192): it composes threads immediately
+  before the one publishing Stage E, and Stage G's population is now the map
+  rather than the definitions table, so it cannot put a paper in a thread that
+  the map does not hold.
 - **A database without migration 021 refuses too**, naming the migration and the
   driver's own message. That is the right way round — a gate that cannot read the
   invariant has not passed it — and Render's pre-deploy applies the migrations

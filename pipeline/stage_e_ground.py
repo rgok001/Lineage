@@ -10,8 +10,17 @@ renders, and marks the genealogy complete — which since #168 is the act that
 makes a map public, and since #171 is refused for a map that violates the
 publish invariant (migration 021, `pipeline/check_map.py`).
 
+**`--no-publish` assembles without publishing**, which is what a two-stage build
+runs on every assembly but the last (#192, designed on #184). A build now grounds
+and assembles three times — once at the end of pass one, once at the end of pass
+two, once after Stage G — and it must be public exactly once, at the end, because
+a map that became `complete` at the end of pass one would be served to readers
+and then re-clustered underneath them. That is the live-surgery risk (#149, #169,
+#171) the staging exists to avoid.
+
 Usage:
   python pipeline/stage_e_ground.py "attention"
+  python pipeline/stage_e_ground.py "attention" --no-publish
 """
 
 import argparse
@@ -216,6 +225,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Stage E: ground edge quotes and assemble genealogy.")
     ap.add_argument("concept")
     ap.add_argument("--json", metavar="PATH", help="output path (default DATA_DIR/genealogy_<concept>_<pv>.json)")
+    ap.add_argument("--no-publish", action="store_true",
+                    help="ground and assemble, but leave the map unpublished: the "
+                         "status is not touched and the publish invariant is not "
+                         "asked. For the assembly runs inside a two-stage build "
+                         "that must not be shown to anyone (#192)")
     args = ap.parse_args()
 
     prompt_version = env("PROMPT_VERSION", "v1")
@@ -491,10 +505,44 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
     # answer no (issue #171). It reads the map this transaction is about to
     # commit, including the edges the sweep removed and the stamps the loop just
     # wrote.
+    #
+    # **Under --no-publish the gate does not run, because publishing is what it
+    # gates** (#192). Two consequences worth stating, since "check anyway, it is
+    # free" is the obvious alternative. Clause 6 compares the stored threads
+    # against the map's papers, and Stage G runs AFTER this stage — so on the
+    # intermediate assemblies of a re-trace the threads are the PREVIOUS build's
+    # over the new concept-states, and asking there would refuse a build at step 9
+    # of 24 over a state the build is about to repair anyway (#171's own residue,
+    # which is why the design moved the publish to the end). And a gate whose
+    # verdict changes nothing is a gate that teaches an operator to ignore it. The
+    # invariant is asked once, at the one moment it can still answer no: the
+    # publish run at the end.
+    if args.no_publish:
+        print("  --no-publish: this map was assembled but NOT published. Its status is\n"
+              "  untouched, the publish invariant was not asked, and no reader can see\n"
+              "  it until a later run of this stage publishes it.\n")
+        return _assemble(args, gen_id, nodes, prompt_version, assembled_edges,
+                         edges, verified_count, stale_count, published=False)
+
     refuse_unless_publishable(conn, gen_id)
 
     conn.execute("UPDATE genealogies SET status='complete', updated_at=now() WHERE id=%s", (gen_id,))
 
+    return _assemble(args, gen_id, nodes, prompt_version, assembled_edges,
+                     edges, verified_count, stale_count, published=True)
+
+
+def _assemble(args, gen_id: int, nodes, prompt_version: str, assembled_edges: list,
+              edges: list, verified_count: int, stale_count: int,
+              published: bool) -> dict:
+    """The export and the counts, for both endings of the stage.
+
+    Split out when `--no-publish` arrived (#192) rather than duplicated, because
+    the export is the de-facto backup (incident 4) and an unpublished assembly
+    that wrote a different file from a published one would make the backup say
+    which branch ran rather than what the map holds. The only difference between
+    the two endings is whether the status moved, and that is the caller's.
+    """
     # Counted at the stamp, not at the boolean, and the three are disjoint. An
     # edge whose quotes both matched text the papers table no longer describes
     # is not displayable as verified, and a summary that folds it into the
@@ -531,7 +579,8 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
 
     return {"out": out, "tmp": tmp, "nodes": len(nodes), "edges": len(edges),
             "verified": shown_verified, "inferred": shown_inferred,
-            "stale": stale_count, "matched": verified_count}
+            "stale": stale_count, "matched": verified_count,
+            "published": published}
 
 
 def _stamp_caveats(r: dict) -> list:
@@ -565,8 +614,16 @@ def _report(r: dict) -> None:
     """The success narrative, after the commit has landed and the export is in
     place. Every sentence here is in the past tense about something that is now
     durable; a line printed before the commit is a prediction (issue #65, and
-    issue #21 in `workbench.py` before it)."""
-    print(f"\nGenealogy complete: {r['nodes']} concept-states, {r['edges']} edges "
+    issue #21 in `workbench.py` before it).
+
+    The first sentence differs by branch and the counts do not (#192). "Genealogy
+    complete" is a claim about publication rather than about assembly: an
+    unpublished map is finished in every other sense and is visible to nobody,
+    and this is the one line an operator reads to decide whether readers can see
+    it."""
+    verdict = ("Genealogy complete" if r.get("published", True)
+               else "Genealogy assembled and NOT published")
+    print(f"\n{verdict}: {r['nodes']} concept-states, {r['edges']} edges "
           f"({r['verified']} solid/verified, {r['inferred']} dotted/inferred, "
           f"{r['stale']} stale).")
     for caveat in _stamp_caveats(r):
@@ -637,11 +694,15 @@ def _report_export_stranded(r: dict, exc: OSError) -> None:
                    "above.")
     else:
         repair += "Re-running this stage costs nothing and writes the same result again."
+    # Under --no-publish the map is emphatically not marked complete, and this
+    # report is read by somebody deciding what state the system is in (#192).
+    marked = ("this map is marked complete" if r.get("published", True)
+              else "this map is NOT published: its status was deliberately left alone")
     sys.exit(
         f"\nThe grounding run was COMMITTED and the database has moved: "
         f"{r['nodes']} concept-states, {r['edges']} edges "
         f"({r['verified']} solid/verified, {r['inferred']} dotted/inferred, "
-        f"{r['stale']} stale) are stored now, and this map is marked complete.\n"
+        f"{r['stale']} stale) are stored now, and {marked}.\n"
         f"{caveats}"
         f"Publishing the export then FAILED: {exc}\n"
         f"{new_map}"

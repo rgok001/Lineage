@@ -133,6 +133,42 @@ def cost_usd(model: str, in_tok: int, out_tok: int) -> float:
     return in_tok / 1e6 * p_in + out_tok / 1e6 * p_out
 
 
+def write_estimate(args, prompt_version: str, papers: int, in_tok: int,
+                   out_tok: int, cap: float) -> None:
+    """The dry run's estimate as a file, for a caller that must DECIDE on it.
+
+    Issue #192. The two-stage build asks this stage what pass two would cost and
+    abandons the pass if the remaining spend cap cannot cover it. Scraping that
+    number out of the table below would make a spend decision depend on a column
+    width, which is the weakness the one existing run-cost figure already has
+    (#85, a regex over stdout). The human table is unchanged and still prints.
+
+    **It is written on every dry-run path, including the one where there is
+    nothing to extract**, and that path is the one that matters most: a build
+    that was killed after pass two's Stage B and requeued (#178) finds every
+    pass-two paper already cached, and a missing file there would make the
+    resumed build abandon a pass the killed one had already paid for. `papers`
+    and `nothing_to_buy` say that state explicitly rather than leaving a caller
+    to read it out of a zero — an estimate of $0 over no papers is "there is
+    nothing here to buy", which is a different fact from a cheap job.
+
+    `model` and `cap_usd` travel with it because an estimate is a claim about a
+    model and a limit, and the abandonment message has to be able to name both.
+    """
+    if not args.estimate_json:
+        return
+    path = Path(args.estimate_json)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "concept": args.concept, "prompt_version": prompt_version,
+        "papers": papers, "model": args.model,
+        "input_tokens": in_tok, "output_tokens": out_tok,
+        "estimate_usd": round(cost_usd(args.model, in_tok, out_tok), 6),
+        "cap_usd": cap,
+        "nothing_to_buy": papers == 0,
+    }, indent=2), encoding="utf-8")
+
+
 # In what order the money is spent, which is the order the papers are read
 # (issue #185). This used to be `p.cited_by_count DESC NULLS LAST` and that was
 # the one order this stage must not use.
@@ -499,6 +535,10 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true",
                     help="estimate cost across models; makes no billable call. "
                          "With --reground, report the counts and write nothing")
+    ap.add_argument("--estimate-json", metavar="PATH",
+                    help="with --dry-run, also write the estimate here as JSON, for a "
+                         "caller that has to decide on it rather than read it (#192's "
+                         "pre-flight spend gate)")
     ap.add_argument("--corpus", metavar="JSON",
                     help="restrict to the arxiv_ids in this corpus JSON "
                          "(from corpus_select --json); without it, ALL extracted papers")
@@ -525,6 +565,13 @@ def main() -> None:
         sys.exit("--reground and --refresh are different jobs: --reground re-checks the "
                  "definitions you already have and spends nothing, --refresh buys new "
                  "ones. Run them one at a time.")
+    if args.estimate_json and not (args.dry_run and not args.reground):
+        # Refused rather than ignored: the caller of --estimate-json is a spend
+        # gate, and a gate that reads a file nobody wrote is a gate that decides
+        # on the last run's number or on nothing at all.
+        sys.exit("--estimate-json is the dry run's estimate written to a file, so it "
+                 "needs --dry-run and cannot be combined with --reground, which buys "
+                 "nothing and has nothing to estimate.")
     if args.reground and args.limit:
         sys.exit("--reground reports the verified count for the whole concept, and "
                  "--limit would make that count describe a subset of it. Use --only "
@@ -573,6 +620,10 @@ def main() -> None:
         else:
             print(f'Nothing to extract for "{args.concept}" (all cached at prompt {prompt_version}, '
                   f"or no papers pass text_title_match >= {TITLE_MATCH_MIN}).")
+        # Nothing to buy is an estimate too, and the resumed-build case depends on
+        # it being written here (see write_estimate).
+        if args.dry_run:
+            write_estimate(args, prompt_version, 0, 0, 0, cap)
         return
     if args.refresh:
         print(f"Refreshing {len(rows)} papers in place (definition ids preserved, "
@@ -602,6 +653,17 @@ def main() -> None:
     out_tok = (EST_OUTPUT_TOKENS + (1200 if args.thinking else 0)) * len(prompts)
 
     if args.dry_run:
+        # The estimate as a file, for a caller that has to DECIDE on it rather
+        # than read it (#192). The two-stage build asks this stage what pass two
+        # would cost and abandons the pass if the remaining cap cannot cover it;
+        # scraping that number out of the table below would make a spend decision
+        # depend on a column width. The human table is unchanged and still prints.
+        #
+        # It is written before the table, so a caller reading the file has it
+        # even if stdout is being consumed by something that stops early. `model`
+        # and `cap` travel with it because an estimate is a claim about a model
+        # and a limit, and the abandonment message has to name both.
+        write_estimate(args, prompt_version, len(prompts), total_in, out_tok, cap)
         exact = "exact (count_tokens)" if have_key else "APPROXIMATE (no API key; chars/3.5)"
         print(f'[dry-run] "{args.concept}" — {len(prompts)} papers, prompt {prompt_version}')
         print(f"  input tokens:  {total_in:,}  [{exact}]")

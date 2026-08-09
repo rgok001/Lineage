@@ -678,20 +678,41 @@ displacing them, so every total on the report rises when it runs and a map that
 read fifteen more papers and learned nothing from any of them looks exactly like
 one where the second pass moved the map.
 
-**Nothing in this schema records a paper's pass, and this migration does not add
-it.** Where the pass is stored is #192's decision and #192's migration; the one
-standing rule from the design is that it must not be a column on `papers`, which
-is shared across every map ever traced. `020` is deliberately the other half: it
-fixes the question the report asks. The seam is two views, **`map_pass_papers`**
+`020` fixes the question the report asks and left where the answer LIVES to
+#192, under one standing rule from the design: not a column on `papers`, which is
+shared across every map ever traced. The seam is two views, **`map_pass_papers`**
 (per map and paper: `definition_id`, `build_pass`, `pass_rank`) and
 **`map_pass_build`** (per map: `passes`, `pass_two_outcome`, `pass_two_seats`,
-`pass_two_candidates`, `pass_two_candidates_cleared`), each defined with the right
-columns and `WHERE false` — no rows at all. When #192 lands it replaces those two
-with `DROP VIEW` then `CREATE VIEW` over wherever it stored the pass, and every
-figure lights up without `020`, `app/lib/report.ts` or `pipeline/map_report.py`
-being touched. A view is a read-shape holding nothing, so writing one commits no
-storage and reserves no name in any table; that is why the seam is views and not
-columns.
+`pass_two_candidates`, `pass_two_candidates_cleared`), shipped with the right
+columns and `WHERE false`. A view is a read-shape holding nothing, so writing one
+commits no storage and reserves no name in any table; that is why the seam is
+views and not columns.
+
+**Migration `022_build_passes.sql` (#192) is the other half, and it is now
+applied.** Two additive tables — `map_build_passes` (per map: `passes`,
+`pass_two_outcome`, `pass_two_seats`, `pass_two_candidates`,
+`pass_two_candidates_cleared`, `recorded_at`, keyed on `genealogy_id`) and
+`map_build_pass_papers` (`genealogy_id`, `paper_id`, `build_pass`, `pass_rank`,
+primary key on the first two) — plus a redefinition of the two seam views over
+them, and nothing else: not `020`, not `app/lib/report.ts`, not
+`pipeline/map_report.py`, not the page. The primary key on
+`(genealogy_id, paper_id)` is what keeps `020`'s sum identity true by
+construction, since a paper counted in both passes would be one definition
+counted twice.
+**The pass is stored per PAPER and read back per DEFINITION**, and the view
+resolves one to the other through the genealogy's own concept and prompt version.
+The build knows which papers it read — the corpus files name arXiv ids — while
+the report counts definitions rows (#123); a paper the build read that never
+produced a definition therefore contributes no row to the seam, which is right,
+because it is not one of the papers the report counts.
+**It is `CREATE OR REPLACE VIEW` and not the `DROP VIEW` + `CREATE VIEW` `020`'s
+header predicted.** `map_report_passes` selects from both seam views, so the DROP
+fails on the dependency and `CASCADE` would take the report view with it and force
+`022` to re-create it — putting `020`'s definition in two files with the newer
+silently winning, which is the fault `020`'s own header refuses. `CREATE OR
+REPLACE VIEW` may change a view's query however it likes provided the output
+columns keep their names, types and order, which is exactly this change. The
+types are therefore load-bearing and are spelled out in the tables.
 
 The report view carries `passes_recorded`, `pass_two_outcome`, `pass_two_seats`,
 `pass_two_candidates`, `pass_two_candidates_cleared`, `papers_read_pass_one`,
@@ -715,13 +736,17 @@ selection-rank bands, published as `pass_two_rank_band_width` with each band
 carrying its own first and last rank. It carries `016`'s two header checks over
 its own text.
 
-**Every map in this database reads "this map was built in one pass" and every
-count is NULL**, which is a fact about the record and not a zero. A
-`COALESCE(..., 0)` anywhere would report four maps as having run a second pass
-that read nothing. Once a build IS recorded a zero is a real zero — a second pass
-that ran and found nothing — and `pass_two_outcome` names which of the design's
-four states produced it (filled, under-filled, none found, abandoned at the
-pre-flight gate), never blank; it is reader-ready text arriving through the seam,
+**Every map built before #192 reads "this map was built in one pass" and every
+count is NULL**, which is a fact about the record and not a zero; so does a build
+that deliberately ran one pass (`PASS_TWO_SEATS=0`), which writes no build row at
+all rather than one saying `passes = 1`. A `COALESCE(..., 0)` anywhere would
+report those maps as having run a second pass that read nothing. Once a build IS
+recorded a zero is a real zero — a second pass that ran and found nothing — and
+`pass_two_outcome` names which state produced it: the design's four (filled,
+under-filled, none found, abandoned at the pre-flight gate) plus the fifth the
+orchestration added, a second pass that failed and fell back to pass one, which
+no count can be read off. It is never blank; it is reader-ready text arriving
+through the seam,
 the way `run_cost_basis` works on `016`, so this file does not enumerate a list a
 fifth state would go missing from. `passes_recorded` prints its own absent words,
 "nothing recorded how this map was built", rather than the conclusion drawn from
@@ -757,6 +782,17 @@ second pass read nothing reports `0` beside an outcome naming why, a recorded
 build with no outcome reads "not recorded" rather than the one-pass words, and a
 pass number the view has never heard of lands in `papers_read_pass_unmarked` with
 the sum still holding. 39 checks.
+
+**Taken again on a real two-stage build** when `022` landed (#192), on a
+throwaway PostgreSQL with `001`-`022` applied and the worker driven end to end
+over a 9-paper fixture: the report row reads `passes_recorded 2`, the outcome
+sentence, `seats 3`, `candidates 40`, `cleared 3`, `papers_read_pass_one 6`,
+`papers_read_pass_two 3`, `papers_read_pass_unmarked 0`,
+`papers_defining_pass_two 3`, `papers_linking_into_pass_one 2`, and one rank band
+`{from 1, to 10, read 3, defining 3}`. Both identities hold on it. The same
+figures were then read through the **compiled** `listMapReports` and rendered by
+the **compiled** `/g/<id>/report` over that database, so the page's numbers are
+the ones the shipped SQL selects.
 
 Three figures the report is asked for have no input in this database and each
 renders as an explicit "not recorded", never a zero and never a blank: run cost
