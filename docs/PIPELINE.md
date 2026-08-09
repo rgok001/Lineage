@@ -498,6 +498,31 @@ recommender-embedding, and 0.35 collapses 124 of the 134 into one cluster. It
 over-splits weak singletons on purpose: merge is a one-click curatorial act,
 un-merge is not. Stage C output is a draft for curation, not a result. Claude
 labels each cluster (pennies).
+**A label is cached on its cluster's membership, so an unchanged cluster keeps
+the words it was given** (issue #189). Until 2026-08-09 this stage bought a fresh
+label for every cluster on every run, and two runs over an identical corpus could
+word the same concept-state differently — which is not only a reproducibility
+defect in its own right but reaches Stage D, whose classification prompt quotes
+these labels: the same pair of papers could be handed a differently-worded
+question on the second run and come back a different edge type. Measured on a
+throwaway PostgreSQL with the pre-change files taken from git as the control, a
+six-paper three-cluster fixture and a stub model whose wording moves between
+calls: pre-change, two C-then-D cycles over an unchanged corpus produced three
+different labels and **5 of 5 edge types different**; with the cache, the second
+cycle bought **0 labels** and every label and every classification was identical.
+The key is the cluster's member definition ids, sorted, plus a digest of the
+definition text each id currently holds, plus concept, prompt version, model and
+the labelling prompt's own bytes. The texts are in the key beyond what the ticket
+asked because `stage_b_extract.py --refresh` rewrites a definition in place and
+keeps its id (verified: rewriting one definition relabels exactly its own
+cluster, 1 call of 3). The cluster's *position* is deliberately not in the key —
+node ids are positional, so two runs can both produce `n3` and mean different
+things by it. Files are content-addressed under `DATA_DIR/label_cache`, same
+never-evict posture as `data/s2_cache`; a damaged or truncated one is a miss
+rather than an error (verified: six files corrupted three ways, three clusters
+relabelled, no crash), and buying fresh labels means deleting the directory.
+Moving one definition between clusters by hand relabels exactly the two clusters
+that moved and reuses the third.
 Absolute distances are model-specific, which is why the number moved and the
 method did not. The previous 0.16 was tuned for bge-large when embeddings ran
 locally; against Voyage it sits at the 1st percentile of the pairwise

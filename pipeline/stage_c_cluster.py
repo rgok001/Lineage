@@ -12,7 +12,8 @@ Design choices:
   of concept-states is the output, not an input we could know in advance.
 - Node labelling optionally asks the LLM for a short name per cluster (cheap,
   under the spend cap); --no-label falls back to a deterministic heuristic so the
-  stage runs fully offline.
+  stage runs fully offline. A label is CACHED ON ITS CLUSTER'S MEMBERSHIP, so an
+  unchanged cluster keeps the words it was given (issue #189).
 
 Writes one genealogies row per (concept, prompt_version) with nodes as JSON.
 
@@ -23,6 +24,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -31,7 +33,7 @@ import numpy as np
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import data_dir, env, node_denotation  # noqa: E402
+from common import data_dir, env, node_denotation, text_digest  # noqa: E402
 from stage_b_extract import PRICING, cost_usd  # noqa: E402
 
 # Embeddings come from the Voyage hosted API (see common.voyage_embed), which
@@ -108,15 +110,106 @@ def cluster(mat: np.ndarray, threshold: float) -> np.ndarray:
     return model.fit_predict(mat)
 
 
+# The labelling prompt, lifted out of the call so its bytes can be hashed into
+# the cache key below. Unchanged text: a label bought before this change and one
+# bought after it answer the same question.
+LABEL_SYSTEM = "Reply with only the label text, no quotes or punctuation around it."
+LABEL_USER = ('These are definitions of how different papers use the concept "{concept}". '
+              "They form one coherent sense of the concept. Give a short label (3–6 words) "
+              "naming THIS specific sense — not the generic concept.\n\n{joined}")
+
+
+# ── stable labels ───────────────────────────────────────────────────────────
+#
+# Issue #189. This stage used to buy a fresh label for every cluster on every
+# run, so two runs over an identical corpus could word the same concept-state
+# differently. That is a reproducibility defect on its own account — Stage D's
+# classification prompt quotes these labels, so the same pair of papers could be
+# handed a differently-worded question on the second run and come back a
+# different edge type — and it is what would have defeated #172's classification
+# cache in exactly the case the two-stage build (#184) needs it to hit: a
+# re-cluster that leaves a cluster untouched would still bust the key for every
+# pair touching it.
+#
+# So a label is cached on what it is a label OF. The key is the cluster's member
+# definition ids, sorted, AND a digest of the definition text each of those ids
+# holds right now. The ticket asks only for the ids; the texts are in because
+# `stage_b_extract.py --refresh` rewrites a definition in place and keeps its id,
+# and a label that outlives the text it was written from is the same fault as an
+# edge quote that outlives its definition (decision 19). Concept, prompt version,
+# model and the labelling prompt's own bytes are in for #172's reason: a cache
+# that survives a prompt change serves answers to a question nobody asked.
+#
+# The cluster's POSITION is deliberately not in the key. Node ids are positional
+# — `n1` is whichever cluster holds the earliest member year (decision 20) — so
+# two runs can both produce `n3` and mean different things by it, while a member
+# set cannot.
+#
+# Content-addressed files under DATA_DIR, the same shape and the same never-evict
+# posture as `data/s2_cache`. To buy fresh labels, delete the directory.
+LABEL_CACHE_DIR = "label_cache"
+
+
+def label_cache_key(concept: str, prompt_version: str, model: str,
+                    members: list[tuple[int, str]]) -> str:
+    """The identity of the labelling question for one cluster.
+
+    `members` is (definition_id, definition_text) for every member. Sorted here
+    rather than by the caller so that a change in row order — which clustering
+    input order is free to make — cannot move the key.
+    """
+    payload = json.dumps({
+        "v": 1,
+        "concept": concept,
+        "prompt_version": prompt_version,
+        "model": model,
+        "prompt": text_digest((LABEL_SYSTEM + "\x00" + LABEL_USER).encode("utf-8")),
+        "members": sorted([int(i), text_digest((t or "").encode("utf-8"))]
+                          for i, t in members),
+    }, sort_keys=True, ensure_ascii=False)
+    return text_digest(payload.encode("utf-8")).split(":", 1)[1]
+
+
+def _label_cache_file(key: str) -> Path:
+    return data_dir() / LABEL_CACHE_DIR / f"{key}.json"
+
+
+def cached_label(key: str) -> str | None:
+    """The stored label for this key, or None.
+
+    Anything unreadable or malformed is a MISS, never an error and never a
+    guess: the cost of a miss is one cheap call, and the cost of trusting a
+    half-written file is a concept-state named by whatever happens to be in it.
+    """
+    f = _label_cache_file(key)
+    try:
+        rec = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    label = rec.get("label") if isinstance(rec, dict) else None
+    return label.strip() if isinstance(label, str) and label.strip() else None
+
+
+def store_label(key: str, label: str, concept: str, model: str) -> None:
+    """Write a bought label. Never called for a failed or empty one."""
+    f = _label_cache_file(key)
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"label": label, "concept": concept, "model": model}),
+                     encoding="utf-8")
+    except OSError as exc:
+        # A cache that cannot be written is a cost, not a failure: the run has
+        # the label it paid for and the map is not affected.
+        print(f"    (could not cache label: {exc})", file=sys.stderr)
+
+
 def label_cluster_llm(client, concept, member_defs) -> str | None:
     joined = "\n".join(f"- {d}" for d in member_defs)
-    msg = (f'These are definitions of how different papers use the concept "{concept}". '
-           f"They form one coherent sense of the concept. Give a short label (3–6 words) "
-           f"naming THIS specific sense — not the generic concept.\n\n{joined}")
+    msg = LABEL_USER.format(concept=concept, joined=joined)
     try:
         resp = client.messages.create(
             model=LABEL_MODEL, max_tokens=40,
-            system="Reply with only the label text, no quotes or punctuation around it.",
+            system=LABEL_SYSTEM,
             messages=[{"role": "user", "content": msg}],
         )
         text = "".join(b.text for b in resp.content if b.type == "text").strip()
@@ -187,12 +280,13 @@ def main() -> None:
     n_clusters = len(set(labels))
     print(f"  {n_clusters} concept-state(s) at distance-threshold {args.distance_threshold}\n")
 
-    # LLM labelling (optional)
+    # LLM labelling (optional). The client is built on the first cache MISS, not
+    # up front: a re-run whose clusters are all unchanged buys nothing, and it
+    # should not need a key to say so.
     client = None
     spend = 0.0
-    if not args.no_label and os.environ.get("ANTHROPIC_API_KEY"):
-        import anthropic
-        client = anthropic.Anthropic()
+    labels_cached = labels_bought = 0
+    have_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
     # order clusters by earliest member year so node ids read chronologically
     order = sorted(set(labels), key=lambda c: min(rows[i][2] or 9999
@@ -205,9 +299,22 @@ def main() -> None:
         rep = idx[int(np.argmax(mat[idx] @ centroid))]  # member nearest centroid
 
         label = None
-        if client is not None:
-            label, c_spend = label_cluster_llm(client, args.concept, [rows[i][4] for i in idx])
-            spend += c_spend
+        if not args.no_label:
+            key = label_cache_key(args.concept, prompt_version, LABEL_MODEL,
+                                  [(rows[i][0], rows[i][4]) for i in idx])
+            label = cached_label(key)
+            if label:
+                labels_cached += 1
+            elif have_key:
+                if client is None:
+                    import anthropic
+                    client = anthropic.Anthropic()
+                label, c_spend = label_cluster_llm(client, args.concept,
+                                                   [rows[i][4] for i in idx])
+                spend += c_spend
+                if label:
+                    store_label(key, label, args.concept, LABEL_MODEL)
+                    labels_bought += 1
         if not label:
             label = f"{min(years)}–{max(years)} sense ({len(idx)} papers)" if years else f"cluster {n}"
 
@@ -324,8 +431,14 @@ def main() -> None:
     conn.close()
 
     print(f"Wrote genealogy: {len(nodes)} nodes for \"{args.concept}\" (prompt {prompt_version}).")
-    if spend:
-        print(f"Labelling spend: ${spend:.4f}.")
+    # Printed even when it is zero, and both counts are printed beside it: a run
+    # that bought nothing is a measurement (#189's whole point), and a missing
+    # line reads as a run nobody costed.
+    if args.no_label:
+        print("Labels: none asked for (--no-label). Labelling spend: $0.0000.")
+    else:
+        print(f"Labels: {labels_cached} reused from cache (cluster unchanged), "
+              f"{labels_bought} newly bought. Labelling spend: ${spend:.4f}.")
 
 
 if __name__ == "__main__":
