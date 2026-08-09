@@ -74,9 +74,16 @@ ALTER TABLE trace_requests ADD COLUMN anchors text[];
 -- (SELECT 1 FROM unnest(anchors) ...)` is the natural way to write "no element is
 -- blank" and PostgreSQL refuses it with `cannot use subquery in check
 -- constraint`. Found by executing this file against a real PostgreSQL rather
--- than by reading it: `psql` reports the failed `ALTER TABLE` and carries on with
--- the rest of the migration, so the table would have shipped with no constraint
--- at all and nothing would have said so.
+-- than by reading it, and **the two ways of applying a migration disagree about
+-- what happens next**, which is worth knowing before the next one is written.
+-- Measured on PostgreSQL 16, 2026-08-09: `psql` prints the failed `ALTER TABLE`
+-- to stderr, carries on with the rest of the file and exits 0, leaving the table
+-- created and the constraint absent. `migrate.py` hands the whole file to one
+-- `conn.execute` inside the connection's transaction, which raises and rolls the
+-- file back, so the table is not created and the migration is not recorded.
+-- Production would therefore have failed this deploy loudly; a harness or an
+-- operator applying it by hand through `psql` would have got a table with no
+-- constraint and no sign of it.
 --
 -- `array_position` is the form that works, and it does find NULL and '' (both
 -- checked on the same server). **What it deliberately does not catch is an

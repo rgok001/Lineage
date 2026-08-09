@@ -494,8 +494,14 @@ the moment one of them moved. It also does not catch an element of pure
 whitespace, because a per-element predicate needs a subquery and a CHECK
 constraint may not contain one (PostgreSQL: `cannot use subquery in check
 constraint`, found by executing the migration against a real server rather than
-by reading it; `psql` reports the failed `ALTER TABLE` and carries on, so the
-table would have shipped with no constraint at all).
+by reading it). **The two ways of applying a migration disagree about a
+statement that fails mid-file**, measured on PostgreSQL 16 on 2026-08-09:
+`psql` prints the error to stderr, carries on and exits 0, leaving the table
+created and the constraint absent, while `pipeline/db/migrate.py` hands the whole
+file to one `conn.execute` inside the connection's transaction, which raises and
+rolls the file back, so nothing is created and `schema_migrations` gains no row.
+A bad migration therefore fails a deploy loudly and fools a harness or an
+operator applying it by hand.
 
 **map_anchor_papers and map_report_anchors** (023, `023_anchor_papers.sql`,
 issue #198): which of a map's papers a person named at request time, and the
