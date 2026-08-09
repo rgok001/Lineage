@@ -739,6 +739,33 @@ was not there; a first-ever export has no previous export to be untouched. Both
 paths are now tested with `.exists()` and all four combinations have their own
 sentences, including the repair, which offers the rename only when there is
 something to rename.
+**And it refuses to publish a map that violates the publish invariant** (issue
+#171, the publish half of #2). Immediately before
+`UPDATE genealogies SET status = 'complete'`, and inside the same transaction, it
+reads `map_invariant` for this genealogy (migration 021) and exits non-zero on
+any finding, naming every one of them and pointing at
+`pipeline/check_map.py`. The stage used to mark a map complete with no check on
+what it was completing: #2 is the future-tense case, where a truncated rebuild
+gets ratified, and #149 the past-tense one, where a map today's rules would refuse
+is marked complete and serves traffic for a month. **The query is inside the
+transaction so it judges the map about to be published**, seeing the orphan
+sweep's `DELETE` and the grounding loop's `UPDATE`s while they are still
+uncommitted, and the refusal is upstream of the commit and of the export, so
+"nothing was written and every stamp stands as it was" is true. It computes
+nothing: the counts and the verdict come from the view, so an Operator checking a
+map by hand and this gate cannot disagree about it. A missing view is a refusal
+too, with the driver's own message and the name of the migration, rather than an
+`UndefinedTable` traceback nine steps into a thirteen-step run.
+Two consequences, both in the runbook. A **re-ground of an unrepaired map now
+refuses**, which leaves that map serving exactly what it was serving and makes
+the repair a prerequisite (#170 is the worked example); a full **rebuild** is
+unaffected, because Stage C rewrites `nodes` wholesale from the definitions it
+admits today. And **clause 6 is read against the threads the map already has**:
+Stage G runs after Stage E, so on a re-trace the gate sees the previous run's
+threads over the new concept-states, and a paper that has left the map's
+membership refuses the publish until `stage_g_threads.py` has run again. That
+ordering is the residue of publishing at Stage E rather than after Stage H, and
+is noted on #171.
 **And the assembled JSON gains `stamp` per edge** (the resolved three-state
 value, computed against each paper's own stored digest, so the JSON and the page
 agree by construction). `verified` stays on every edge, so

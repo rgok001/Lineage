@@ -6,7 +6,9 @@ only if BOTH its quotes are found verbatim; otherwise it is 'inferred' (dotted).
 Never displays an unverified quote as verified.
 
 Then assembles the final genealogy JSON (nodes + verified edges) that the UI
-renders, and marks the genealogy complete.
+renders, and marks the genealogy complete — which since #168 is the act that
+makes a map public, and since #171 is refused for a map that violates the
+publish invariant (migration 021, `pipeline/check_map.py`).
 
 Usage:
   python pipeline/stage_e_ground.py "attention"
@@ -41,6 +43,120 @@ WHERE genealogy_id = %(gid)s
 ORDER BY id
 """
 DELETE_ORPHANS = "DELETE FROM edges WHERE id = ANY(%(ids)s)"
+
+
+# ── the publish gate (issue #171) ──────────────────────────────────────────
+#
+# Every column named, never `SELECT *`, for the reason migration 021's header
+# gives: `CREATE OR REPLACE VIEW` cannot retype, drop or reorder a column, so a
+# later change to the invariant is a DROP and a CREATE, and naming them means
+# such a redefinition breaks this gate loudly instead of silently changing a
+# verdict. Its twin is `CLAUSE_COLUMNS` in pipeline/check_map.py.
+INVARIANT_COLUMNS = [
+    (1, "definitions_not_admissible"),
+    (2, "nodes_whose_members_and_definitions_differ"),
+    (3, "nodes_unreadable_or_duplicated"),
+    (4, "relationships_with_a_bad_concept_state"),
+    (5, "relationships_not_evidenced_by_their_nodes"),
+    (6, "thread_papers_the_map_does_not_hold"),
+]
+SELECT_INVARIANT = (
+    "SELECT " + ", ".join(c for _n, c in INVARIANT_COLUMNS)
+    + ", findings_total, satisfies_publish_invariant "
+    "FROM map_invariant WHERE genealogy_id = %(gid)s")
+SELECT_FINDINGS = """
+SELECT clause, clause_name, subject_kind, subject, detail
+FROM map_invariant_findings
+WHERE genealogy_id = %(gid)s
+ORDER BY clause, subject_kind, subject
+"""
+FINDINGS_SHOWN = 20
+
+
+def refuse_unless_publishable(conn, gen_id: int) -> None:
+    """Refuse to mark a map complete while it violates the publish invariant.
+
+    Issue #171, the publish half of #2. This stage used to set
+    `status = 'complete'` with no check on what it was completing: #2 is the
+    future-tense case, where a truncated rebuild gets ratified, and #149 is the
+    past-tense one, where a map today's rules would refuse is marked complete and
+    serves traffic.
+
+    **Read inside the caller's transaction, so it judges the map about to be
+    published rather than the one that was there before.** The orphan sweep's
+    DELETE and the grounding loop's UPDATEs are uncommitted at this point and the
+    view sees them, which is the whole reason the query is here rather than in a
+    separate command run afterwards.
+
+    **It computes nothing.** Every count and the verdict come from
+    `map_invariant`, which `pipeline/check_map.py` also reads, so an Operator
+    checking a map by hand and this gate cannot disagree about it. A gate whose
+    verdict is a function of something it worked out for itself would be a second
+    opinion wearing the invariant's name.
+
+    **The refusal is upstream of the commit and downstream of nothing durable**,
+    which is what makes its sentence true: `sys.exit` raises `SystemExit`, the
+    caller's `conn.transaction()` rolls back on any exception, and the export is
+    not written until after this returns (issues #55, #65, #67).
+
+    A missing view is a refusal too, and it says so. Migration 021 is applied by
+    Render's pre-deploy step before the worker starts, so a database without it
+    is one nobody migrated; failing closed there is right, and failing closed
+    with a raw `UndefinedTable` traceback in the middle of a thirteen-step run is
+    not.
+    """
+    try:
+        row = conn.execute(SELECT_INVARIANT, {"gid": gen_id}).fetchone()
+    except psycopg.errors.UndefinedTable as exc:
+        sys.exit(
+            f"\nRefusing to publish this map: the publish invariant cannot be read.\n"
+            f"  {exc}\n"
+            "  That view is migration 021. Apply the migrations "
+            "(python pipeline/db/migrate.py)\n"
+            "  and run this stage again. Nothing was written and every stamp stands as\n"
+            "  it was.")
+    # The view selects FROM genealogies and joins everything else outward, so
+    # every map has a row; no row means the genealogy is gone from under this
+    # run, which is a different thing from a map that fails a clause and must not
+    # be reported as one.
+    if row is None:
+        sys.exit(
+            f"\nRefusing to publish this map: genealogy {gen_id} has no row on "
+            f"map_invariant.\n"
+            "  The view emits one row per genealogy, so this map was deleted while this\n"
+            "  run was in flight. Nothing was written and every stamp stands as it was.")
+
+    *counts, findings_total, satisfies = row
+    if satisfies:
+        print(f"  publish invariant: all six clauses hold ({findings_total} findings).\n")
+        return
+
+    findings = conn.execute(SELECT_FINDINGS, {"gid": gen_id}).fetchall()
+    lines = [
+        "",
+        f"Refusing to publish this map: it violates {sum(1 for c in counts if c)} of the "
+        f"six clauses of the publish invariant, with {findings_total} finding(s).",
+        "",
+    ]
+    for (number, _column), count in zip(INVARIANT_COLUMNS, counts):
+        lines.append(f"  clause {number}  {count:>4}")
+    lines.append("")
+    for clause, name, kind, subject, detail in findings[:FINDINGS_SHOWN]:
+        lines.append(f"  clause {clause} ({name})")
+        lines.append(f"    {kind} {subject}: {detail}")
+    if len(findings) > FINDINGS_SHOWN:
+        lines.append(f"  … and {len(findings) - FINDINGS_SHOWN} more")
+    lines += [
+        "",
+        "  A map that fails a clause is one this system's own rules would not build",
+        "  today, and publishing it is how the last one went unnoticed for a month",
+        "  (issue #149). Nothing was written and every stamp stands as it was: this",
+        "  map is exactly as it was before this run.",
+        "",
+        "  The same findings, read-only and from anywhere:",
+        "    python pipeline/check_map.py <concept>",
+    ]
+    sys.exit("\n".join(lines))
 
 
 def sweep_orphan_edges(conn, gen_id: int, nodes) -> None:
@@ -370,6 +486,12 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
               s_digest, s_ever,
               t_span[0] if t_span else None, t_span[1] if t_span else None,
               t_digest, t_ever, eid))
+
+    # The last question asked before the map is published, and the last chance to
+    # answer no (issue #171). It reads the map this transaction is about to
+    # commit, including the edges the sweep removed and the stamps the loop just
+    # wrote.
+    refuse_unless_publishable(conn, gen_id)
 
     conn.execute("UPDATE genealogies SET status='complete', updated_at=now() WHERE id=%s", (gen_id,))
 

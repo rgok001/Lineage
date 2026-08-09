@@ -359,6 +359,28 @@ build, and every one of them needs a decision: #170 is the worked example, where
 one concept-state of the showcase map cites a definition that says its paper does
 not define the term. Take `snapshot_map.py` before any repair.
 
+**Stage E refuses to publish a map that fails** (issue #171). The refusal happens
+inside the stage's one transaction, immediately before
+`UPDATE genealogies SET status = 'complete'`, so nothing is written, the map is
+left exactly as it was, and the export is not overwritten. It prints the same
+findings this command prints. Three consequences worth knowing before you meet
+them:
+
+- **A re-ground of an unrepaired map now refuses.** That leaves a published map
+  serving exactly what it was serving, and it means the repair has to come first.
+  A full rebuild is not affected: Stage C rewrites `nodes` wholesale from the
+  definitions it admits today, so the state clause 1 is about does not survive
+  one.
+- **Clause 6 is read against the threads the map already has.** Stage G runs
+  after Stage E, so on a re-trace the gate sees the *previous* run's threads over
+  the new concept-states; a paper that has left the map's membership since then
+  refuses the publish. The repair is to run `stage_g_threads.py` and then Stage E
+  again, and the ordering is noted on #171.
+- **A database without migration 021 refuses too**, naming the migration and the
+  driver's own message. That is the right way round — a gate that cannot read the
+  invariant has not passed it — and Render's pre-deploy applies the migrations
+  before the worker starts, so it should only ever be seen locally.
+
 **Changing the audit's calibration.** Since migration 014 this needs no clear
 and no ritual: every verdict stores a digest of the calibration that produced it,
 and `--only-unchecked` treats a mismatch as unaudited, so the worker's free pass
