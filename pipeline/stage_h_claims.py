@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import data_dir, env, quote_is_grounded, text_digest  # noqa: E402
-from stage_b_extract import cost_usd  # noqa: E402
+from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
 # Sonnet, not Haiku, and this one was measured rather than assumed. On thread
 # s0 of attention, six papers and the same prompt: Haiku got 16 of 22 passages
@@ -218,6 +218,11 @@ def main() -> None:
                          "text and a stamp must never outlive the check that made it. "
                          "Costs nothing")
     args = ap.parse_args()
+
+    # Refuse an unpriced --model before anything is read or bought (#205). It
+    # matters on the free path too: `cached_claims` prices a stored call to report
+    # what the hit avoided, so even a fully cached run needs rates it can stand by.
+    pricing_key(args.model)
 
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
     row = conn.execute("SELECT id, streams FROM genealogies WHERE concept=%s AND prompt_version=%s",

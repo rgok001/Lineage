@@ -82,7 +82,7 @@ map was deleted on 2026-07-26.
 | Database | Neon serverless Postgres, pgvector 0.8 | Neon (Vercel-linked account) | free tier |
 | Pipeline | Python 3.12 CLI scripts | Anywhere with the repo and `.env` | LLM spend only |
 | Trace worker | Python 3.12, single process | Render Background Worker (declared in `render.yaml`; the owner's laptop until the Render console setup is done) | ~$8/mo |
-| LLM | Claude Sonnet (`claude-sonnet-5`) for extraction, classification and claim evidence; Claude Haiku (`claude-haiku-4-5`) for magnitude scoring and thread generation | n/a | ~$6 per 150-paper trace; +~$0.7 magnitude and threads; +~$3 claim checking on Sonnet (decision 17) |
+| LLM | Claude Sonnet (`claude-sonnet-5`) for extraction, classification and claim evidence; Claude Haiku (pinned snapshot `claude-haiku-4-5-20251001`) for magnitude scoring and thread generation | n/a | ~$6 per 150-paper trace, +~$3 claim checking (decision 17), both computed at Sonnet's standard $3/$15 and so ~$4 and ~$2 while its introductory rates run to 2026-08-31; +~$0.14 magnitude and threads, which the record published as ~$0.7 until #205 found Haiku calls being priced at Opus rates |
 
 External data sources, all keyless: **arXiv** (paper source, LaTeX-first,
 throttled 1 request/3s), **OpenAlex** (corpus metadata and citation counts,
@@ -604,6 +604,23 @@ treated as zero. Its share is a genuine share: the steps partition the total.
 **not** by `app/lib/report.ts`, like `named_by` above — it is how an Operator
 tells whether the breakdown and `run_cost_usd` describe the same run, and a
 reader of a map is owed neither the id nor the queue behind it.
+
+**Every spend figure stored before 2026-08-09 overstates what the build actually
+cost, and none of them has been rewritten** (issue #205, incident 16). Until that
+day `cost_usd` priced any model id it did not recognise at the table's most
+expensive rates, and Stages F and G pass a dated snapshot id that was not in the
+table: **their share of every stored figure is five times what those calls cost**.
+The same fix corrected Sonnet 5 to its introductory rates, so the other paying
+stages' share is overstated by half again for as long as those rates have been in
+effect (the published page names their end, 2026-08-31, not their start). This
+touches `genealogies.spend_usd` on every completed map, everything
+`map_report.run_cost_usd` publishes from it, and `map_build_stages` — which has
+no rows yet, since no build has run under it. **They are left as they are on
+purpose**: each is a claim a particular build made about itself under the table it
+had, and rewriting them would replace a recorded claim with a later
+reconstruction, which is the one thing a record must not do. A figure from a
+build after this date is priced correctly; the direction of the old error is
+always overstatement, never the reverse.
 
 **Every map built before #47 reads "no step-by-step record of this build", and
 that is an absence and not a build that spent nothing.** The gate is an inner

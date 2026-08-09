@@ -29,7 +29,7 @@ resolves here.
 | `ANTHROPIC_API_KEY` | root `.env`, Render | pays for stages B, C labels, D |
 | `VOYAGE_API_KEY` | root `.env`, Render | embeddings for Stage A relevance and Stage C clustering. **Required**; the pipeline fails fast without it |
 | `VOYAGE_MODEL` | optional | defaults to `voyage-3` (1024-dim, matches the column) |
-| `LLM_MODEL` | root `.env` | `claude-sonnet-5` (see decision record) |
+| `LLM_MODEL` | root `.env` | `claude-sonnet-5` (see decision record). **Must be a model `PRICING` in `pipeline/stage_b_extract.py` holds rates for**, or a dated snapshot of one: since #205 a stage that cannot price itself refuses to run rather than publishing a guessed figure. Add the model to that table, from Anthropic's published pricing, before setting it here |
 | `PROMPT_VERSION` | root `.env` | `v2`; part of the Stage B cache key |
 | `TRACE_SPEND_CAP_USD` | root `.env` | 15. **One cap per trace, covering both passes** (#192): the worker prices pass two against what is left of it and abandons the pass rather than exceeding it |
 | `PASS_TWO_SEATS` | optional, root `.env`/Render | how many papers the second pass may add; default `corpus_limit // 10` = 15 of 150 (#192). **`0` disables the second pass**, and such a build writes no build record, so its report says the map was built in one pass. A value that is not a whole number is ignored with a line in the log, never read as 0 |

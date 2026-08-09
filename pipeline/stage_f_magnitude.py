@@ -35,8 +35,13 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import data_dir, env  # noqa: E402
-from stage_b_extract import cost_usd  # noqa: E402
+from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
+# A dated snapshot, pinned so that a rebuild months later scores citations with
+# the weights this map was built from. Until #205 it was also not a key in
+# PRICING, and the costing function defaulted an unknown model to Opus rates
+# rather than saying so, which made every figure this stage printed 5x what its
+# Haiku calls cost. Pricing now resolves the date suffix; the pin stays.
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 BATCH = 12  # citations per call; keeps a 300-citation corpus to ~25 calls
 
@@ -93,6 +98,13 @@ def main() -> None:
     ap.add_argument("--model", default=DEFAULT_MODEL)
     args = ap.parse_args()
     concept, pv = args.concept, args.prompt_version
+
+    # Refuse an unpriced model here, before the first batch (#205). It cannot be
+    # left to the loop below: `cost_usd` is called inside the batch's own
+    # `try`, so an unpriced model would be swallowed as "batch failed, scored
+    # neutral" — a pricing defect wearing a scoring failure's clothes, and after
+    # three of them the stage aborts blaming the model's answers.
+    pricing_key(args.model)
 
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
     rows = conn.execute("""

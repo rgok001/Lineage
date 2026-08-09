@@ -239,5 +239,42 @@ Recorded because the system's shape is partly their consequence.
     so if they fail they automatically requeue. It not reasonable to expect
     someone to observe and retry upon failure."
 
+16. **Two stages billed themselves at five times their cost, and the number was
+    published (found 2026-08-09, issue 205).** `cost_usd`'s
+    `PRICING.get(model, PRICING[DEFAULT_MODEL])` priced any unrecognised model at
+    the table's dearest row. Stages F and G pass `claude-haiku-4-5-20251001`, the
+    dated snapshot, which was not a key — so Haiku work at $1/$5 per million was
+    billed at Opus's $5/$25 in every figure those two stages printed, from the
+    day they became stages until this fix. **Reproduced against the shipped
+    expression, not reasoned about:** a 25-batch Stage F shape (27,500 in / 3,000
+    out) printed `$0.2125` against `$0.0425` actual, and a Stage G shape (200,000
+    in / 40,000 out) printed `$2.00` against `$0.40` — 5.00x in both, because the
+    two rate pairs are a straight 5:1 on input and on output.
+    **Where the wrong number went.** The worker scrapes `spend $X` off each
+    stage's stdout, so it reached the progress feed a requester watches,
+    `genealogies.spend_usd` on every completed map, `map_report.run_cost_usd`
+    published from that, the per-stage ledger added hours earlier by issue 47
+    (which had recorded nothing yet — no build has run under it), and the
+    comparison against `TRACE_SPEND_CAP_USD`, which therefore aborted runs
+    against a bill nobody owed. It also reached prose: the as-built's
+    "+~$0.7 magnitude and threads" was ~$0.14, and issue 199's cost anatomy
+    attributes to F and G about five times their real share.
+    **A second error found in the same place, by checking the source rather than
+    the table.** Anthropic's published pricing has Sonnet 5 on introductory rates
+    of $2/$10 per million through 2026-08-31; the table held only the standard
+    $3/$15, so Stage B, Stage C's labels, Stage D and Stage H have been
+    overstating by half again as well. Every stored spend figure in this system is
+    therefore an overstatement, and never the reverse — which is the harmless
+    direction for a cap and the wrong direction for anyone reasoning about which
+    stage to make cheaper.
+    **How it survived.** Nothing was broken, nothing failed, and every figure
+    looked like a measurement: the architect's per-paper prediction on issue 47
+    matched an observed run to within 3%, using the same table on both sides of
+    the comparison. A wrong constant agrees with itself.
+    **Closed (2026-08-09)** by decision 40 — dated snapshots price as their
+    family, an unknown model raises before the first call, and a rate that changes
+    on a date is held as both numbers and the date. No stored figure was rewritten;
+    as-built section 3 records which ones are overstated and by how much.
+
 ---
 

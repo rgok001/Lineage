@@ -36,8 +36,13 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import env  # noqa: E402
-from stage_b_extract import cost_usd  # noqa: E402
+from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
+# A dated snapshot, pinned so that a rebuild months later composes threads with
+# the model this map's accounts were written by. Until #205 it was also not a key
+# in PRICING and the costing function defaulted an unknown model to Opus rates
+# rather than saying so, which made every figure this stage printed 5x what its
+# Haiku calls cost. Pricing now resolves the date suffix; the pin stays.
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4",
           "#008a3e", "#4a3aa7", "#e34948", "#d55199"]
@@ -62,6 +67,11 @@ def main() -> None:
                     help="roughly how many threads to look for; default scales with corpus size")
     args = ap.parse_args()
     concept, pv = args.concept, args.prompt_version
+
+    # Refuse an unpriced model before the first phase-1 call (#205): this stage's
+    # spend line is scraped into the map's record and the cap, and it is one of
+    # the two that were being priced at 5x.
+    pricing_key(args.model)
 
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
     gen = conn.execute("SELECT id, nodes FROM genealogies WHERE concept = %s AND prompt_version = %s",

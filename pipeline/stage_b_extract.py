@@ -29,7 +29,9 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
+from datetime import date
 from pathlib import Path
 
 import psycopg
@@ -41,7 +43,11 @@ from common import (grounded_span, quote_is_grounded, read_grounding_text,  # no
 
 DEFAULT_MODEL = "claude-opus-4-8"
 
-# USD per million tokens (input, output). Keep in sync with docs.claude.com/pricing.
+# USD per million tokens (input, output), from Anthropic's published pricing
+# (platform.claude.com/docs/en/about-claude/pricing, read 2026-08-09 for #205).
+# Keyed by the model FAMILY: a dated snapshot id resolves to its family in
+# `pricing_key` below, because a snapshot bills at the rates of the family it was
+# cut from.
 PRICING = {
     "claude-opus-4-8": (5.00, 25.00),
     "claude-opus-4-7": (5.00, 25.00),
@@ -49,6 +55,41 @@ PRICING = {
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-haiku-4-5": (1.00, 5.00),
 }
+
+# A published rate that is a function of the DATE as well as the model, and the
+# day the discount ends. Sonnet 5 bills at introductory rates through
+# 2026-08-31 and at the standard rates above from 2026-09-01; every paying stage
+# but F and G runs on it, so a table holding one of those two numbers is wrong on
+# one side of that date by 50% (#205, found by checking the published page rather
+# than trusting the table). Keeping both, with the switchover, is the only form
+# that is right today AND in September without anybody remembering to edit it.
+INTRODUCTORY = {
+    "claude-sonnet-5": (date(2026, 9, 1), (2.00, 10.00)),
+}
+
+# Anthropic's dated snapshot ids are the family id plus `-YYYYMMDD`
+# (`claude-haiku-4-5-20251001`), and Stages F and G pin one deliberately, so that
+# a rebuild months later asks the same weights the map was built from. Pricing
+# resolves it to the family instead of demanding a table row per snapshot: a new
+# snapshot of a priced family then prices correctly on the day it is pinned,
+# rather than failing a build over a date suffix.
+SNAPSHOT_SUFFIX = re.compile(r"-\d{8}$")
+
+
+class UnpricedModel(Exception):
+    """No published rates for this model id, so no honest figure can be produced.
+
+    Raised rather than defaulted (#205). This lookup used to be
+    `PRICING.get(model, PRICING[DEFAULT_MODEL])`, and because Stages F and G pass
+    the dated snapshot `claude-haiku-4-5-20251001`, which was not a key, every
+    dollar those two stages printed for months was Haiku work billed at Opus
+    rates: 5x reality, scraped into `genealogies.spend_usd` (#85), into the
+    per-stage record (#47), into the progress feed, and checked against
+    TRACE_SPEND_CAP_USD. A lookup with a default converts an unknown model into a
+    confident wrong number, and it guessed at the most expensive row in the table,
+    so the error was not even bounded in a known direction. A bill that announces
+    it cannot be computed beats a plausible one that is fiction.
+    """
 
 # Definitions usually live in the abstract/intro/method. Truncating trades a
 # small recall risk for a large cost saving; raise it if extractions come back
@@ -128,8 +169,49 @@ def estimate_tokens(client, model: str, system: str, user: str) -> int:
     return int(len(system + user) / 2.6)
 
 
+def pricing_key(model: str) -> str:
+    """The PRICING key that prices `model`, or raise. Never guesses.
+
+    Call it on its own, before a client is built, to refuse an unpriced model
+    while the run has spent nothing — every stage that pays does, because the
+    alternative is discovering it after the first call, and in Stage F's batch
+    loop an exception from costing is caught by the batch's own `except` and
+    reported as a failed batch, which is a pricing defect wearing a scoring
+    failure's clothes.
+    """
+    key = model if model in PRICING else SNAPSHOT_SUFFIX.sub("", model)
+    if key not in PRICING:
+        raise UnpricedModel(
+            f"no published rates for model {model!r}"
+            + (f" (nor for {key!r}, the family its date suffix names)" if key != model else "")
+            + f": add it to PRICING in {Path(__file__).name}, from Anthropic's "
+              f"published pricing. Priced today: {', '.join(sorted(PRICING))}. "
+              f"Refusing to price it at another model's rates — this figure is "
+              f"what the map's record publishes and what the spend cap decides on."
+        )
+    return key
+
+
+def rates_for(model: str, on: "date | None" = None) -> "tuple[float, float]":
+    """(input, output) USD per million tokens, on a given day. Raises for unknown.
+
+    The day matters because one published rate moves (see INTRODUCTORY). It
+    defaults to today, which is the day of the call being priced. Two consequences
+    worth knowing rather than discovering: a run straddling midnight on 2026-08-31
+    prices its early calls at the old rate and its later ones at the new one, which
+    is what the invoice will do too; and a Stage H cache hit re-prices an old call
+    at today's rates, so the "avoided" figure it prints drifts across that date. A
+    caller that must price a specific day passes it.
+    """
+    key = pricing_key(model)
+    intro = INTRODUCTORY.get(key)
+    if intro is not None and (on or date.today()) < intro[0]:
+        return intro[1]
+    return PRICING[key]
+
+
 def cost_usd(model: str, in_tok: int, out_tok: int) -> float:
-    p_in, p_out = PRICING.get(model, PRICING[DEFAULT_MODEL])
+    p_in, p_out = rates_for(model)
     return in_tok / 1e6 * p_in + out_tok / 1e6 * p_out
 
 
@@ -606,6 +688,12 @@ def main() -> None:
         conn.close()
         return
 
+    # Below this line every path either estimates money or spends it, so an
+    # unpriced --model (or LLM_MODEL) is refused here rather than after the first
+    # call (#205). Deliberately below --reground, which buys nothing and must stay
+    # runnable whatever the environment names as a model.
+    pricing_key(args.model)
+
     query = SELECT_PAPERS_REFRESH if args.refresh else SELECT_PAPERS
     order_by = ORDER_BY_CORPUS_RANK if args.corpus else ORDER_BY_INSERTION
     rows = conn.execute(query.format(corpus_filter=corpus_filter,
@@ -669,14 +757,24 @@ def main() -> None:
         print(f"  input tokens:  {total_in:,}  [{exact}]")
         print(f"  output tokens: {out_tok:,}  [estimated {EST_OUTPUT_TOKENS}/paper"
               f"{' + thinking' if args.thinking else ''}]")
+        # Rates come from `rates_for` rather than straight out of PRICING, so the
+        # table shows what today's calls are billed at (one family is on
+        # introductory pricing), and the marker is on the key that prices the
+        # SELECTED model rather than on a string equal to it: Stages F and G pass
+        # a dated snapshot, and a marker keyed on equality quietly marked nothing
+        # at all. #205's habit — print the key that was found, not only the money.
+        priced_as = pricing_key(args.model)
         print(f"\n  {'model':<20} {'in $':>8} {'out $':>8} {'total':>9}   vs cap ${cap:g}")
         print("  " + "-" * 62)
         for m in PRICING:
-            ci = total_in / 1e6 * PRICING[m][0]
-            co = out_tok / 1e6 * PRICING[m][1]
+            r_in, r_out = rates_for(m)
+            ci = total_in / 1e6 * r_in
+            co = out_tok / 1e6 * r_out
             flag = "OVER CAP" if ci + co > cap else "ok"
-            mark = " <- selected" if m == args.model else ""
+            mark = " <- selected" if m == priced_as else ""
             print(f"  {m:<20} {ci:>8.2f} {co:>8.2f} {ci + co:>9.2f}   {flag}{mark}")
+        if priced_as != args.model:
+            print(f"  ({args.model} is a dated snapshot of {priced_as} and bills at its rates)")
         print(f"\n  Scaled to 150 papers: ~${cost_usd(args.model, total_in, out_tok) / len(prompts) * 150:.2f} "
               f"on {args.model}")
         print("\n  No API call was made. Choose a model with --model or LLM_MODEL in .env.")

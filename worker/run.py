@@ -111,8 +111,10 @@ STALE_RUNNING_MINUTES = 10  # 'running' + no heartbeat for this long => worker d
 # apart killed two builds) and three is comfortably past that, while a job that
 # has died four times is not going to survive the fifth attempt either. The cap
 # is the only thing standing between a crash-looping worker and unbounded spend:
-# restarts are cheap because every LLM stage caches per paper, but cheap is not
-# free and the spend cap in CLAUDE.md is per trace, not per job-lifetime.
+# restarts are cheap for B, C, D and H, which cache, and merely cheap-ish for F
+# and G, which do not (decision 39 corrects decision 38's "every LLM stage caches
+# per paper", which was false when it was written). Cheap either way is not free,
+# and the spend cap in CLAUDE.md is per trace, not per job-lifetime.
 MAX_AUTO_REQUEUES = 3
 
 # Progress markers the stages already print; the worker changes no stage code.

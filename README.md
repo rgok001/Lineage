@@ -146,6 +146,11 @@ python pipeline/stage_h_claims.py "attention" --recheck      # re-ground stored 
 
 # F, G and H all spend: none of them has a --dry-run, and --model overrides each
 # stage's own default (Haiku for F and G, Sonnet for H) rather than LLM_MODEL.
+# Any stage that spends refuses, before its first call, a --model (or LLM_MODEL)
+# whose rates are not in PRICING in pipeline/stage_b_extract.py: a run that
+# cannot price itself would publish a made-up figure and check it against the
+# spend cap. A dated snapshot such as claude-haiku-4-5-20251001 is fine and is
+# priced as claude-haiku-4-5. Add a new model to that table before using it.
 # H reuses any claims it has already bought for the same paper, text, prompt and
 # model, so re-running it over an unchanged map costs nothing and needs no API
 # key; delete DATA_DIR/claims_cache to buy fresh ones. F and G do not cache.

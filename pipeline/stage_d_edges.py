@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import env, get_json, data_dir, text_digest  # noqa: E402
-from stage_b_extract import cost_usd  # noqa: E402
+from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
 # Enough failures to prove it is the call and not the edge.
 CONSECUTIVE_FAILURE_LIMIT = 10
@@ -200,6 +200,12 @@ def main() -> None:
     ap.add_argument("--model", default=env("LLM_MODEL", "claude-sonnet-5"))
     ap.add_argument("--dry-run", action="store_true", help="find candidate edges; classify none")
     args = ap.parse_args()
+
+    # An unpriced --model (or LLM_MODEL) is refused before a candidate is fetched
+    # or a call is made (#205): what this stage prints is scraped into the map's
+    # record and checked against the cap, so a figure it cannot compute honestly
+    # is worse than a stage that will not start.
+    pricing_key(args.model)
 
     prompt_version = env("PROMPT_VERSION", "v1")
     cap = float(env("TRACE_SPEND_CAP_USD", "10"))

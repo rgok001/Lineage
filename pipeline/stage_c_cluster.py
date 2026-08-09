@@ -35,7 +35,7 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import data_dir, env, node_denotation, text_digest  # noqa: E402
-from stage_b_extract import PRICING, cost_usd  # noqa: E402
+from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
 # Embeddings come from the Voyage hosted API (see common.voyage_embed), which
 # returns 1024-dim vectors matching definitions.embedding.
@@ -279,6 +279,15 @@ def main() -> None:
                          "The repair path after stage_b_extract.py --refresh: "
                          "clustering would overwrite curated nodes")
     args = ap.parse_args()
+
+    # Refuse an unpriced label model before anything is clustered or bought
+    # (#205). LABEL_MODEL is a constant here rather than a flag, so this only
+    # fires when somebody edits it to a model the pricing table does not know —
+    # which is exactly when a stage would otherwise start printing a made-up
+    # figure, and `label_cluster_llm` catches its own exceptions per cluster, so
+    # the failure would read as "labelling failed" and cost a call each time.
+    if not args.no_label:
+        pricing_key(LABEL_MODEL)
 
     prompt_version = env("PROMPT_VERSION", "v1")
     params: dict = {"concept": args.concept, "prompt_version": prompt_version}

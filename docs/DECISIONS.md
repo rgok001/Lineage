@@ -882,6 +882,39 @@ The why behind the load-bearing choices, in one place:
     and the honest reading of decision 38 after this ships is that restarts are
     cheap for B, C, D and H and merely cheap-ish for F and G.
 
+40. **A costing function refuses an unknown model rather than pricing it at a
+    guess** (2026-08-09, issue #205, after incident 16). `cost_usd` priced any id
+    it did not recognise at `PRICING[DEFAULT_MODEL]` — the most expensive row in
+    the table — and Stages F and G pass a dated snapshot that was not a key, so
+    for months both printed five times what their calls cost. The fix is two
+    rules, and the second is the one worth arguing about.
+    **A dated snapshot is priced as its family.** `claude-haiku-4-5-20251001` is
+    billed at `claude-haiku-4-5`'s rates, so `pricing_key` strips a trailing
+    `-YYYYMMDD` and looks the family up. The alternative — a table row per
+    snapshot — makes every model pin a two-file change and fails a build when
+    somebody forgets the second one.
+    **Anything still unknown raises.** A lookup with a default converts an
+    unknown key into a confident wrong number, and this number is not a
+    diagnostic: it is published as what a map cost, it is what
+    `TRACE_SPEND_CAP_USD` decides on, and since #47 it is stored per stage. A
+    default is also unbounded in the wrong direction — this one guessed high, and
+    the same expression with a cheaper default would have let a run walk through
+    its own cap. This is the zero-versus-absence rule (#87) applied to money: a
+    figure that cannot be computed must announce itself, not resemble one that
+    can. Every paying stage resolves its model before it builds a client, so the
+    refusal lands before the first call rather than after it; `--reground` and
+    `--no-label` stay outside it because they buy nothing.
+    **A rate that moves on a date is held as both numbers and the date.** Sonnet
+    5 is on introductory pricing to 2026-08-31, standard from 2026-09-01, and the
+    table held only the standard pair — right in three weeks, wrong by 50% today.
+    `rates_for(model, on)` takes the day of the call. This is the smallest thing
+    that is not wrong on one side of a date, and it was found by reading
+    Anthropic's published page rather than trusting the table, which is now what
+    the table's comment tells the next person to do.
+    **Stored figures were not corrected**, deliberately: each is what a build
+    claimed under the table it ran with, and the as-built (section 3) records
+    which ones are overstated and by how much.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record

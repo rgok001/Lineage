@@ -681,6 +681,41 @@ read it (`corpus_select.py` takes citation counts live from OpenAlex on every
 run), and this ORDER BY was its last reader. Anyone wanting an age-normalised
 number for the report must fetch citations rather than read that column.
 
+**What prices a stage's dollar figure, and why an unpriced model now stops a
+run** (issue #205). One table serves the whole pipeline: `PRICING` in
+`stage_b_extract.py`, USD per million tokens, keyed by model **family**, and
+`cost_usd` beside it is what B, C, D, F, G and H all add up. Two rules about the
+key, both of which cost real money before they existed.
+**A dated snapshot resolves to its family.** Anthropic's ids are the family plus
+`-YYYYMMDD`, and Stages F and G pin `claude-haiku-4-5-20251001` deliberately, so
+that a rebuild months later scores and composes with the model the map was built
+from. `pricing_key` strips a trailing eight-digit suffix and prices the family,
+which is how the bill works, so pinning a new snapshot of a priced family needs
+no table edit.
+**An unknown model raises (`UnpricedModel`) and is never priced at a default.**
+Until this ticket the lookup was `PRICING.get(model, PRICING[DEFAULT_MODEL])`, so
+the dated snapshot fell through to the most expensive row in the table and
+**every dollar Stages F and G printed was Haiku work billed at Opus rates: five
+times what those calls cost** ($0.2125 printed against $0.0425 actual on a
+25-batch Stage F shape; $2.00 against $0.40 on a Stage G shape). That figure is
+what the worker scrapes into `genealogies.spend_usd`, into the per-stage record
+(migration 024) and into the progress feed, and it is what
+`TRACE_SPEND_CAP_USD` is checked against, so the cap was tripping early on a
+bill nobody owed. Each paying stage now resolves its model **before** it builds
+a client or opens a connection: in Stage F it must, because `cost_usd` is called
+inside the batch's own `except`, where a pricing failure would be reported as a
+batch of citations the model would not score. `--reground` and `--no-label`,
+which buy nothing, are deliberately outside the check.
+**One rate is a function of the date.** Sonnet 5 — Stage B's shipped model,
+Stage C's labels, Stage D and Stage H — bills at introductory rates of $2/$10
+per million through 2026-08-31 and at $3/$15 from 2026-09-01, so `rates_for`
+takes the day of the call and `INTRODUCTORY` holds the changeover. A table
+holding one of those two numbers is wrong on one side of that date by 50%, and
+holding only the standard pair is what it was doing.
+**Figures already stored were not rewritten**: what a build printed is what that
+build claimed, and [AS-BUILT.md](AS-BUILT.md) section 3 says which stored figures
+to distrust and by how much.
+
 **Stage C: clustering** (`stage_c_cluster.py <concept> [--corpus JSON]`).
 **`--corpus` scopes which papers the map may hold**, the same flag and the same
 semantics as Stage B's, and the worker now passes the same file to both (issue
