@@ -114,6 +114,28 @@ python pipeline/enrich_authors.py --concept "attention"   # real authors (arXiv 
 python pipeline/export_related_work.py "attention"
 ```
 
+## Does a map still satisfy the rules that built it?
+
+Six clauses about a stored map — that every definition a concept-state names is
+one the clustering would admit today, that its members and its definitions
+describe the same papers, that every relationship names two concept-states this
+map has and is evidenced by papers those concept-states hold, and that the
+threads name no paper the map does not hold. They live in one SQL view
+(migration 021) and are read by this command and by Stage E, which refuses to
+publish a map that fails one. No model, no network, no cost, no writes.
+
+```sh
+python pipeline/check_map.py "attention"       # one map
+python pipeline/check_map.py --all             # every map
+python pipeline/check_map.py --all --json      # always an array, empty included
+```
+
+It reads `LINEAGE_READ_URL` (the read-only role) and issues nothing but
+`SELECT`, so it is safe to point at production, and its exit status is its
+verdict: 0 if every map asked about satisfies all six clauses, 1 if any does
+not. Every finding names what to repair. Nothing is stored, so the answer is
+always about the map as it is now.
+
 ## Trace worker (live trace requests)
 
 The deployed app lets signed-in visitors *request* a trace and shows live

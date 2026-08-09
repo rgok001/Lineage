@@ -35,7 +35,7 @@ resolves here.
 | `DATA_DIR` | root `.env`, Render (`/data`) | absolute paths honoured |
 | `OPENALEX_MAILTO` | root `.env`, Render | polite-pool contact |
 | `LINEAGE_NO_DB` | set per shell, never committed | any non-blank value and every Python entry point refuses to hand out `DATABASE_URL` (decision 22). Set it in any shell running pipeline code to inspect it rather than to operate on real data. Does not reach the Node side |
-| `LINEAGE_READ_URL` | set per shell, never committed | the read-only `lineage_ro` role, SELECT and nothing else. Read by `recheck_stamp.py` and `map_report.py`, and by nothing else. Deliberately not named `DATABASE_URL` so no existing code path can route through it by accident |
+| `LINEAGE_READ_URL` | set per shell, never committed | the read-only `lineage_ro` role, SELECT and nothing else. Read by `recheck_stamp.py`, `map_report.py` and `check_map.py`, and by nothing else. Deliberately not named `DATABASE_URL` so no existing code path can route through it by accident |
 | `AUTH_SECRET`, `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, `OWNER_GITHUB_LOGIN` | `app/.env.local`, Vercel | Auth.js reads exactly these names |
 
 **Local development.** App: `cd app && npm run dev` (port 3000). Worker:
@@ -332,6 +332,32 @@ WHERE id = <the id you checked>;
 A cost cell showing `US$0.00` on a map whose run is known to have called the
 model, with no pre-fix row behind it, is still what the old entry described:
 something has started coalescing the figure, and that is a defect.
+
+**Asking a map whether it still satisfies the rules that built it** (migration
+021, issue #168). Two `CREATE VIEW`s and one guarded `GRANT`, in the shape
+migration 016 established: no table, no column, no data touched, nothing to
+schedule, and reversed by
+`DROP VIEW map_invariant; DROP VIEW map_invariant_findings;`. Apply it with
+`python pipeline/db/migrate.py` and confirm the `GRANT` from a shell holding
+`LINEAGE_READ_URL`:
+
+```
+python pipeline/check_map.py --all
+```
+
+It reads `LINEAGE_READ_URL` and never `DATABASE_URL`, issues only `SELECT` and
+repairs nothing, so it is safe to point at production. **Its exit status is its
+verdict**: 0 when every map asked about satisfies all six clauses, 1 when any
+does not, which is what makes it usable inside a procedure. Every finding names
+the concept-state, the relationship or the thread it is about; there is no score
+and no threshold, so there is nothing to calibrate and nothing to argue with
+except the finding itself.
+
+**A map that fails is not repaired by re-running anything.** The six clauses are
+about disagreements between what a map stores and what today's stages would
+build, and every one of them needs a decision: #170 is the worked example, where
+one concept-state of the showcase map cites a definition that says its paper does
+not define the term. Take `snapshot_map.py` before any repair.
 
 **Changing the audit's calibration.** Since migration 014 this needs no clear
 and no ritual: every verdict stores a digest of the calibration that produced it,

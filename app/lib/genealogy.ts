@@ -53,6 +53,54 @@ export type UserEdit = {
 const ACTOR_MAX = 64;
 
 /**
+ * What it means for a map to be published, in one place, because every read of
+ * `genealogies` in this file has to ask it (issue #168).
+ *
+ * **Until this shipped, publication did not exist as a state.** Nothing in the
+ * app filtered on `status`: `listGenealogies` selected every row and ordered by
+ * `updated_at`, `getGenealogy` and `getMapRow` selected by id with no predicate,
+ * and no page added one. The row is written by Stage C, roughly halfway through
+ * a build — `UPSERT_GENEALOGY` in `stage_c_cluster.py` writes `status =
+ * 'running'` — so a half-built map, concept-states and no relationships, was
+ * publicly listed and loadable on every build, for the whole second half of it.
+ * That has been true for months and nobody saw it, because the maps in this
+ * database were built before anyone was watching the home page.
+ *
+ * `'complete'` is Stage E's own word (`UPDATE genealogies SET status='complete'`
+ * at the end of its one transaction), so this needs no column and no migration,
+ * which is what lets it ship in the same push as one: the app is live against a
+ * schema one migration behind for the minutes between the Vercel deploy and
+ * Render's pre-deploy (decision 31), and this predicate reads a column that has
+ * been in `genealogies` since migration 001.
+ *
+ * **An allow-list, not a deny-list.** `status = 'complete'` rather than `status
+ * <> 'running'`: the CHECK on that column already permits `pending`, `failed`
+ * and `aborted_spend_cap`, none of which is a map anybody should be reading, and
+ * a status invented tomorrow is unpublished until somebody decides otherwise.
+ * The direction this can be wrong in is hiding a map, which is visible; the
+ * other direction is showing half of one, which is not.
+ *
+ * **The refusal lives here and never in a page conditional**, which is the
+ * control the two-stage build design (#184) names for this risk: three surfaces
+ * read a `genealogies` row and a fourth would be added by the next feature, so a
+ * guard per page is a guard that the next page forgets. An unpublished map is
+ * therefore indistinguishable from a map that does not exist, on every surface —
+ * `/g/<id>` redirects to the evidence view and that 404s, exactly as it already
+ * does for an id nobody ever minted — and that is deliberate: leaking the
+ * existence of a map that is not ready is most of what leaking the map is.
+ *
+ * **No exception for the owner**, on the design's reasoning: "visible to them,
+ * not to others" is a second visibility rule to keep in agreement with the
+ * first. A requester watching their own build sees it in the live trace panel,
+ * which only offers a link to the map once the run is complete.
+ *
+ * This does not cover `/g/<id>/report`, which reads `map_report` through
+ * `lib/report.ts` and lists every map as a reference point beside the one asked
+ * for. That is a fourth read path in another file and it is noted on #168.
+ */
+export const PUBLISHED_STATUS = "complete";
+
+/**
  * Make a stored name safe to render, in markdown as well as in React.
  *
  * `by_asserted` can hold anything `LINEAGE_ACTOR` held, and an interior newline
@@ -575,7 +623,11 @@ export const EDGE_MEANING: Record<string, string> = {
  *  the fault this file has now paid for three times.
  *
  *  And the view may not be there at all: see the `to_regclass` probe below
- *  (issue #92). */
+ *  (issue #92).
+ *
+ *  **Published maps only** (issue #168; see `PUBLISHED_STATUS`). This is the
+ *  front page's list, so it was the surface a map appeared on the moment Stage C
+ *  wrote its row, halfway through the build. */
 export async function listGenealogies() {
   // **Does the view exist?** Reading the two counts from `map_report` gave the
   // home page a hard dependency on migration 016, and an app that deploys before
@@ -617,6 +669,7 @@ export async function listGenealogies() {
            ${counts}
     FROM genealogies g
     ${join}
+    WHERE g.status = ${PUBLISHED_STATUS}
     ORDER BY g.updated_at DESC
   `) as {
     id: number; concept: string; prompt_version: string; status: string;
@@ -666,12 +719,18 @@ export type MapRow = {
  * (see lib/db.ts), and the functions run in `iad1`, so asking one row twice
  * bought a whole network round trip for columns that were already on the wire.
  * Measured from the map's front door before and after, issue #140.
+ *
+ * **Null for a map that is not published as well as for one that is not there**
+ * (issue #168; see `PUBLISHED_STATUS`). The design named two read functions and
+ * there are three: this one serves the map's front door, the paper dossier, the
+ * thread page and the export, so guarding only the other two would have left the
+ * front door open.
  */
 export async function getMapRow(id: number): Promise<MapRow | null> {
   const rows = (await sql`
     SELECT concept, prompt_version, streams,
            COALESCE(user_edits, '[]'::jsonb) AS user_edits
-    FROM genealogies WHERE id = ${id}
+    FROM genealogies WHERE id = ${id} AND status = ${PUBLISHED_STATUS}
   `) as { concept: string; prompt_version: string; streams: River | null; user_edits: unknown }[];
   if (!rows.length) return null;
   const r = rows[0];
@@ -687,11 +746,15 @@ export async function getMapRow(id: number): Promise<MapRow | null> {
   };
 }
 
+/** The evidence page's whole map, and null for a map that is not published as
+ *  well as for one that is not there (issue #168; see `PUBLISHED_STATUS`). The
+ *  workbench Server Actions resolve the map through this function, so an
+ *  unpublished map cannot be edited either. */
 export async function getGenealogy(id: number): Promise<Genealogy | null> {
   const rows = (await sql`
     SELECT id, concept, prompt_version, status, updated_at, nodes, user_edits,
            (streams IS NOT NULL) AS has_river
-    FROM genealogies WHERE id = ${id}
+    FROM genealogies WHERE id = ${id} AND status = ${PUBLISHED_STATUS}
   `) as any[];
   if (!rows.length) return null;
   const g = rows[0];

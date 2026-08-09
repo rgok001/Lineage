@@ -240,8 +240,12 @@ stamp columns are the same four facts twice, one per quote.
 **genealogies** (001, 007, 012): the map itself. `nodes` is JSONB
 (concept-states with members and year ranges), `user_edits` is the append-only
 curatorial audit trail (each entry `{op, detail, at}` plus at most one of `by`
-and `by_asserted`; decision 18), `spend_usd` accumulates cost, `status` is loosely one of
-pending/running/complete/failed/aborted_spend_cap. Migration 007 adds
+and `by_asserted`; decision 18), `spend_usd` accumulates cost, `status` is one of
+pending/running/complete/failed/aborted_spend_cap. **`status` stopped being
+vestigial with issue #168**: `complete` is what Stage E writes and is now the
+only value the app will read a map at, so it is the record of whether a map is
+published. Everything else about the column is still loose and #48 still owns
+tidying it. Migration 007 adds
 `UNIQUE (concept, prompt_version)`: Stage C now upserts on that key (stable id
 across re-runs, in place), where it used to DELETE then INSERT and mint a new
 id every run. That old pattern broke `/g/<id>` links on re-trace and orphaned a
@@ -591,6 +595,64 @@ between the Vercel deploy and Render's pre-deploy migration. A missing
 *relation* is guarded by the `to_regclass` fallback #92 earned, and the page
 loses three figures instead of a page.
 
+**map_invariant_findings and map_invariant** (021, `021_map_invariant.sql`): the
+publish invariant, issue #168, covering the piece named in #149 and the publish
+half of #2. Nothing in this system ever re-asked whether a map already published
+still satisfies the rules of the stages that built it; these two views are the
+question, and `pipeline/check_map.py`, Stage E's publish gate and (when #174
+lands) the report page all read them, so none of them can hold a different
+opinion about the same map.
+
+Six clauses, each an existence test or an equality, **no threshold anywhere**:
+(1) every entry of a concept-state's `definition_ids` names a definition Stage C
+would admit today — it exists, it belongs to this map's `(concept,
+prompt_version)`, `defines_concept` is true, the definition text is not empty and
+the embedding is not NULL; (2) a concept-state's `members` and its
+`definition_ids` describe the same papers; (3) every concept-state is readable
+and uniquely named; (4) every relationship names two different concept-states of
+this map; (5) every relationship's two papers are members of the concept-states
+it names; (6) every paper the threads name is held by some concept-state of the
+same map. `map_invariant_findings` is one row per violation, naming the
+concept-state, the relationship or the thread and saying in words what is wrong
+with it; `map_invariant` is one row per map, and its six counts are
+`count(*) FILTER` over the findings, so the counts describing the findings is
+true by construction. `satisfies_publish_invariant` is true only when all six
+are zero. The numeric literals in the file are `{0, 1, 2, 3, 4, 5, 6}`: the six
+clause numbers, the `0` of `= 0` and of every coalesced count, and the `1` of
+`count(*) > 1` — which is the definition of a duplicate — and of `SELECT 1`.
+
+**Clauses 2, 5 and 6 resolve a paper through `definition_ids ->
+definitions.paper_id -> papers.id`, never by joining a member's `arxiv_id` to
+`papers`.** That is the width the F7 note on #149 asked for: every member of a
+stored node must resolve to one live paper row that still satisfies the rule of
+the stage that put it there. When a map may draw papers from more than one
+source, an arXiv id stops being an identity and that join would pair a member
+with the wrong row; the member's arXiv id is used only to *name* what did not
+resolve, in the finding's text. Clause 6 is measured against every paper the
+`definition_ids` name, admissible or not, so a definition clause 1 already
+reports is not reported a second time under another name.
+
+**Nothing is stored — no verdict column, no `checked_at`, no provenance
+column.** The recomputation is a `SELECT`, so a stored column could only be a
+second ageing copy of something free, and the honest answer to "when was this
+last checked" is "when you asked". **No constraint and no trigger** either: a
+CHECK cannot reference another table, `edges.source_node` is TEXT into JSONB with
+no foreign key available, a trigger would fire mid-rebuild where violation is
+legitimate, and `CHECK (source_node <> target_node)` is refused because
+`workbench.py`'s merge creates self-loops and deletes them in the same
+transaction.
+
+Measured against a real PostgreSQL with `001`-`021` applied and eleven fixture
+maps: a well-formed map reports nothing at all on any clause (the falsifier), an
+`n21`-shaped map — one concept-state whose only definition says
+`defines_concept = false` with no text and no embedding — reports exactly one
+clause-1 finding and one clause-2 finding and nothing else, and each of the six
+clauses was driven red on the clean map one break at a time and back to green.
+`definition_ids` holding a string, a fraction and a 26-digit number are three
+clause-1 findings rather than an error out of the view: the id stays `numeric`
+and is never cast to bigint, so bad JSON cannot make the instrument for finding
+bad data raise.
+
 **`papers_read_recent` is instrumentation and not evidence, and both surfaces
 say so.** It counts papers in a window, so a selection rule that reserves seats
 for recent work raises it *by construction* and it cannot report failure. The
@@ -850,6 +912,44 @@ and the reason it fetches nothing are in section 6 under the loading
 boundaries. Both strips share one answer to a click on the tab for the page you
 are already on (`current-tab-click.ts`, issue #151): it scrolls to the top and
 fetches nothing. The reasoning is with the other navigation costs, below.
+
+**Only published maps are readable, and until issue #168 publication did not
+exist as a state.** Nothing in the app filtered on `genealogies.status`:
+`listGenealogies` selected every row and ordered by `updated_at`, `getGenealogy`
+and `getMapRow` selected by id with no predicate, and no page added one. The row
+is written by Stage C, roughly halfway through a build (`UPSERT_GENEALOGY` writes
+`status = 'running'`), so **a half-built map — concept-states and no
+relationships — was publicly listed and loadable on every build, for the whole
+second half of it**, and had been for months. All three read functions in
+`lib/genealogy.ts` now carry `status = 'complete'`, which is Stage E's own word
+and a column that has existed since migration 001, so the refusal needed no
+migration and cannot break during the minutes when the app is live against a
+schema one migration behind (decision 31). It is an allow-list rather than
+`status <> 'running'`: `pending`, `failed` and `aborted_spend_cap` are not maps
+anybody should read either, and a status invented later is unpublished until
+somebody decides otherwise.
+
+**The refusal lives in the read functions and never in a page conditional**,
+which is the control the two-stage build design (#184) names for this risk. The
+design named two functions and there are three — `getMapRow` serves the map's
+front door, the paper dossier, the thread page and the export — so guarding the
+two named would have left the front door open. An unpublished map is therefore
+indistinguishable from a map that does not exist on every surface those three
+serve: `/` does not list it, `/g/<id>` redirects to the evidence view and that
+404s, exactly as they already behave for an id nobody ever minted. There is no
+exception for the owner, on the design's reasoning that "visible to them, not to
+others" is a second visibility rule to keep in agreement with the first; a
+requester watching their own build sees it in the live trace panel, which only
+offers a link to the map once the run is complete. **`/g/<id>/report` is not
+covered**: it reads `map_report` through `lib/report.ts`, which is a fourth read
+path in another file, and it lists every map as a reference point beside the one
+asked for. Noted on #168.
+
+Measured against a real PostgreSQL holding one fixture map per status, driving
+the compiled read functions: a `complete` map is listed and returned by both
+single-map functions; `running`, `pending`, `failed` and `aborted_spend_cap` are
+absent from the list and null from both, including an in-progress-shaped map with
+Stage C's concept-states, no relationships and no threads.
 
 **Routes.**
 - `/` : the map list, with a link to `/trace` showing how many runs are in

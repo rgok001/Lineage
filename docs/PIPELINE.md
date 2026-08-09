@@ -1002,6 +1002,30 @@ Unlike the page, it prints the cost figure unconditionally: it needs the
 read-only role's connection string to run at all, so its reader is the Operator
 and never a visitor.
 
+`check_map.py`
+(`check_map.py <concept> [--prompt-version PV] [--all] [--json]`): whether a map
+still satisfies the rules of the stages that built it (issue #168, the missing
+piece named in #149 and the publish half of #2). The six clauses are migration
+`021_map_invariant.sql`'s two views and this command computes none of them, so it
+and Stage E's publish gate cannot hold a different opinion about the same map.
+**It reads `LINEAGE_READ_URL` and never `DATABASE_URL`, issues no statement but
+`SELECT` and repairs nothing** — the third tool built that way, for the reason
+`recheck_stamp.py` and `map_report.py` are: an Operator has to be able to point
+it at production. It commits on the way out of the `with` block, carrying nothing,
+for the reason given above.
+**The exit status is the verdict**: 0 when every map asked about satisfies all
+six clauses, 1 when any does not, taken from the view's own boolean rather than
+from anything worked out here, so the answer cannot come from the value the tool
+was supposed to be independent of. Every finding names the concept-state, the
+relationship or the thread it is about and says in words what is wrong with it,
+because its reader is whoever has to repair it; the six clause sentences come
+from the view, so they are written down in the migration and nowhere else.
+`--all --json` is **always** a JSON array — of one element against a database
+holding one map, and `[]` against one holding none, which is the degenerate case
+the shape promise is only as strong as (issue #93). There is no threshold, grade
+or score in it and there must never be one: a map either satisfies every clause
+or it names what it violates.
+
 **Stage F: magnitude** (`stage_f_magnitude.py <concept> [--prompt-version PV]`).
 Fills `definitions.attention` and `definitions.displacement` (migration 011),
 which is what the influence map selects and sizes by. Attention is on-term
