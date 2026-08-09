@@ -17,7 +17,7 @@ them, and re-clusters over both passes together. Only then is the map published.
                   -> [the spend gate] -> B -> union -> C -> D
                   -> reground -> E --no-publish -> record pass two
     FINISH    record the build -> enrich authors -> F -> G -> H
-                  -> E (the one publish)
+                  -> record what each step spent -> E (the one publish)
 
 Four things carry that shape and each has a reason that would be expensive to
 rediscover.
@@ -84,6 +84,7 @@ Usage:
 """
 
 import argparse
+import contextlib
 import json
 import re
 import signal
@@ -259,6 +260,13 @@ def trace_paths(concept: str) -> dict[str, str]:
         # DATA_DIR/snapshots/. This is the note saying where the last one went,
         # and it is overwritten every build on purpose.
         "snapshot_result": str(d / f"snapshot_{slug}.json"),
+        # What each step of this build spent and how long it took (#47). Written
+        # by the worker after every step rather than once at the end, so a build
+        # that dies mid-run leaves on disk what it had spent by then — the file is
+        # the only place that survives a failure, since the database record is
+        # written by a step near the end. Overwritten every build, like the
+        # snapshot note above.
+        "stage_ledger": str(d / f"stages_{slug}.json"),
     }
 
 
@@ -477,6 +485,21 @@ def plan_for(concept: str, corpus_limit: int, field: str, gloss: str | None,
         # design: it has no cross-run cache, so running it inside pass one would
         # buy an account of a map that is about to be re-clustered.
         ("check each claim", py + ["pipeline/stage_h_claims.py", concept]),
+        # What every step above spent, from the ledger this worker has been
+        # writing as it went (#47). Second to last, and not last, for one reason:
+        # a step that exits nonzero fails the build, and every other recording
+        # step in this plan does so while the map is still unpublished. Put after
+        # the publish it would fail a job whose map is already live, which is a
+        # worse thing to be than a build that stopped before publishing.
+        #
+        # The cost of that placement is that the ledger cannot contain this step
+        # or the publish after it. Neither prints a cost line, so the recorded
+        # total still equals the run's; what it does mean is that the recorded
+        # WALL CLOCK is short by two steps, and every surface calls it the time in
+        # the recorded steps rather than the run's time.
+        ("record what each step of this build spent",
+         py + ["pipeline/record_spend.py", concept,
+               "--stages", paths["stage_ledger"]]),
         # The one publish. Grounding again costs nothing — it reads files and
         # compares digests — and this run is the one that asks the publish
         # invariant and moves the status, with the threads Stage G has just
@@ -593,6 +616,12 @@ class Progress:
         self.state: dict = {"stages": n_stages, "spend_usd": None}
         self.base_spend = 0.0   # spend from completed stages
         self.stage_spend = 0.0  # cumulative spend the CURRENT stage has printed
+        # How many spend lines the CURRENT stage has printed. It is what tells a
+        # stage that priced itself at zero from a stage that priced itself not at
+        # all, per stage rather than per job, and it is the only thing #47's
+        # record has that `spend_seen` below does not (#87 is the same
+        # distinction one level up). Reset on every stage, like stage_spend.
+        self.stage_spend_lines = 0
         # Whether any stage has printed a spend line at all in this job. It is
         # the only thing that turns spend_usd into a number, and it never goes
         # back to False: once one stage has priced itself, zero from another
@@ -603,6 +632,7 @@ class Progress:
     def start_stage(self, no: int, name: str) -> None:
         self.base_spend += self.stage_spend
         self.stage_spend = 0.0
+        self.stage_spend_lines = 0
         self.state.update(stage=name, stage_no=no, message=f"starting: {name}",
                           current=None, total=None)
         self.flush(force=True)
@@ -638,9 +668,13 @@ class Progress:
         """What the stages have said they spent so far, this job.
 
         The same figure `spend_usd` publishes, and it carries the same weakness:
-        it is a regex over what the stages print (#85), because per-stage spend is
-        recorded nowhere (#47). It is what the pre-flight gate has to decide on,
-        so the gate prints it and names its basis rather than implying a
+        it is a regex over what the stages print (#85), so a stage that stops
+        printing its spend drops out of it with no error. Since #47 the same
+        scrape is also kept per stage and written to the map's record, which does
+        not make the scrape more accurate — it is the same numbers — but it does
+        mean a step contributing nothing is a named row with no figure rather than
+        an absence inside a total. It is what the pre-flight gate has to decide
+        on, so the gate prints it and names its basis rather than implying a
         precision it does not have.
         """
         return round(self.base_spend + self.stage_spend, 4)
@@ -652,6 +686,7 @@ class Progress:
         if m := SPEND_RE.search(text):
             # Stages print spend cumulatively within themselves.
             self.stage_spend = float(m.group(1))
+            self.stage_spend_lines += 1
             self.spend_seen = True
         if self.spend_seen:
             self.state["spend_usd"] = round(self.base_spend + self.stage_spend, 4)
@@ -741,28 +776,96 @@ class StageRunner:
     still the only place that decision is taken. What it adds is a running stage
     number, so phases that are decided while the build runs still number
     continuously in the feed.
+
+    **And, since #47, the ledger of what each step spent.** Nothing new is
+    measured for it: `Progress` has parsed every stage's spend line since the feed
+    existed and has always reset its per-stage total on `start_stage`, so all this
+    does is keep that number when the stage ends instead of folding it into a
+    running sum. The ledger is written to disk after every step — including a step
+    that failed, whose money was spent all the same — because the database record
+    of it is written by a step near the end of the build and a build that dies
+    before that would otherwise leave nothing behind.
     """
 
-    def __init__(self, prog: "Progress", job_id: int):
+    def __init__(self, prog: "Progress", job_id: int,
+                 ledger_path: str | None = None, run_id: int | None = None):
         self.prog, self.job_id = prog, job_id
         self.no = 0
         self.tail: list[str] = []  # last lines, kept for the error report on failure
+        self.ledger_path, self.run_id = ledger_path, run_id
+        self.ledger: list[dict] = []
+        # Which pass the steps being run now belong to. NULL for the snapshot and
+        # for the finishing stages, which run once and belong to neither.
+        self.build_pass: int | None = None
+
+    @contextlib.contextmanager
+    def in_pass(self, n: int | None):
+        """Mark every step run inside this block as belonging to pass `n`.
+
+        A context manager rather than two assignments because `run_pass_two`
+        returns from seven places, and a restore written after the call would be
+        skipped by six of them — leaving the finishing stages recorded as
+        second-pass work on every build that skipped its second pass.
+        """
+        previous = self.build_pass
+        self.build_pass = n
+        try:
+            yield
+        finally:
+            self.build_pass = previous
+
+    def _remember(self, name: str, started: float) -> None:
+        self.ledger.append({
+            "stage_no": self.no,
+            "stage": name,
+            "build_pass": self.build_pass,
+            # **The absent form is null and never 0.0** (#87, and migration 024's
+            # CHECK). A step that printed no cost line spent nothing this system
+            # can testify to, which is not the same claim as a step that priced
+            # itself at zero — Stage C with every label cached prints `$0.0000`
+            # deliberately and is the second kind.
+            "spend_usd": (round(self.prog.stage_spend, 4)
+                          if self.prog.stage_spend_lines else None),
+            "spend_lines": self.prog.stage_spend_lines,
+            "seconds": round(time.monotonic() - started, 3),
+        })
+        if self.ledger_path is None:
+            return
+        try:
+            Path(self.ledger_path).write_text(
+                json.dumps({"job_id": self.job_id, "run_id": self.run_id,
+                            "stages": self.ledger}, indent=1),
+                encoding="utf-8")
+        except OSError as exc:
+            # Never fatal. Losing the breakdown of what a build spent is worth a
+            # line in the log; losing the build over it is not, and the figure the
+            # feed and the report already publish is untouched by this failing.
+            print(f"[job {self.job_id}] could not write the step ledger to "
+                  f"{self.ledger_path}: {type(exc).__name__}: {exc}")
 
     def run(self, name: str, cmd: list[str]) -> None:
         self.no += 1
         self.prog.start_stage(self.no, name)
         print(f"[job {self.job_id}] stage {self.no}/{self.prog.n_stages}: {name}")
-        proc = subprocess.Popen(
-            cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace")
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            print(f"    {line.rstrip()}")
-            self.tail.append(line.rstrip())
-            del self.tail[:-30]
-            if line.strip():
-                self.prog.line(line)
-        rc = proc.wait()
+        started = time.monotonic()
+        try:
+            proc = subprocess.Popen(
+                cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace")
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                print(f"    {line.rstrip()}")
+                self.tail.append(line.rstrip())
+                del self.tail[:-30]
+                if line.strip():
+                    self.prog.line(line)
+            rc = proc.wait()
+        finally:
+            # In a finally, so a stage killed by a deploy or one that exits
+            # nonzero still leaves what it had spent on disk. The database record
+            # is unaffected either way: the step that writes it runs near the end
+            # of a build that got that far.
+            self._remember(name, started)
         # The one place the two kinds of ending are told apart. Read
         # classify_stage_exit before changing either arm.
         outcome = classify_stage_exit(rc, _shutting_down)
@@ -946,12 +1049,19 @@ def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: i
     prog = Progress(conn, job_id,
                     (len(plan["snapshot"]) + len(plan["pass_one"]) + len(plan["finish"]))
                     if one_pass_only else len(nominal))
-    runner = StageRunner(prog, job_id)
+    # `job_id` is both the log's name for this build and the request row the step
+    # record is stamped with (#47), so an Operator can tell whether the recorded
+    # steps and the report's own cost figure describe the same run.
+    runner = StageRunner(prog, job_id, plan["paths"]["stage_ledger"], job_id)
     pv = prompt_version()
 
     with Heartbeat(job_id):
+        # The snapshot belongs to neither pass and the runner starts there, so
+        # nothing is asserted here; pass one is marked, and everything after the
+        # two passes goes back to neither.
         run_snapshot(runner, plan, concept)
-        runner.run_all(plan["pass_one"])
+        with runner.in_pass(1):
+            runner.run_all(plan["pass_one"])
 
         summary = map_summary(conn, concept, pv)
         if summary:
@@ -968,7 +1078,15 @@ def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: i
                   f"and no build record will be written.")
             passes, outcome, counts = 1, None, {}
         else:
-            passes, outcome, counts = run_pass_two(conn, job_id, runner, plan, concept)
+            # Marked here rather than inside `run_pass_two`, which returns from
+            # seven places: a restore written after any one of them would leave
+            # the finishing stages recorded as second-pass work on every build
+            # that skipped or abandoned its second pass. Everything the call runs
+            # is pass-two work, the fallback included — those steps ran because
+            # pass two ran, and their names say what they did.
+            with runner.in_pass(2):
+                passes, outcome, counts = run_pass_two(conn, job_id, runner, plan,
+                                                       concept)
 
         if outcome is not None:
             record_cmd = [sys.executable, "-u", "pipeline/record_pass.py", concept,

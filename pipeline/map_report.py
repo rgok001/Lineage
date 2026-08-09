@@ -4,7 +4,8 @@ Ticket #30 ([F2]); the design is docs/design/f2-map-report.md. The figures come
 from migration 016's two views, migration 017's third (the mix of kinds of
 link, issue #162), migration 019's fourth (what the map read, by year, issue
 #182), migration 020's fifth (which pass of the build read a paper, issue
-#193) and migration 023's sixth (papers a person named, issue #198) and are
+#193), migration 023's sixth (papers a person named, issue #198) and migration
+024's seventh (what each step of the build spent, issue #47) and are
 computed nowhere else, so this command and
 `/g/<id>/report` read one expression and cannot disagree about the same map.
 
@@ -139,12 +140,33 @@ PASS_COLUMNS = """q.passes_recorded, q.pass_two_outcome, q.pass_two_seats,
 ANCHOR_COLUMNS = """n.papers_named, n.papers_named_read, n.papers_named_defining,
   n.papers_named_linked, n.named_by, n.named_by_asserted, n.named_papers"""
 
+# What each step of the build spent (migration 024, issue #47). Same grain again
+# — one row per map — so it joins into the report row, and LEFT and unguarded for
+# the reasons above.
+#
+# **Every count here is NULL on every map built before #47 shipped**, like
+# `PASS_COLUMNS` and unlike `ANCHOR_COLUMNS`: a build that ran no steps does not
+# exist, so a zero could only ever mean nothing recorded it, and
+# `stage_record_basis` carries the words. Within a recorded build the zeros are
+# real — `stages_with_no_cost_line` counts steps that ran and printed nothing.
+#
+# `stage_record_run_id` prints HERE and on no other surface: it says which queued
+# request the steps were recorded from, which is what tells an Operator whether
+# this breakdown and `run_cost_usd` above describe the same run. A reader of a map
+# is owed neither the id nor the queue behind it.
+STAGE_COLUMNS = """p.stages_recorded, p.stages_with_a_cost, p.stages_with_no_cost_line,
+  p.stage_spend_usd, p.stage_wall_clock, p.stages_pass_one, p.stages_pass_two,
+  p.stages_outside_passes, p.pass_one_spend_usd, p.pass_two_spend_usd,
+  p.spend_outside_passes, p.costliest_stage, p.costliest_stage_usd,
+  p.costliest_stage_share, p.stage_record_basis, p.stage_record_run_id, p.stages"""
+
 REPORTS = (f"SELECT {COLUMNS},\n  {READ_YEAR_COLUMNS},\n  {PASS_COLUMNS},\n"
-           f"  {ANCHOR_COLUMNS}\n"
+           f"  {ANCHOR_COLUMNS},\n  {STAGE_COLUMNS}\n"
            "FROM map_report m\n"
            "LEFT JOIN map_report_read_years r USING (genealogy_id)\n"
            "LEFT JOIN map_report_passes q USING (genealogy_id)\n"
            "LEFT JOIN map_report_anchors n USING (genealogy_id)\n"
+           "LEFT JOIN map_report_stages p USING (genealogy_id)\n"
            "ORDER BY concept, prompt_version")
 
 BUCKETS = """
@@ -430,6 +452,59 @@ SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
         # Operator and never a visitor.
         ("what the run cost", "run_cost_usd", money, "not recorded"),
     ]),
+    # What each step of the build spent (migration 024, issue #47). Its own
+    # section, after the run whose total it opens up, because the table below
+    # needs a heading to sit under and because the reading order is total first
+    # and parts second.
+    #
+    # **"no step-by-step record of this build" is the absent word for every count
+    # and it is not a zero.** Every map built before #47 reads it. A build that
+    # ran no steps does not exist, so a zero here could only ever mean absence,
+    # and `where these figures came from` says which state this map is in.
+    ("What each step of the build spent", [
+        ("where these figures came from", "stage_record_basis", text, "not recorded"),
+        ("steps of the build recorded", "stages_recorded", count,
+         "no step-by-step record of this build"),
+        ("steps that reported a cost", "stages_with_a_cost", count,
+         "no step-by-step record of this build"),
+        # Most steps of a build spend nothing, and a step that stopped printing
+        # its spend looks the same from here. Neither is a cost of zero, and this
+        # count is what makes the second one visible at all rather than silently
+        # absent from a total (#85's complaint, and the half of it that was
+        # fixable).
+        ("steps that reported no cost line", "stages_with_no_cost_line", count,
+         "no step-by-step record of this build"),
+        ("what the recorded steps spent", "stage_spend_usd", money,
+         "no step reported a cost"),
+        # NOT the run's time, and the label says so: the step that writes this
+        # record runs inside the build and cannot time itself or the publish after
+        # it, so this is always short of `time the run took` by those two steps.
+        ("time in the recorded steps", "stage_wall_clock", duration,
+         "no step-by-step record of this build"),
+        ("steps in the first pass", "stages_pass_one", count,
+         "no step-by-step record of this build"),
+        ("steps in the second pass", "stages_pass_two", count,
+         "no step-by-step record of this build"),
+        ("steps in neither pass", "stages_outside_passes", count,
+         "no step-by-step record of this build"),
+        ("what the first pass spent", "pass_one_spend_usd", money,
+         "no first-pass step reported a cost"),
+        ("what the second pass spent", "pass_two_spend_usd", money,
+         "no second-pass step reported a cost"),
+        ("what the steps in neither pass spent", "spend_outside_passes", money,
+         "no such step reported a cost"),
+        ("the most expensive step", "costliest_stage", text,
+         "no step reported a cost"),
+        ("what the most expensive step cost", "costliest_stage_usd", money,
+         "no step reported a cost"),
+        ("what the most expensive step cost, as a share", "costliest_stage_share",
+         share, "no step reported a cost"),
+        # Command-only, like `named_by`: it says which queued request these steps
+        # came from, which is how an Operator tells whether this breakdown and
+        # "what the run cost" describe the same run.
+        ("the request these steps were recorded from", "stage_record_run_id", count,
+         "not recorded"),
+    ]),
 ]
 
 LABEL_WIDTH = max(len(label) for _s, figs in SECTIONS for label, *_ in figs)
@@ -595,6 +670,62 @@ def render(row: dict, others: list[dict], buckets: list[dict], types: list[dict]
                 if total != int(row["papers_with_a_reading"]):
                     line += "   <- DOES NOT MATCH papers read above"
                 out += ["", line]
+        # The breakdown itself (issue #47), under the section whose figures it
+        # opens up. It prints here and not on the page's reader tier for the
+        # reason "quote slots" has been command-only since #108: the page shows
+        # the owner the total, the most expensive step and the same table, and the
+        # per-pass subtotals and the request id are the Operator's half.
+        #
+        # A step with no cost line prints the words rather than US$0.00, and the
+        # column is wide enough for them — the absent form is the one string in a
+        # numeric column that is prose, and sizing a column by its numbers is how
+        # `0no relationships` was published six times on #162.
+        if title == "What each step of the build spent":
+            heading = "  Every step, in the order it ran"
+            out += ["", heading, "  " + "-" * (len(heading) - 2)]
+            stages = row["stages"]
+            if row["stages_recorded"] is None:
+                out.append("  no step-by-step record of this build, so there is nothing "
+                           "to break down. That is an absence and not a build that "
+                           "spent nothing.")
+            elif not stages:
+                # The counts said something was recorded and the list is empty:
+                # the two come out of one set of rows, so this is a defect in the
+                # view rather than a state a build can be in.
+                out.append("  the record counts steps and lists none, which the view "
+                           "cannot produce from one set of rows: read it as a defect "
+                           "and not as a build.")
+            else:
+                out.append(f"  {'#':>3}  {'step':<44}{'pass':>8}{'cost':>16}"
+                           f"{'time':>12}")
+                for s in stages:
+                    spend = s.get("spend_usd")
+                    secs = s.get("seconds")
+                    pass_no = s.get("build_pass")
+                    out.append(
+                        f"  {int(s.get('stage_no') or 0):>3}  "
+                        f"{str(s.get('stage') or '?')[:43]:<44}"
+                        f"{('neither' if pass_no is None else str(pass_no)):>8}"
+                        f"{(money(spend) or 'no cost line'):>16}"
+                        f"{(duration(secs) or 'not recorded'):>12}")
+                # The falsifier, printed rather than assumed: the recorded steps
+                # are the same scrape the run's own total is, so the two figures
+                # should agree. They can legitimately differ, and the line says
+                # how: the run figure describes the last COMPLETED run and the
+                # steps describe the last build that got as far as recording
+                # itself, which are two different runs when a build recorded its
+                # steps and then failed at the publish.
+                total, run_total = row["stage_spend_usd"], row["run_cost_usd"]
+                line = (f"  the recorded steps spent {money(total) or 'nothing measured'}"
+                        f"; the run's own total says "
+                        f"{money(run_total) or 'nothing recorded'}")
+                if (total is not None and run_total is not None
+                        and Decimal(total) != Decimal(run_total)):
+                    line += ("\n    <- DOES NOT MATCH. Either a step's spend was "
+                             "recorded and not counted into the run, or these two "
+                             "figures describe different runs of this map; the "
+                             "request id above says which run the steps came from.")
+                out += ["", line]
         # Three section titles are load-bearing here and nothing else reads them:
         # rename one in SECTIONS without renaming it below and the By source
         # table, the kinds-of-link table or the year histogram silently stops
@@ -628,7 +759,9 @@ def render(row: dict, others: list[dict], buckets: list[dict], types: list[dict]
             "  What a map cost and how long it took, when it was not built from a",
             "  request: those cells read \"not recorded\" rather than zero, and",
             "  genealogies.spend_usd is written by nothing and is never read here",
-            "  (issues #85, #47).",
+            "  (issue #85). Since #47 a build run from a request also records what",
+            "  each of its steps spent; a map built by hand records none, and a",
+            "  step that prints no cost line is a step with no figure either way.",
             "  Whether the map is right. Every number above comes from the map's own",
             "  rows; deciding whether its account is correct needs the papers."]
     return out

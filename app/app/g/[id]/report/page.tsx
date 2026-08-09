@@ -14,7 +14,8 @@ export const dynamic = "force-dynamic"; // computed on read, never stored
  * migration 016's two views, migration 017's third (the mix of kinds of link,
  * issue #162), migration 019's fourth (what the map read, by year, issue
  * #182), migration 020's fifth (which pass of the build read a paper, issue
- * #193) and migration 023's sixth (papers a person named, issue #198),
+ * #193), migration 023's sixth (papers a person named, issue #198) and
+ * migration 024's seventh (what each step of the build spent, issue #47),
  * so this page and `pipeline/map_report.py` read one
  * expression and cannot disagree about the same map, and nothing is stored, so
  * no figure here can survive the curatorial edit that invalidates it.
@@ -496,6 +497,38 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
     `Nobody named a paper for this map: every paper in it was chosen by this ` +
     `system. ${maps(anchoredMaps)} ` +
     `${anchoredMaps === 1 ? "has" : "have"} a paper somebody named.`;
+
+  /**
+   * What each step of building this map spent (issue #47).
+   *
+   * **Every map in this system reads "no step-by-step record" today**, because
+   * nothing wrote one before this shipped, and that is an absence rather than a
+   * build that spent nothing. It is the pass block's rule and not the named
+   * papers' one: there is no such thing as a build that ran no steps, so a zero
+   * here could only ever mean nothing recorded it.
+   *
+   * The whole block is inside the same `owner` gate the run's cost sits behind,
+   * pending the owner's answer to open question 1. It is not a second copy of
+   * that decision: both are read off the same `owner` const, and a breakdown of a
+   * total a reader cannot see would be an odd thing to publish beside it.
+   *
+   * The comparison sentence is counted from the rows rather than written down
+   * (issue #89), so it moves on its own the day a build records itself.
+   */
+  const st = r.stages;
+  const stepRecordMaps = all.filter(
+    (m) => m.stages !== null && m.stages.stages_recorded !== null).length;
+  const noStepRecordSentence =
+    `Nothing recorded what the steps of this map's build spent, one by one. ` +
+    `${maps(stepRecordMaps)} ` +
+    `${stepRecordMaps === 1 ? "has" : "have"} that record, so this is an absence ` +
+    `and not a build that cost nothing.`;
+  /** A step's own cost, under the page's one money rule, with different words for
+   *  a step that printed no cost line. Never US$0.00 for one: most steps of a
+   *  build spend nothing at all, and a step that stopped reporting looks the same
+   *  from here, so neither may be shown as a measured zero. */
+  const stepCost = (s: { spend_usd: number | null }) =>
+    s.spend_usd === null ? "no cost line" : money(s.spend_usd) ?? "no cost line";
 
   const noRunMaps = all.filter((m) => m.runs_recorded === 0).length;
   const runRecordSentence =
@@ -1429,6 +1462,142 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             others={rest.map((m) => ({ concept: m.concept, value: money(m.run_cost_usd) }))}
           />
         )}
+        {/* The same total, opened up (issue #47). Behind the same gate as the
+            figure above, and only ever below it: it is that number's breakdown,
+            so a reader meeting it first would be reading parts of a whole they
+            had not been shown. */}
+        {owner && (st === null ? (
+          /* The #92 fallback again: the app is live for a few minutes against a
+             schema one migration behind, and losing one block is honest where a
+             500 would take the whole page. */
+          <p style={{ ...prose, fontSize: ".9rem", margin: ".9rem 0 0" }}>
+            What each step of the run spent is not counted on this page at the
+            moment. That is this page&rsquo;s reach and not a fact about the map.
+          </p>
+        ) : st.stages_recorded === null ? (
+          <p style={{ ...prose, fontSize: ".9rem", margin: ".9rem 0 0" }}>
+            {noStepRecordSentence}
+          </p>
+        ) : (
+          <>
+            <Figure
+              label="what the recorded steps spent" lead
+              value={money(st.stage_spend_usd)} absent="no step reported a cost"
+              counts={`Model spend added up over the steps this run kept a record of, ${st.stage_record_basis}. It is the same reading as the figure above, kept step by step instead of as one total, so where the two differ it is because they describe different runs.`}
+              moves="Which steps had to buy anything, which is mostly how many papers were new to this system."
+              others={rest.map((m) => ({
+                concept: m.concept, value: money(m.stages?.stage_spend_usd ?? null),
+              }))}
+            />
+            <Figure
+              label="what the most expensive step cost"
+              value={money(st.costliest_stage_usd)} absent="no step reported a cost"
+              share={{ value: share(st.costliest_stage_share),
+                       absent: "nothing was spent to be a share of" }}
+              tail={st.costliest_stage ? `, ${st.costliest_stage}` : undefined}
+              counts="The single step of the run that spent the most, and how much of the run's spend it was. The share is a share of a whole: each step's cost is counted once and the steps add up to the total above."
+              moves="Reading papers this system has not read before, which is the step this is nearly always."
+              others={rest.map((m) => ({
+                concept: m.concept, value: money(m.stages?.costliest_stage_usd ?? null),
+              }))}
+            />
+            <Figure
+              label="steps that reported no cost line"
+              value={outOfMaybe(st.stages_with_no_cost_line, st.stages_recorded)}
+              absent="no step-by-step record of this build"
+              counts="Steps that ran and printed no cost at all. Most steps of a build genuinely spend nothing, and a step that stopped reporting what it spends looks exactly the same from here, so these are shown as steps with no figure rather than as steps costing nothing."
+              moves="Nothing a reader can do. It falls if a step that spends money is taught to say so."
+              others={rest.map((m) => ({
+                concept: m.concept,
+                value: outOfMaybe(m.stages?.stages_with_no_cost_line ?? null,
+                                  m.stages?.stages_recorded ?? null),
+              }))}
+            />
+            {/* The breakdown itself, which is the ticket. Same table furniture as
+                "By source" and the named papers. The two passes are subtotalled
+                in the footer rather than as figures of their own, because the
+                interesting comparison is between the steps and the reader has
+                them all in one glance here. */}
+            {st.stages && st.stages.length > 0 && (
+              <table style={{ ...mono, fontSize: ".78rem", borderCollapse: "collapse",
+                width: "100%", marginTop: ".9rem" }}>
+                <thead>
+                  <tr style={{ color: "var(--ink-faint)", textAlign: "left" }}>
+                    {["", "step", "pass", "cost", "time"].map((h, i) => (
+                      <th key={i} style={{ padding: ".35rem .6rem", fontWeight: 400,
+                        borderBottom: "1px solid var(--line)" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {st.stages.map((s) => (
+                    <tr key={s.stage_no}>
+                      <td style={{ padding: ".3rem .6rem", color: "var(--ink-faint)" }}>
+                        {s.stage_no}
+                      </td>
+                      <td style={{ padding: ".3rem .6rem", color: "var(--ink)",
+                        fontFamily: "var(--font-display)" }}>{s.stage}</td>
+                      <td style={{ padding: ".3rem .6rem" }}>
+                        {s.build_pass === null ? "neither" : s.build_pass}
+                      </td>
+                      <td style={{ padding: ".3rem .6rem",
+                        color: s.spend_usd === null ? "var(--ink-soft)" : "var(--ink)",
+                        fontStyle: s.spend_usd === null ? "italic" : "normal" }}>
+                        {stepCost(s)}
+                      </td>
+                      <td style={{ padding: ".3rem .6rem" }}>
+                        {s.seconds === null ? "not recorded" : duration(s.seconds)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ color: "var(--ink-soft)" }}>
+                    <td colSpan={2} style={{ padding: ".45rem .6rem",
+                      borderTop: "1px solid var(--line)" }}>
+                      the first pass
+                    </td>
+                    <td style={{ padding: ".45rem .6rem",
+                      borderTop: "1px solid var(--line)" }}>
+                      {count(st.stages_pass_one) ?? "not recorded"}
+                    </td>
+                    <td colSpan={2} style={{ padding: ".45rem .6rem",
+                      borderTop: "1px solid var(--line)" }}>
+                      {money(st.pass_one_spend_usd) ?? "no step reported a cost"}
+                    </td>
+                  </tr>
+                  <tr style={{ color: "var(--ink-soft)" }}>
+                    <td colSpan={2} style={{ padding: ".2rem .6rem" }}>the second pass</td>
+                    <td style={{ padding: ".2rem .6rem" }}>
+                      {count(st.stages_pass_two) ?? "not recorded"}
+                    </td>
+                    <td colSpan={2} style={{ padding: ".2rem .6rem" }}>
+                      {money(st.pass_two_spend_usd) ?? "no step reported a cost"}
+                    </td>
+                  </tr>
+                  <tr style={{ color: "var(--ink-soft)" }}>
+                    <td colSpan={2} style={{ padding: ".2rem .6rem" }}>neither pass</td>
+                    <td style={{ padding: ".2rem .6rem" }}>
+                      {count(st.stages_outside_passes) ?? "not recorded"}
+                    </td>
+                    <td colSpan={2} style={{ padding: ".2rem .6rem" }}>
+                      {money(st.spend_outside_passes) ?? "no step reported a cost"}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+            {/* Said here rather than left for a reader to work out from the time
+                column, which will not add up to the run's time above. */}
+            <p style={{ ...prose, fontSize: ".85rem", margin: ".7rem 0 0",
+              color: "var(--ink-faint)" }}>
+              The times above cover {count(st.stages_recorded) ?? "the"} recorded
+              steps and stop before the last two of the run, because the step that
+              writes this record cannot time itself or the one after it. Neither of
+              those two costs anything, so the money adds up where the time does not.
+            </p>
+          </>
+        ))}
       </Section>
 
       <Section

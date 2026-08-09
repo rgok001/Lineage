@@ -113,9 +113,11 @@ re-approved. Two consequences worth holding:
 **Watching a two-stage build** (#192). The feed narrates the passes: `pass one
 complete: N paper(s) read, M meaning(s), K relationship(s). Not yet published.`,
 then `pass two: X recent paper(s) cite this map, Y cite two or more of it, Z
-cleared both signals. Reading the top R.`, then the finish. A build runs up to 29
-stages and the feed's total is corrected downward the moment a pass is skipped,
-with the reason on the same flush. Its first line is either `saved the current map
+cleared both signals. Reading the top R.`, then the finish. A build runs the
+sequence in `docs/PIPELINE.md` §4, which is where the step count lives (it has
+moved three times and a second copy of it here was wrong within a week), and the
+feed's total is corrected downward the moment a pass is skipped, with the reason
+on the same flush. Its first line is either `saved the current map
 before rebuilding it: … -> <path>` or `no existing map for this term to save: this
 is its first build.` — see the backup paragraph below. **The map is invisible for
 the whole of it**:
@@ -155,6 +157,35 @@ and not an addition. `--outcome` is printed verbatim on the report: it must be a
 sentence, not a code. A map that should read "built in one pass" has its record
 removed rather than set to `passes = 1`:
 `DELETE FROM map_build_passes WHERE genealogy_id = N;`.
+
+**Reading what a build spent, step by step** (issue #47). `python
+pipeline/record_spend.py "<concept>" --show` prints the whole breakdown from the
+map's own record: every step with its cost, its pass and its time, the per-pass
+subtotals and the most expensive step. The map's report prints the same figures,
+and `pipeline/map_report.py` prints them beside "what the run cost" with a
+mismatch marker — **if it says `DOES NOT MATCH`, read the request id above it
+first**: the run figure describes the last *completed* run and the steps describe
+the last build that reached the recorder, so a build that recorded its steps and
+then failed at the publish leaves the two describing different runs. That is the
+common cause and it is not a defect in either figure.
+
+The record is written by the worker near the end of every build, from a ledger it
+writes to `DATA_DIR/stages_<slug>.json` as it goes. To re-state it by hand — a
+build interrupted after the recorder, a record that is wrong — point the command
+at that file, which the worker leaves on disk even for a build that died:
+
+```sh
+python pipeline/record_spend.py "<concept>" --stages data/stages_<slug>.json
+```
+
+It clears the map's whole step record first, so this is a re-statement and not an
+addition. A map that should read "no step-by-step record of this build" has its
+rows removed rather than zeroed: `DELETE FROM map_build_stages WHERE
+genealogy_id = N;`. **Never insert a row with a cost of zero for a step that
+printed no cost line** — the two are different facts, the report says so in
+words, and a CHECK on the table refuses the pair anyway. A map built by hand from
+the command line has no ledger and therefore no record, which is correct: nothing
+watched what its steps printed.
 
 **Naming papers a map should not miss** (issue #198). Through the site: the
 request form on `/trace` takes up to three arXiv ids. From the command line, the

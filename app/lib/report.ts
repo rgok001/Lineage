@@ -5,13 +5,14 @@ import { PUBLISHED_STATUS } from "./genealogy";
  * The map report (issue #30, `[F2]`), read from migration 016's two views,
  * migration 017's third (`map_report_by_type`, issue #162), migration 019's
  * fourth (`map_report_read_years`, issue #182), migration 020's fifth
- * (`map_report_passes`, issue #193) and migration 023's sixth
- * (`map_report_anchors`, issue #198).
+ * (`map_report_passes`, issue #193), migration 023's sixth
+ * (`map_report_anchors`, issue #198) and migration 024's seventh
+ * (`map_report_stages`, issue #47).
  *
  * Nothing here computes a figure. Every number is selected from `map_report`,
  * `map_report_by_source`, `map_report_by_type`, `map_report_read_years`,
- * `map_report_passes` or `map_report_anchors`, which is the whole point of
- * the ticket: the app and
+ * `map_report_passes`, `map_report_anchors` or `map_report_stages`, which is the
+ * whole point of the ticket: the app and
  * `pipeline/map_report.py` read one expression, so the page and the shell cannot
  * disagree about the same map, and nothing is stored, so a figure cannot survive
  * the curatorial edit that invalidates it.
@@ -185,6 +186,70 @@ export type AnchorFigures = {
   named_papers: AnchorPaper[] | null;
 };
 
+/** One step of the build that produced a map, and what it spent (migration 024,
+ *  issue #47).
+ *
+ *  `spend_usd` is null when the step printed no cost line at all, which is what
+ *  most steps of a build do — fetching, text extraction, the audit, grounding —
+ *  and is also what a step that stopped reporting its spend looks like. **Neither
+ *  may be rendered as US$0.00.** A step that did print a figure of zero (Stage C
+ *  with every label already cached prints one deliberately) carries
+ *  `spend_lines >= 1` and a real zero, and the pair is what separates them. */
+export type StageSpend = {
+  stage_no: number;
+  stage: string;
+  /** 1, 2, or null for a step belonging to neither pass. */
+  build_pass: number | null;
+  spend_usd: number | null;
+  spend_lines: number;
+  seconds: number | null;
+};
+
+/** What each step of the build spent (migration 024, issue #47).
+ *
+ *  **Every count is nullable and none of them is ever coalesced**, for the pass
+ *  figures' reason rather than the anchor figures' one: a map with no step record
+ *  is a map built before this record existed, and "this build spent nothing" is
+ *  the wrong reading of it by the widest possible margin. There is no such thing
+ *  as a build that ran zero steps, so a zero here could only ever mean absence,
+ *  and the view returns null instead. `stage_record_basis` is the words for it
+ *  and is never blank, the way `run_cost_basis` is.
+ *
+ *  Within a recorded build the zeros are real: `stages_with_no_cost_line` counts
+ *  steps that ran and printed nothing, which is a measurement of how much of the
+ *  build the cost figure can see at all.
+ *
+ *  `stages_pass_one + stages_pass_two + stages_outside_passes = stages_recorded`
+ *  and the three spend subtotals sum to `stage_spend_usd`, both by construction:
+ *  the view carries the pass as a column rather than as a filter over separate
+ *  scans. A map where either fails has a join defect.
+ *
+ *  **`stage_wall_clock` is the time in the recorded steps and not the run's
+ *  time.** The step that writes this record runs inside the build, so it cannot
+ *  time itself or the publish that follows it; `run_wall_clock` is the run. */
+export type StageFigures = {
+  stages_recorded: number | null;
+  stages_with_a_cost: number | null;
+  stages_with_no_cost_line: number | null;
+  stage_spend_usd: number | null;
+  stage_wall_clock: number | null;
+  stages_pass_one: number | null;
+  stages_pass_two: number | null;
+  stages_outside_passes: number | null;
+  pass_one_spend_usd: number | null;
+  pass_two_spend_usd: number | null;
+  spend_outside_passes: number | null;
+  costliest_stage: string | null;
+  costliest_stage_usd: number | null;
+  costliest_stage_share: number | null;
+  /** Never blank: either the sentence saying there is no step record, or the one
+   *  saying where these figures came from. */
+  stage_record_basis: string;
+  /** Null only when nothing is recorded, so the page can print a sentence
+   *  without inspecting the counts. */
+  stages: StageSpend[] | null;
+};
+
 export type MapReport = {
   genealogy_id: number;
   concept: string;
@@ -264,6 +329,12 @@ export type MapReport = {
    *  so a missing row means the read did not happen and the page says that
    *  rather than claiming nobody was named. */
   anchors: AnchorFigures | null;
+  /** **NULL is not a build that spent nothing.** Same rule again: it means
+   *  migration 024 has not landed on this deployment yet. The view emits a row
+   *  for every map, and a map with no step record carries a row whose counts are
+   *  null and whose basis says so in words, so a missing row means the read did
+   *  not happen. */
+  stages: StageFigures | null;
 };
 
 /** Named, in the view's own order, so the shape of this list and the shape of
@@ -289,7 +360,8 @@ function shape(r: Record<string, unknown>, buckets: ReportBucket[],
                types: ReportTypeCount[] | null,
                reading: ReadYears | null,
                passes: PassFigures | null,
-               anchors: AnchorFigures | null): MapReport {
+               anchors: AnchorFigures | null,
+               stages: StageFigures | null): MapReport {
   const n = (k: string) => num(r[k]) ?? 0;      // counts: the view coalesces these
   const m = (k: string) => num(r[k]);           // measurements: absence is meaningful
   return {
@@ -347,6 +419,7 @@ function shape(r: Record<string, unknown>, buckets: ReportBucket[],
     reading,
     passes,
     anchors,
+    stages,
   };
 }
 
@@ -588,6 +661,68 @@ async function anchorsFor(ids: number[]): Promise<Map<number, AnchorFigures> | n
 }
 
 /**
+ * What each step of each map's build spent (migration 024, issue #47).
+ *
+ * **Guarded exactly like the four functions above, and for the same reason**: the
+ * migration lands after the app that reads it, because a push deploys Vercel and
+ * Render at once and Render's pre-deploy is what applies it. The probe is
+ * unqualified so it resolves the name against the same `search_path` the next
+ * statement does (#92's correction), and its answer is a snapshot, so a view
+ * dropped between the two statements still raises — a known residue, not an
+ * oversight.
+ *
+ * **`stage_record_run_id` is on the view and is not selected here.** It says
+ * which queued request these steps were recorded from, which is what an Operator
+ * needs to tell whether the breakdown and `run_cost_usd` describe the same run;
+ * a reader of a map is owed neither the id nor the queue it came from.
+ * `pipeline/map_report.py` reads it, the way it reads `named_by`.
+ */
+async function stagesFor(ids: number[]): Promise<Map<number, StageFigures> | null> {
+  const [probe] = (await sql`
+    SELECT to_regclass('map_report_stages') IS NOT NULL AS reported
+  `) as { reported: boolean }[];
+  if (!probe?.reported) return null;
+  if (!ids.length) return new Map();
+  const rows = (await sql`
+    SELECT genealogy_id, stages_recorded, stages_with_a_cost,
+           stages_with_no_cost_line, stage_spend_usd, stage_wall_clock,
+           stages_pass_one, stages_pass_two, stages_outside_passes,
+           pass_one_spend_usd, pass_two_spend_usd, spend_outside_passes,
+           costliest_stage, costliest_stage_usd, costliest_stage_share,
+           stage_record_basis, stages
+    FROM map_report_stages
+    WHERE genealogy_id = ANY(${ids})
+  `) as Record<string, unknown>[];
+  const out = new Map<number, StageFigures>();
+  for (const r of rows) {
+    out.set(Number(r.genealogy_id), {
+      // `num()` throughout and never `?? 0`, like the pass figures and unlike
+      // the anchor figures: every one of these is null on a map built before
+      // this record existed, and a zero would report a build that ran no steps
+      // and spent nothing.
+      stages_recorded: num(r.stages_recorded),
+      stages_with_a_cost: num(r.stages_with_a_cost),
+      stages_with_no_cost_line: num(r.stages_with_no_cost_line),
+      stage_spend_usd: num(r.stage_spend_usd),
+      stage_wall_clock: num(r.stage_wall_clock),
+      stages_pass_one: num(r.stages_pass_one),
+      stages_pass_two: num(r.stages_pass_two),
+      stages_outside_passes: num(r.stages_outside_passes),
+      pass_one_spend_usd: num(r.pass_one_spend_usd),
+      pass_two_spend_usd: num(r.pass_two_spend_usd),
+      spend_outside_passes: num(r.spend_outside_passes),
+      costliest_stage: r.costliest_stage === null || r.costliest_stage === undefined
+        ? null : String(r.costliest_stage),
+      costliest_stage_usd: num(r.costliest_stage_usd),
+      costliest_stage_share: num(r.costliest_stage_share),
+      stage_record_basis: String(r.stage_record_basis),
+      stages: (r.stages ?? null) as StageSpend[] | null,
+    });
+  }
+  return out;
+}
+
+/**
  * Every map's report, newest map first.
  *
  * The page needs all of them rather than one, because each figure is published
@@ -634,11 +769,12 @@ export async function listMapReports(): Promise<MapReport[]> {
     ORDER BY genealogy_id DESC
   `) as Record<string, unknown>[];
   const ids = rows.map((r) => Number(r.genealogy_id));
-  // In parallel, so #162's two extra round trips, #182's two, #193's two and
-  // #198's two cost one wait rather than eight on a page already taking most of
-  // a second.
-  const [buckets, types, reading, passes, anchors] = await Promise.all([
+  // In parallel, so #162's two extra round trips, #182's two, #193's two,
+  // #198's two and #47's two cost one wait rather than ten on a page already
+  // taking most of a second.
+  const [buckets, types, reading, passes, anchors, stages] = await Promise.all([
     bucketsFor(ids), typesFor(ids), readYearsFor(ids), passesFor(ids), anchorsFor(ids),
+    stagesFor(ids),
   ]);
   return rows.map((r) => {
     const id = Number(r.genealogy_id);
@@ -653,6 +789,7 @@ export async function listMapReports(): Promise<MapReport[]> {
                  types === null ? null : types.get(id) ?? null,
                  reading === null ? null : reading.get(id) ?? null,
                  passes === null ? null : passes.get(id) ?? null,
-                 anchors === null ? null : anchors.get(id) ?? null);
+                 anchors === null ? null : anchors.get(id) ?? null,
+                 stages === null ? null : stages.get(id) ?? null);
   });
 }

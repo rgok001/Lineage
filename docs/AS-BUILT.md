@@ -119,14 +119,16 @@ docs/                AS-BUILT.md (this file, sections 1-3 and 5-7: current
                      (what went wrong), ROADMAP.md (what to build next),
                      design/ (one file per design that needed writing down)
 pipeline/            stages A-H + auxiliaries (Python, CLI-first; the worker
-                     runs thirteen steps, see PIPELINE.md)
+                     runs them in two passes, see PIPELINE.md for how many
+                     steps that is — the count lives there and nowhere else)
   common.py          env loading, polite HTTP session, data_dir()
   check_extraction.py  audit of extracted-text fidelity (no model, no network)
   db/migrate.py      ordered SQL migrations, schema_migrations table
-  db/migrations/     001..023
+  db/migrations/     001..024
   recheck_stamp.py   re-checks stored stamps against the papers (read-only)
   record_pass.py     which pass of a build read which papers (#192)
   record_anchors.py  which of a map's papers a person named (#198)
+  record_spend.py    what each step of a build spent (#47)
 .claude/            settings.json (carries the LINEAGE_NO_DB guard; tracked),
                      launch.json, and memory/ (agents' lessons, boards and
                      verdicts; gitignored). The role prompts are NOT here
@@ -540,9 +542,91 @@ selected by `pipeline/map_report.py` and deliberately **not** by
 `app/lib/report.ts`: the sentence a reader is owed is about "the person who
 requested it" and needs no login to be true.
 
+**map_build_stages and map_report_stages** (024, `024_build_stage_spend.sql`,
+issue #47): what each step of a build spent, how long it took and which pass it
+ran in, plus the report figure that reads it. Storage and read shape in one
+migration, for `023`'s reason, and the figure is a separate **view** rather than
+more columns on `map_report`, for `023`'s and `019`'s reason.
+
+**It is an instrument, and it exists so that the cost-reduction programme has a
+"before".** Until now a build's cost existed as exactly one number — the worker's
+regex over the stages' stdout, published as `map_report.run_cost_usd` — so
+extraction costing a cent a paper on `embedding` and four cents on `attention`
+could be observed and not located, and how much of a map's cost the shared
+extraction cache avoids was unknowable (decision 27, ROADMAP open question 6).
+**One optimisation shipped ahead of it**: #202's Stage H cache landed on the same
+day, hours earlier, and its saving is therefore evidenced by that ticket's own
+two-run measurement rather than by any map's record. Everything after it has a
+per-stage before to be measured against, and the first map built with this
+recording is where that reading starts.
+
+`map_build_stages` is one row per (map, step): `stage_no` (the position the feed
+showed), `stage` (the worker's own feed name, so the breakdown and the progress a
+requester watched use one vocabulary), `build_pass` (1, 2, or NULL for a step
+belonging to neither), `spend_usd`, `spend_lines`, `seconds`, `run_id` and
+`recorded_at`. Keyed on the map and cleared per build, like
+`map_build_pass_papers`, so a requeue or a re-trace re-states what it spent
+rather than adding to it. `run_id` carries no foreign key on purpose: a deleted
+request must not delete the record of what its build spent.
+
+**`spend_usd` NULL and `spend_lines = 0` are the same fact and a CHECK makes them
+inseparable: this step printed no cost line.** That is not a spend of zero. Most
+steps of a build genuinely cost nothing (fetching, extraction, the audit,
+grounding, the recorders) and a step that *stopped* printing its spend looks
+identical from here; the two cannot be told apart and neither may be published as
+`US$0.00`. What the record adds is that such a step is now a **named row with no
+figure** instead of a silent absence inside a total, which is the half of #85's
+complaint that was fixable. A stage that printed `$0.0000` — Stage C with every
+label cached, Stage D with every pair cached, both deliberately — carries
+`spend_lines >= 1` and a real zero.
+
+**Nothing new is measured for it.** `Progress` in `worker/run.py` has parsed
+every stage's spend line since the feed existed and resets its per-stage total on
+`start_stage`; the whole change is keeping that number when the stage ends
+instead of folding it into a running sum, so the per-step figures sum to the same
+scrape the report already publishes. `pipeline/map_report.py` prints both and
+marks a mismatch.
+
+`map_report_stages` carries `stages_recorded`, `stages_with_a_cost`,
+`stages_with_no_cost_line`, `stage_spend_usd`, `stage_wall_clock`,
+`stages_pass_one`, `stages_pass_two`, `stages_outside_passes`,
+`pass_one_spend_usd`, `pass_two_spend_usd`, `spend_outside_passes`,
+`costliest_stage`, `costliest_stage_usd`, `costliest_stage_share`,
+`stage_record_basis`, `stage_record_run_id` and `stages` (a JSONB list of
+`{stage_no, stage, build_pass, spend_usd, spend_lines, seconds}`, in run order).
+The pass is a **column rather than a filter** over one set of rows, `019`'s and
+`020`'s discipline, so `stages_pass_one + stages_pass_two + stages_outside_passes
+= stages_recorded` and the three spend subtotals sum to `stage_spend_usd` by
+construction. `costliest_stage` is a `DISTINCT ON` with the tie broken by the
+earlier step, and steps with no cost line are excluded from it rather than
+treated as zero. Its share is a genuine share: the steps partition the total.
+`stage_record_run_id` is selected by `pipeline/map_report.py` and deliberately
+**not** by `app/lib/report.ts`, like `named_by` above — it is how an Operator
+tells whether the breakdown and `run_cost_usd` describe the same run, and a
+reader of a map is owed neither the id nor the queue behind it.
+
+**Every map built before #47 reads "no step-by-step record of this build", and
+that is an absence and not a build that spent nothing.** The gate is an inner
+`GROUP BY` plus a `LEFT JOIN` rather than a `CASE`, `020`'s device, so a map with
+no rows produces no row in the CTE and there is no expression anywhere that could
+coalesce it to a zero. There is no such thing as a build that ran no steps, so a
+zero could only ever mean absence; `stage_record_basis` says which state a map is
+in, never blank, in the shape `run_cost_basis` established.
+
+Measured against a real PostgreSQL with `001`-`024` applied, one database per
+scenario and 65 checks: a fixture two-pass build of 29 steps, a one-pass build, a
+map with no record at all, a build every step of which printed nothing, a re-run
+that re-states rather than accumulates, and five refusals (a cost with no line
+behind it, a line with no cost, an unnamed step, two steps at one position, a
+ledger that is not there) none of which wrote a row. A further 36 checks drove
+`worker/run.py`'s own `StageRunner`, `Progress` and `run_job` with the
+subprocesses replaced, and 27 rendered the compiled report page over the same
+rows, including the deploy window with the view dropped.
+
 **map_report_by_source and map_report** (016, `016_map_report.sql`): the map
-report (issue #30, `[F2]`), two of the three views in the schema (the third is
-`map_report_by_type`, below). They store
+report (issue #30, `[F2]`), the first two of the report's views; every later one
+is described in its own entry above, and their number is not restated here
+because it has moved five times. They store
 nothing. `CREATE VIEW` writes no row, takes no rewrite lock and is reversed by
 `DROP VIEW map_report; DROP VIEW map_report_by_source;`, and the whole point of
 computing rather than storing is that a quality figure written to a column
@@ -966,6 +1050,23 @@ heartbeat, which also sweeps). Full walkthrough knowledge condensed:
   has priced itself the figure is a measurement and a later zero is added to it
   as one. The worker's own completion line says "not recorded" in the null case
   and prints four decimals otherwise, so the log and the report agree.
+- **The step ledger** (issue #47). The same parse, kept per step instead of
+  folded into a running sum: when a stage ends, `StageRunner` writes its name,
+  its pass, what it printed as its spend, how many cost lines it printed and how
+  long it took to `DATA_DIR/stages_<slug>.json`, and a step near the end of the
+  build (`record_spend.py`) puts that file into `map_build_stages`. No stage was
+  taught to account for itself and no arithmetic was added, so the per-step
+  figures sum to the same scrape `spend_usd` publishes. **`spend_usd` is null,
+  never 0.0, for a step that printed no cost line**, which is the same rule one
+  level down from the paragraph above and is enforced by a CHECK. The ledger is
+  written after **every** step, including one that failed, so a build that dies
+  mid-run still leaves what it had spent on disk; the database record is written
+  only by a build that reached the recorder. The recorder is **second to last**,
+  before the publish, because a step that exits nonzero fails the build and every
+  other recording step does so while the map is still unpublished — the cost is
+  that the record cannot contain the recorder or the publish after it, neither of
+  which prints a cost line, so the money adds up where the wall clock is short by
+  two steps. Both surfaces call it the time in the recorded steps for that reason.
 - **Failure paths, all first-class, and split in two since #178.** The split is
   decided in one function, `classify_stage_exit(rc, shutting_down)`, which has
   no I/O so the branch can be exercised without a worker or a database.
@@ -1727,6 +1828,37 @@ fixtures, which is why it was taken there.
   and says nothing). Page height went from 6407 px to 6706 px on every one of the
   four: the block is server-rendered inside the streamed content, so it lengthens
   the page without anything arriving late to push something down.
+  **The run section opens its own total up, step by step** (issue #47, migration
+  `024_build_stage_spend.sql`). It sits under "what the run cost" and inside the
+  same `owner` gate that figure carries, and only below it: it is that number's
+  breakdown, so a reader meeting it first would be reading parts of a whole they
+  had not been shown. Three figures — `what the recorded steps spent`, `what the
+  most expensive step cost` with its share and the step named beside it, and
+  `steps that reported no cost line` printed "N of M" — then the table itself, one
+  row per step in the order it ran, with the step's number, its name in the feed's
+  own words, its pass, its cost and its time, and a footer subtotalling the first
+  pass, the second pass and the steps in neither. **A step that printed no cost
+  line reads "no cost line" in quiet italic and never US$0.00**, which is the same
+  rule the page's money formatter carries one level up (#87): most steps of a
+  build genuinely spend nothing and a step that stopped reporting looks identical,
+  and neither is a measured zero. A step that did print `$0.0000` renders US$0.00,
+  because that one is. A sentence under the table says the times cover the
+  recorded steps and stop two short of the run, since the step that writes the
+  record cannot time itself or the publish after it. **A map with no step record
+  says so in one sentence and draws nothing**, with the count of maps that have
+  one taken from the rows (#89); on a deployment one migration behind it says the
+  spend per step "is not counted on this page at the moment", the #92 fallback
+  again with an unqualified `to_regclass` probe. The per-pass subtotals and the
+  request id are command-only, the subset invariant below.
+  Verified by rendering the shipped page over a real PostgreSQL holding a fixture
+  two-pass build, through the compiled `listMapReports` with the driver stubbed to
+  reassemble its tagged template into text and `$n` and execute it, so the SQL
+  tested is the SQL sent: 27 checks across four states — the recorded map seen by
+  the owner, the same map seen by a signed-out reader (the whole block absent,
+  with the rest of the page intact), a map with no record, and the view dropped
+  under a live page. **No two-stage map exists yet**, so the first real reading of
+  these figures will be #183's rebuild, and the fixture's own times are a stub's
+  and not a measurement of anything.
   **The years section leads with the papers-per-year chart, and the three
   quantile rows are cut** (issue #113). Lower quartile, median and upper quartile were a
   harder-to-read summary of the distribution the chart draws directly, in
