@@ -17,8 +17,8 @@ with the owner (decision 33, issue 142).
 ## Layout
 
 - `pipeline/` — Python CLI scripts, one per pipeline stage. Each runs standalone
-  before any UI exists. What each stage does, and the thirteen steps the worker
-  actually runs, is [docs/PIPELINE.md](docs/PIPELINE.md); this file is how to
+  before any UI exists. What each stage does, and the steps the worker actually
+  runs, is [docs/PIPELINE.md](docs/PIPELINE.md); this file is how to
   invoke them.
 - `pipeline/db/` — migrations + tiny migration runner.
 - `worker/` — the trace worker: claims approved requests and runs the stages.
@@ -125,6 +125,12 @@ python pipeline/record_pass.py "attention" --show   # what is recorded; writes n
 python pipeline/record_anchors.py "attention" --corpus corpus.json --named-by rgok001
 python pipeline/record_anchors.py "attention" --show  # writes nothing
 
+# What each step of a build spent (the report's cost breakdown; migration 024).
+# The ledger is written by the worker as it runs; a hand-run build has none, and
+# its report says so rather than reporting a build that spent nothing
+python pipeline/record_spend.py "attention" --stages data/stages_attention.json
+python pipeline/record_spend.py "attention" --show   # writes nothing
+
 # Stage F: per-paper magnitude (attention + displacement). Run after Stage D,
 # which populates the citation cache it reads
 python pipeline/stage_f_magnitude.py "attention"
@@ -140,6 +146,9 @@ python pipeline/stage_h_claims.py "attention" --recheck      # re-ground stored 
 
 # F, G and H all spend: none of them has a --dry-run, and --model overrides each
 # stage's own default (Haiku for F and G, Sonnet for H) rather than LLM_MODEL.
+# H reuses any claims it has already bought for the same paper, text, prompt and
+# model, so re-running it over an unchanged map costs nothing and needs no API
+# key; delete DATA_DIR/claims_cache to buy fresh ones. F and G do not cache.
 
 # Workbench: curate the draft (every edit is recorded in genealogies.user_edits,
 # attributed to LINEAGE_ACTOR if set, else user@host, and always as unverified)

@@ -52,7 +52,7 @@ Eight lettered stages, A to H, each a standalone CLI script reading root `.env`.
 The pipeline is CLI-first by rule: the worker orchestrates these same commands
 and adds nothing to them.
 
-**The worker runs a build in TWO PASSES, thirty steps at most, and
+**The worker runs a build in TWO PASSES, thirty-one steps at most, and
 publishes once at the very end** (issue #192, the design on #184). The passes are
 what the letters cannot show: pass one selects a corpus the way it always did and
 assembles a map from it, pass two asks that map which of its papers were the
@@ -78,6 +78,7 @@ PASS TWO  ask the map what came next (pass_two_select), fetch the nominated
           record what pass two read
 FINISH    record how this build's second pass ended, fill author metadata,
           score magnitude (F), compose threads (G), check each claim (H),
+          record what each step of this build spent (record_spend.py),
           ground & publish (E)
 ```
 
@@ -302,8 +303,9 @@ nominating the map's globally top papers asks "what happened next" only where th
 map is already dense, which reproduces the popularity bias this line of work
 exists to remove. A strand of three papers gets the same two questions as a
 strand of forty. **Not Stage F magnitude, deliberately**: F, G and H run once
-after pass two (Stage H roughly doubles a map's cost, decision 17, and has no
-cross-run cache), so nomination has to work from what exists at the end of Stage
+after pass two (Stage H roughly doubles the cost of a map's first build,
+decision 17; since #202 a rebuild of it is free, but a first build is not), so
+nomination has to work from what exists at the end of Stage
 D — and edge degree plus recency does, with no model call. One paper can be both
 nominators and a one-paper state always is; it is then listed once.
 **The population is `genealogies.nodes`, not the `definitions` table**, the same
@@ -1009,6 +1011,24 @@ and the map cannot disagree about the membership. **`--pass 1` clears the map's
 whole pass record first**, so a requeued or re-run build re-states what it read
 instead of adding to it — that is what makes #178's requeue converge. `--show`
 reads it back through the same views the report reads.
+`record_spend.py <concept> [--stages JSON | --show]`: writes what each step of
+the build spent, how long it took and which pass it ran in, into
+`map_build_stages` (migration 024), which is what #47's report figures read
+through `map_report_stages`. **It records and does not measure**: every figure
+comes from the ledger `worker/run.py` writes as it goes, which holds what
+`Progress` already parsed out of each stage's own stdout for the feed. No stage
+was taught to account for itself and no second accounting was added, so the
+per-step figures sum to the same scrape `trace_requests.progress.spend_usd`
+publishes and `pipeline/map_report.py` prints both with a mismatch marker. **A
+step that printed no cost line is recorded with no cost, never with zero**: most
+steps of a build spend nothing, a step that stopped reporting looks the same from
+here, and neither may appear as US$0.00 (#85, #87). It clears the map's whole step
+record before writing, for `record_pass.py`'s reason, in one transaction. It runs
+second to last in the build, before the publish, so that a failure in it stops a
+build that has not published yet; the price is that the record holds neither it
+nor the publish, and both surfaces therefore call the total "time in the recorded
+steps" rather than the run's time. `--show` reads it back through the view the
+report reads.
 `workbench.py`: CLI curation (merge, rename, split-out, delete, reclassify);
 every edit appends to `user_edits`, carrying `by_asserted` (decision 18): this
 script authenticates nobody, so the name is what the process says about itself,
@@ -1356,6 +1376,45 @@ be regenerable without disturbing a shape a curator has judged. It is the second
 most expensive stage after extraction and roughly doubles what a map costs,
 which buys the difference between an account a reader must trust paragraph by
 paragraph and one they can audit sentence by sentence.
+**Every parsed answer is cached on disk** in `DATA_DIR/claims_cache`,
+content-addressed, same never-evict posture as `edge_class_cache` (#172) and
+`label_cache` (#189) beside it (issue #202); to buy fresh claims, delete the
+directory. The call depends on the paper and on nothing else — not on the map's
+shape, not on thread membership, not on anything a rebuild changes — so before
+this, every rebuild re-bought every claim at about $3.00 a map, and decision 38's
+"restarts are cheap, since every LLM stage caches per paper" was false here.
+Decision 39 records the correction and says plainly that Stages F and G still do
+not cache. The key **names the semantic inputs**: concept, prompt version, model,
+the arXiv id, a digest of the exact text sent (the post-`TEXT_BUDGET` slice, not
+the whole file, because the tail the model never saw cannot have moved its
+answer), plus the prompt hash, which stays for #172's reason. **The stamp is not
+in the cache and cannot be**: a record holds only the claim text and the passage
+as the model returned it, and `verified` is recomputed at load by grounding that
+passage against the extracted text as it is on disk now (decision 30, issue #57 —
+a stamp must never outlive the check that made it). One grounding path serves a
+freshly bought answer and a cached one, so a cached claim is indistinguishable
+from one bought a second earlier. Only a parsed answer is written; a file that is
+unreadable, malformed, or not a list of `{text, quote}` strings is a miss rather
+than an error, so nothing on disk can put a claim into `genealogies.streams` that
+generation would not have produced. A run whose papers are all cached **needs no
+`ANTHROPIC_API_KEY`** (the client is built only when something has to be bought),
+and the stage prints its hit and miss counts and the dollars the hits avoided —
+read back out of the records, which store the tokens the calls actually used, so
+the saving is what was paid rather than a model of it.
+Measured on a throwaway PostgreSQL with a stubbed model whose wording moves on
+every call, 6 papers in 2 threads, one with no extracted text: **two runs over
+unchanged input bought 5 then 0, `$0.1725` then `$0.0000`, claim for claim
+identical in text, quote and stamp.** Rewriting one paper's text within
+`TEXT_BUDGET` re-bought that paper and only that paper (4 of 5 from cache);
+rewriting another paper's text beyond `TEXT_BUDGET` re-bought nothing, because the
+model never saw that text, and its stamps were re-checked against the new file.
+A record whose passage no longer appears in the paper loads with the claim's text
+kept and its quote and stamp dropped, which is what generation would have done
+with it, and so does a passage that folds to nothing (`<cit.>`). Ten cache files
+poisoned five ways (not a list, missing `quote`, a non-string `text`, truncated
+JSON, wrong top-level type) produced ten misses, no error, and every claim still
+inside the shape the thread page renders. An unparsed response is not cached, so
+the next run buys it again rather than serving a failure for free.
 **Stage H inherits the empty-fold rule** (issue #57), because it calls the same
 `quote_is_grounded` every other stage calls, and that is the point of there being
 one matcher. A claim whose passage is only citation marks or whitespace used to

@@ -851,6 +851,37 @@ The why behind the load-bearing choices, in one place:
     failing a job that nothing is wrong with, which is the complaint rather than
     a defence against it.
 
+39. **Correction to decision 38's cost argument: three of the paying stages
+    cached nothing, and now one of them does** (2026-08-09, issue #202).
+    Decision 38 caps auto-requeues at three and defends the cap with "restarts
+    are cheap, since every LLM stage caches per paper". The cap stands and the
+    reasoning for three stands; that one clause was false when it was written.
+    Stage B has cached per paper in `definitions` since the first pipeline,
+    Stage C's labels since #189 and Stage D's classifications since #172 — but
+    **Stages F, G and H cached nothing at all**, so a restart re-bought them in
+    full. Stage H is the one that mattered: its call is a pure function of the
+    concept, the paper, the prompt and the model, and at ~3.7c a paper it is
+    about $3.00 of a $12.31 map, a quarter of the bill (the anatomy on #199).
+    Incident 15's two builds died at stage 2 of 13, so neither had reached
+    Stage H — but a deploy landing later in a build re-bought every claim on the
+    map, three requeues allow that three times, and nothing anywhere said so.
+    #202 gives Stage H the same content-addressed disk cache the other two have,
+    keyed on the semantic inputs and holding no stamp, so a rebuild over
+    unchanged papers buys none of it. Measured on a throwaway PostgreSQL over one
+    fixture map, two runs of the stage over unchanged input: 5 calls and
+    `$0.1725`, then **0 calls and `$0.0000`**, claim for claim identical.
+    **Stages F and G still do not cache, and this entry says so rather than
+    leaving the record sounding complete.** F was left alone on measurement, not
+    oversight: it scores citations on Haiku in batches of twelve, so a map's few
+    dozen calls are cents where Stage H is dollars, and its natural key is the
+    batch, which every paper added to a corpus shifts — a cache that misses on
+    exactly the rebuilds #192 performs, bought with a file that would have to be
+    right about `genealogies.nodes` to be safe. G is one whole-map call whose
+    answer *is* the thread membership, and freezing that across rebuilds is a
+    product change rather than a saving. Both remain re-bought on every restart,
+    and the honest reading of decision 38 after this ships is that restarts are
+    cheap for B, C, D and H and merely cheap-ish for F and G.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record
