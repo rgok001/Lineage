@@ -1,11 +1,14 @@
 import { sql } from "./db";
 
 /**
- * The map report (issue #30, `[F2]`), read from migration 016's two views and
- * migration 017's third (`map_report_by_type`, issue #162).
+ * The map report (issue #30, `[F2]`), read from migration 016's two views,
+ * migration 017's third (`map_report_by_type`, issue #162), migration 019's
+ * fourth (`map_report_read_years`, issue #182) and migration 020's fifth
+ * (`map_report_passes`, issue #193).
  *
  * Nothing here computes a figure. Every number is selected from `map_report`,
- * `map_report_by_source` or `map_report_by_type`, which is the whole point of
+ * `map_report_by_source`, `map_report_by_type`, `map_report_read_years` or
+ * `map_report_passes`, which is the whole point of
  * the ticket: the app and
  * `pipeline/map_report.py` read one expression, so the page and the shell cannot
  * disagree about the same map, and nothing is stored, so a figure cannot survive
@@ -91,6 +94,51 @@ export type ReadYears = {
   papers_defining_recent: number;
 };
 
+/** Which pass of the build read a paper (migration 020, issue #193, designing
+ *  #184).
+ *
+ *  **Every count here is null on every map today, and that is the design.**
+ *  Nothing in the schema records a paper's pass yet: the orchestration that runs
+ *  the two passes is #192, and migration 020 ships the question with an empty
+ *  seam so that the figures light up when #192 replaces it. Until then
+ *  `pass_two_outcome` reads "this map was built in one pass" and the counts are
+ *  absent.
+ *
+ *  **Absent, not zero.** A `?? 0` on any of these would report a map as having
+ *  run a second pass that read no papers, which is a measurement of something
+ *  that never happened. Once a build IS recorded a zero is a real zero — a
+ *  second pass that ran and found nothing — and `pass_two_outcome` says which of
+ *  those two it was.
+ *
+ *  `papers_read_pass_one + papers_read_pass_two + papers_read_pass_unmarked`
+ *  equals `papers_with_a_reading` by construction, because the view carries the
+ *  pass as a column rather than as a filter over one set of rows; and
+ *  `papers_defining_pass_two <= papers_read_pass_two` for the same reason. A map
+ *  where either fails has a join defect. */
+export type PassFigures = {
+  /** How many passes the build recorded. Null means nothing recorded it, which
+   *  is not the same as one. */
+  passes_recorded: number | null;
+  /** Never blank and never a code: the view emits the reader's sentence, the way
+   *  `run_cost_basis` does. */
+  pass_two_outcome: string;
+  pass_two_seats: number | null;
+  pass_two_candidates: number | null;
+  pass_two_candidates_cleared: number | null;
+  papers_read_pass_one: number | null;
+  papers_read_pass_two: number | null;
+  /** Papers a recorded build marked as neither the first nor the second pass,
+   *  including papers it marked not at all. Anything above zero is a defect in
+   *  the build's own record; it exists so that the three counts sum to the
+   *  papers read whatever the build wrote. */
+  papers_read_pass_unmarked: number | null;
+  papers_defining_pass_two: number | null;
+  /** The tool's reading, and labelled as such wherever it prints: an edge is a
+   *  judgement about direction and kind, unlike Stage B's verdict on whether a
+   *  paper defines the term. */
+  papers_linking_into_pass_one: number | null;
+};
+
 export type MapReport = {
   genealogy_id: number;
   concept: string;
@@ -159,6 +207,11 @@ export type MapReport = {
    *  for every map, including one that has read nothing, so a missing row means
    *  the read did not happen and the page prints words rather than a zero. */
   reading: ReadYears | null;
+  /** **NULL is not a map built in one pass.** Same rule again: it means
+   *  migration 020 has not landed on this deployment yet. The view emits a row
+   *  for every map, and a map built in one pass carries a row saying so in
+   *  words, so a missing row means the read did not happen. */
+  passes: PassFigures | null;
 };
 
 /** Named, in the view's own order, so the shape of this list and the shape of
@@ -182,7 +235,8 @@ const COLUMNS = `genealogy_id, concept, prompt_version, status,
 
 function shape(r: Record<string, unknown>, buckets: ReportBucket[],
                types: ReportTypeCount[] | null,
-               reading: ReadYears | null): MapReport {
+               reading: ReadYears | null,
+               passes: PassFigures | null): MapReport {
   const n = (k: string) => num(r[k]) ?? 0;      // counts: the view coalesces these
   const m = (k: string) => num(r[k]);           // measurements: absence is meaningful
   return {
@@ -238,6 +292,7 @@ function shape(r: Record<string, unknown>, buckets: ReportBucket[],
     buckets,
     types,
     reading,
+    passes,
   };
 }
 
@@ -373,6 +428,64 @@ async function readYearsFor(ids: number[]): Promise<Map<number, ReadYears> | nul
 }
 
 /**
+ * Which pass of the build read each paper (migration 020, issue #193).
+ *
+ * **Guarded exactly like `typesFor` and `readYearsFor` above, and for the same
+ * reason**: the migration lands after the app that reads it, because a push
+ * deploys Vercel and Render at once and Render's pre-deploy is what applies it.
+ * The probe is unqualified so it resolves the name against the same
+ * `search_path` the next statement does (#92's correction), and its answer is a
+ * snapshot, so a view dropped between the two statements still raises — a known
+ * residue, not an oversight.
+ *
+ * **One probe covers three new relations, and that is a decision.** Migration
+ * 020 creates `map_pass_papers`, `map_pass_build` and `map_report_passes`, and
+ * only the last is read here; `migrate.py` applies each file in one transaction,
+ * so a half-applied migration is impossible and probing the one name this
+ * statement uses is exact rather than approximate.
+ *
+ * **`pass_two_rank_bands` is not read here.** It is the ladder that says whether
+ * pass two reserved more seats than it had papers worth reading, which is a
+ * question for whoever sets the seat count and not for someone reading a map.
+ * It prints in `pipeline/map_report.py`, which is the same page/command subset
+ * "quote slots" has sat in since #108.
+ */
+async function passesFor(ids: number[]): Promise<Map<number, PassFigures> | null> {
+  const [probe] = (await sql`
+    SELECT to_regclass('map_report_passes') IS NOT NULL AS reported
+  `) as { reported: boolean }[];
+  if (!probe?.reported) return null;
+  if (!ids.length) return new Map();
+  const rows = (await sql`
+    SELECT genealogy_id, passes_recorded, pass_two_outcome, pass_two_seats,
+           pass_two_candidates, pass_two_candidates_cleared,
+           papers_read_pass_one, papers_read_pass_two, papers_read_pass_unmarked,
+           papers_defining_pass_two, papers_linking_into_pass_one
+    FROM map_report_passes
+    WHERE genealogy_id = ANY(${ids})
+  `) as Record<string, unknown>[];
+  const out = new Map<number, PassFigures>();
+  for (const r of rows) {
+    out.set(Number(r.genealogy_id), {
+      // Every one of these is `num()` and never `?? 0`: on every map that
+      // exists today they are null, and a zero here would say a second pass ran
+      // and read nothing.
+      passes_recorded: num(r.passes_recorded),
+      pass_two_outcome: String(r.pass_two_outcome),
+      pass_two_seats: num(r.pass_two_seats),
+      pass_two_candidates: num(r.pass_two_candidates),
+      pass_two_candidates_cleared: num(r.pass_two_candidates_cleared),
+      papers_read_pass_one: num(r.papers_read_pass_one),
+      papers_read_pass_two: num(r.papers_read_pass_two),
+      papers_read_pass_unmarked: num(r.papers_read_pass_unmarked),
+      papers_defining_pass_two: num(r.papers_defining_pass_two),
+      papers_linking_into_pass_one: num(r.papers_linking_into_pass_one),
+    });
+  }
+  return out;
+}
+
+/**
  * Every map's report, newest map first.
  *
  * The page needs all of them rather than one, because each figure is published
@@ -391,10 +504,10 @@ export async function listMapReports(): Promise<MapReport[]> {
     SELECT ${sql.unsafe(COLUMNS)} FROM map_report ORDER BY genealogy_id DESC
   `) as Record<string, unknown>[];
   const ids = rows.map((r) => Number(r.genealogy_id));
-  // In parallel, so #162's two extra round trips and #182's two cost one wait
-  // rather than four on a page already taking most of a second.
-  const [buckets, types, reading] = await Promise.all([
-    bucketsFor(ids), typesFor(ids), readYearsFor(ids),
+  // In parallel, so #162's two extra round trips, #182's two and #193's two
+  // cost one wait rather than six on a page already taking most of a second.
+  const [buckets, types, reading, passes] = await Promise.all([
+    bucketsFor(ids), typesFor(ids), readYearsFor(ids), passesFor(ids),
   ]);
   return rows.map((r) => {
     const id = Number(r.genealogy_id);
@@ -403,9 +516,11 @@ export async function listMapReports(): Promise<MapReport[]> {
     // bucket rows, while the view emits six type rows for every map that exists,
     // so a map missing from `types` means the read did not happen. The year
     // series over the papers read follows the types: one row per map that
-    // exists, so absence means the read did not happen.
+    // exists, so absence means the read did not happen. The pass figures follow
+    // both.
     return shape(r, buckets.get(id) ?? [],
                  types === null ? null : types.get(id) ?? null,
-                 reading === null ? null : reading.get(id) ?? null);
+                 reading === null ? null : reading.get(id) ?? null,
+                 passes === null ? null : passes.get(id) ?? null);
   });
 }

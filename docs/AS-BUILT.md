@@ -608,6 +608,94 @@ defining series is present in the read series and never larger, the window is
 the five calendar years ending in the current one, and a map with no dated paper
 reports the histogram absent rather than as an empty object.
 
+**map_report_passes** (020, `020_map_report_passes.sql`): which pass of the
+build read a paper, one row per map, issue #193 instrumenting the two-stage build
+designed on #184. `019` separated papers read from papers that define; a
+two-stage map needs the further split, because pass two ADDS papers rather than
+displacing them, so every total on the report rises when it runs and a map that
+read fifteen more papers and learned nothing from any of them looks exactly like
+one where the second pass moved the map.
+
+**Nothing in this schema records a paper's pass, and this migration does not add
+it.** Where the pass is stored is #192's decision and #192's migration; the one
+standing rule from the design is that it must not be a column on `papers`, which
+is shared across every map ever traced. `020` is deliberately the other half: it
+fixes the question the report asks. The seam is two views, **`map_pass_papers`**
+(per map and paper: `definition_id`, `build_pass`, `pass_rank`) and
+**`map_pass_build`** (per map: `passes`, `pass_two_outcome`, `pass_two_seats`,
+`pass_two_candidates`, `pass_two_candidates_cleared`), each defined with the right
+columns and `WHERE false` — no rows at all. When #192 lands it replaces those two
+with `DROP VIEW` then `CREATE VIEW` over wherever it stored the pass, and every
+figure lights up without `020`, `app/lib/report.ts` or `pipeline/map_report.py`
+being touched. A view is a read-shape holding nothing, so writing one commits no
+storage and reserves no name in any table; that is why the seam is views and not
+columns.
+
+The report view carries `passes_recorded`, `pass_two_outcome`, `pass_two_seats`,
+`pass_two_candidates`, `pass_two_candidates_cleared`, `papers_read_pass_one`,
+`papers_read_pass_two`, `papers_read_pass_unmarked`, `papers_defining_pass_two`,
+`papers_linking_into_pass_one`, `pass_two_rank_bands` and
+`pass_two_rank_band_width`. The pass is carried as a **column rather than as a
+filter** over one set of rows, `019`'s discipline, so `papers_read_pass_one +
+papers_read_pass_two + papers_read_pass_unmarked = papers_with_a_reading` and
+`papers_defining_pass_two <= papers_read_pass_two` hold by construction; the third
+count is "marked as neither the first nor the second pass", not "unmarked", so the
+identity survives a pass number this view has never heard of. Every count is
+gated on `map_pass_build` having a row by an inner `JOIN` rather than by a `CASE`,
+which makes the absence structural: there is no expression anywhere that could
+coalesce it to a zero. `papers_linking_into_pass_one` crosses to
+`genealogies.nodes` and counts a meaning as found in pass one if it holds **at
+least one** pass-one paper, not if it holds only pass-one papers — Stage C
+re-clusters over the union corpus in pass two, so most meanings on a two-stage map
+hold both and requiring purity would report almost nothing. Its numeric literals
+are `{1, 2, 10}`: `1` and `2` name the two passes, and `10` is the width of the
+selection-rank bands, published as `pass_two_rank_band_width` with each band
+carrying its own first and last rank. It carries `016`'s two header checks over
+its own text.
+
+**Every map in this database reads "this map was built in one pass" and every
+count is NULL**, which is a fact about the record and not a zero. A
+`COALESCE(..., 0)` anywhere would report four maps as having run a second pass
+that read nothing. Once a build IS recorded a zero is a real zero — a second pass
+that ran and found nothing — and `pass_two_outcome` names which of the design's
+four states produced it (filled, under-filled, none found, abandoned at the
+pre-flight gate), never blank; it is reader-ready text arriving through the seam,
+the way `run_cost_basis` works on `016`, so this file does not enumerate a list a
+fifth state would go missing from. `passes_recorded` prints its own absent words,
+"nothing recorded how this map was built", rather than the conclusion drawn from
+its absence.
+
+`pass_two_rank_bands` is **#188's free half**: the defining rate over what the
+second pass actually read, banded by ten of selection rank, which says whether the
+seat count is larger than the map had papers worth reading. It costs nothing,
+because it counts work the build already did. It **bounds the seat count from
+above only** — past the point where the rate falls the seats are certainly
+wasted, and nothing here can say whether a seat below that point earned its
+place, which is the paid over-read #188 keeps for the first two-stage map — and it
+measures whether a reserved paper *defines* the term, never whether it *moved* it.
+It prints in `pipeline/map_report.py` and on no other surface, the same
+page/command subset "quote slots" has sat in since #108, because it answers a
+question for whoever sets the seat count and not for somebody reading a map.
+
+**No recency score, no freshness grade and no "up to date" badge on any surface**,
+and every ingredient of one is a count published here separately. A blended number
+would be this tool's weighting read as a measurement, which is what decision 15
+kept magnitude off the screen to avoid.
+
+Measured against a real PostgreSQL with `001`-`020` applied and four fixture maps,
+in two states: **as shipped**, with the seam empty, every map has a row, every
+count is NULL and the outcome is the one-pass sentence on all four; and **as it
+will be when #192 lands**, with the two seam views dropped and re-created over
+fixture rows, which is exactly the change #192 makes. In that state the sum
+identity and `papers_defining_pass_two <= papers_read_pass_two` both hold, the
+linking count discriminates (two of four pass-two papers qualify, one is excluded
+because its only relationship lands on a meaning holding nothing but pass-two
+papers and one because it carries no relationship at all), a recorded build whose
+second pass read nothing reports `0` beside an outcome naming why, a recorded
+build with no outcome reads "not recorded" rather than the one-pass words, and a
+pass number the view has never heard of lands in `papers_read_pass_unmarked` with
+the sum still holding. 39 checks.
+
 Three figures the report is asked for have no input in this database and each
 renders as an explicit "not recorded", never a zero and never a blank: run cost
 (`genealogies.spend_usd` exists and is written by nothing, reading `0.0000` on
@@ -1293,6 +1381,42 @@ fetches nothing. The reasoning is with the other navigation costs, below.
   all four report pages** (Chrome 1440x1000, cache off, hard load), unchanged by
   the key and the three added rows: everything in the section is server-rendered
   in the streamed content, so nothing arrives late to push anything down.
+  **A block at the foot of that section says what each pass of the build read**
+  (issue #193, instrumenting #184, migration `020_map_report_passes.sql`). It sits
+  there rather than in a section of its own because it answers the question the
+  window figures above it raise: a map can read recent work because somebody
+  reserved seats for it before the map existed, or because the finished map went
+  looking, and those are different claims that belong within one glance of each
+  other. Set like the "kinds of link" block in Shape — its own quiet label, its own
+  paragraph, its own note — it renders in one of three states. On a deployment one
+  migration behind it says how many passes this map was built in "is not counted
+  on this page at the moment", the #92 fallback again with an unqualified
+  `to_regclass` probe. **On every map that exists today it renders one sentence**:
+  "This map was built in one pass: nothing in its record marks a paper as read in
+  a second one", followed by how many of the maps in this system were built in
+  more than one, counted from the rows rather than written down (#89) so it moves
+  on its own the day a two-stage map lands. **No figure row is drawn at all in that
+  state and no zero is printed for one**, because nothing records a paper's pass
+  until #192 ships and a zero would report a second pass that never ran. On a
+  two-stage map it draws five rows: `why the second pass ended`; `papers read in
+  the second pass`, printed "N of M" with the seats beside it and labelled
+  instrumentation in #182's own words, because changing how papers are chosen
+  moves it by construction; `second-pass papers that define the term`, which Stage
+  B can still answer no to; `second-pass papers linked to a first-pass meaning`,
+  labelled the tool's reading in the same words the page uses for shape and
+  explicitly not the claim that the idea moved recently; and `recent papers that
+  cite this map`, with how many cleared both signals, so a second pass that read
+  nothing can say whether there was nothing to read or no budget left. A sixth,
+  `papers the record puts in neither pass`, renders only when it is not zero, the
+  same treatment "meanings that could not be read" gets. The two labels that would
+  have collided with #182's window rows were renamed rather than shortened, so no
+  two rows in the section read alike.
+  Verified by rendering the shipped page against five data states (one migration
+  behind, the shipped one-pass state, a two-stage map, a one-pass map sitting
+  beside two-stage ones, and exactly one two-stage map so the sentence's singular
+  is rendered rather than reasoned about): 21 checks, including that the
+  migration-behind state never claims the map was built in one pass and never
+  reaches the view its probe said was absent.
   **The years section leads with the papers-per-year chart, and the three
   quantile rows are cut** (issue #113). Lower quartile, median and upper quartile were a
   harder-to-read summary of the distribution the chart draws directly, in

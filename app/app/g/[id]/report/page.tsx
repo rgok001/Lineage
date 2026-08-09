@@ -12,8 +12,9 @@ export const dynamic = "force-dynamic"; // computed on read, never stored
  *
  * One screen, one column, no interactivity. Every number is selected from
  * migration 016's two views, migration 017's third (the mix of kinds of link,
- * issue #162) and migration 019's fourth (what the map read, by year, issue
- * #182), so this page and `pipeline/map_report.py` read one
+ * issue #162), migration 019's fourth (what the map read, by year, issue
+ * #182) and migration 020's fifth (which pass of the build read a paper, issue
+ * #193), so this page and `pipeline/map_report.py` read one
  * expression and cannot disagree about the same map, and nothing is stored, so
  * no figure here can survive the curatorial edit that invalidates it.
  *
@@ -267,6 +268,12 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
    *  the count stands alone, because "0 of 0" is not a population. */
   const outOf = (v: number, total: number) =>
     total > 0 ? `${v.toLocaleString()} of ${total.toLocaleString()}` : v.toLocaleString();
+  /** `outOf` where either count may be absent (issue #193). `outOf` takes plain
+   *  numbers because `map_report`'s counts are coalesced by the view and cannot
+   *  be null; the pass counts CAN be, on every map built in one pass, and a
+   *  `?? 0` here would print "0 of 15" about a second pass that never ran. */
+  const outOfMaybe = (v: number | null, total: number | null) =>
+    v === null || total === null ? null : outOf(v, total);
   const acrossPairs = (v: number) => `, across ${v.toLocaleString()} pairs`;
 
   const defBuckets = r.buckets.filter((b) => b.unit === "definition");
@@ -440,6 +447,31 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
     rd && rd.recent_window_start !== null && rd.recent_window_end !== null
       ? `${rd.recent_window_start} to ${rd.recent_window_end}`
       : null;
+
+  /**
+   * Which pass of the build read a paper (issue #193, designing #184).
+   *
+   * **Every map in this system reads "built in one pass" today, and that is a
+   * fact about the record rather than a zero.** Nothing in the schema marks a
+   * paper's pass yet — the orchestration that runs two passes is #192 — so
+   * migration 020 ships the question over an empty seam and every count here is
+   * absent. Printing "0 papers read in the second pass" instead would be this
+   * page reporting a second pass that ran and found nothing, over four maps that
+   * never had one: the #30 defect the whole page is a reaction to.
+   *
+   * The comparison sentence is counted from the rows rather than written down
+   * (issue #89), so the day a two-stage map lands it moves on its own and this
+   * file does not have to.
+   */
+  const pv = r.passes;
+  const twoPassMaps = all.filter(
+    (m) => m.passes !== null && m.passes.passes_recorded !== null
+           && m.passes.passes_recorded > 1).length;
+  const onePassSentence =
+    `This map was built in one pass: nothing in its record marks a paper as read ` +
+    `in a second one. ${maps(twoPassMaps)} ` +
+    `${twoPassMaps === 1 ? "was" : "were"} built in more than one pass, so a ` +
+    `second pass’s reading is not yet something this page can show you.`;
 
   const noRunMaps = all.filter((m) => m.runs_recorded === 0).length;
   const runRecordSentence =
@@ -1042,6 +1074,142 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             counts="Papers that define the term and have no year at all. They are nowhere in the chart above and in none of the figures here, rather than being given a guessed date."
             moves="Only better publication dates for those papers. Nothing about the map itself moves this."
             others={others((m) => m.papers_with_no_year, count)} />
+        </div>
+
+        {/* The two passes (issue #193), at the foot of this section rather than
+            in a section of its own, because the question it answers is the one
+            the window figures above raise: a map can read recent work because
+            somebody reserved seats for it before the map existed, or because the
+            finished map went looking. Those are different claims and they belong
+            within one glance of each other.
+            Set like the "kinds of link" block in Shape: its own quiet label, its
+            own paragraph naming what it counts, its own note answering what
+            would change it, then figures or a sentence. */}
+        <div style={{ padding: ".85rem 0", marginTop: ".4rem",
+          borderTop: "1px solid var(--line-soft)" }}>
+          <div style={{ ...mono, fontSize: ".68rem", letterSpacing: ".08em",
+            textTransform: "uppercase", color: "var(--ink-faint)" }}>
+            the two passes
+          </div>
+          <p style={{ fontFamily: "var(--font-display)", fontSize: ".92rem",
+            lineHeight: 1.55, color: "var(--ink-soft)", margin: ".35rem 0 0",
+            maxWidth: "44rem" }}>
+            A map can be built in two passes: the first reads papers chosen before
+            anything is known about the term, and the second asks the map it has just
+            built what came after its turning points, then reads those too. Both
+            happen before the map is shown to anyone. What follows says what the
+            second pass read and what was found in it, separately from the first, so
+            that what the second pass bought can be told apart from what the first
+            would have found anyway.
+          </p>
+          <p style={{ fontFamily: "var(--font-display)", fontSize: ".92rem",
+            lineHeight: 1.55, color: "var(--ink-faint)", margin: ".15rem 0 0",
+            maxWidth: "44rem" }}>
+            <span style={{ fontStyle: "italic" }}>What would change this:</span>{" "}
+            Only mapping the term again. A map is built in one pass or two and is
+            never added to afterwards.
+          </p>
+          {pv === null ? (
+            /* The #92 fallback again (see the mix of kinds of link above): the
+               app is live for a few minutes against a schema one migration
+               behind, and losing one block is honest where a 500 would take the
+               whole page. */
+            <p style={{ ...prose, fontSize: ".9rem", margin: ".8rem 0 0" }}>
+              How many passes this map was built in is not counted on this page at
+              the moment. That is this page&rsquo;s reach and not a fact about the
+              map.
+            </p>
+          ) : pv.passes_recorded === null ? (
+            <p style={{ ...prose, fontSize: ".9rem", margin: ".8rem 0 0" }}>
+              {onePassSentence}
+            </p>
+          ) : (
+            <>
+              <Figure
+                label="why the second pass ended"
+                value={pv.pass_two_outcome} absent="not recorded"
+                counts="Which of four things happened: it filled every seat it reserved, it filled some of them, it found nothing to read, or it was abandoned before spending anything because what it would have cost did not fit in what was left of the map's budget. It is never blank, because each of those four is a different thing to know."
+                moves="Only mapping the term again."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: m.passes?.pass_two_outcome ?? null,
+                }))}
+              />
+              <Figure
+                label="papers read in the second pass" lead
+                value={outOfMaybe(pv.papers_read_pass_two, r.papers_with_a_reading)}
+                absent="built in one pass"
+                tail={pv.pass_two_seats !== null && pv.papers_read_pass_two !== null
+                  ? `, filling ${pv.papers_read_pass_two.toLocaleString()} of the ${pv.pass_two_seats.toLocaleString()} seats it reserved`
+                  : undefined}
+                counts="Papers this map read only because the first pass of the map pointed at them. This is a count of what was selected and not a result: changing how papers are chosen moves it by construction, so it can say what this map read and it cannot say whether the reading was any good. The two figures below are the ones that can still answer no."
+                moves="The map being rebuilt, and the second pass being given more or fewer seats."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: outOfMaybe(m.passes?.papers_read_pass_two ?? null,
+                                    m.papers_with_a_reading),
+                }))}
+              />
+              <Figure
+                label="second-pass papers that define the term" lead
+                value={outOfMaybe(pv.papers_defining_pass_two,
+                                  pv.papers_read_pass_two)}
+                absent="built in one pass"
+                counts="Of the papers the second pass read, the ones found to give the term a definition of their own. Whether a paper defines the term is decided by reading it, so this one can come back lower after more papers are read, however they were chosen."
+                moves="The map being rebuilt, and a paper being read differently the second time, in either direction."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: outOfMaybe(m.passes?.papers_defining_pass_two ?? null,
+                                    m.passes?.papers_read_pass_two ?? null),
+                }))}
+              />
+              <Figure
+                label="second-pass papers linked to a first-pass meaning"
+                value={outOfMaybe(pv.papers_linking_into_pass_one,
+                                  pv.papers_read_pass_two)}
+                absent="built in one pass"
+                counts="Of the papers the second pass read, the ones this tool then linked to a group of papers the first pass had already gathered. This is the tool's reading and not a checked fact: which papers were grouped together and which way a relationship points are judgements, the same ones the Shape figures above are made of. It is the closest thing here to saying the idea moved recently, and it is not that claim."
+                moves="The map being rebuilt, or someone editing the map deleting a relationship."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: outOfMaybe(m.passes?.papers_linking_into_pass_one ?? null,
+                                    m.passes?.papers_read_pass_two ?? null),
+                }))}
+              />
+              <Figure
+                label="recent papers that cite this map"
+                value={count(pv.pass_two_candidates)} absent="built in one pass"
+                tail={pv.pass_two_candidates_cleared !== null
+                  ? `, ${pv.pass_two_candidates_cleared.toLocaleString()} of which the second pass could have read`
+                  : undefined}
+                counts="How many recent papers cite this map's papers at all, and how many of those passed both of the tests the second pass applies before it will read one. These come from the citation record rather than from anything this tool judged. They are here so that a second pass which read nothing can say whether there was nothing to read or whether there was no budget left for it."
+                moves="Time passing, and other people citing these papers. Nothing about this map moves it."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: count(m.passes?.pass_two_candidates ?? null),
+                }))}
+              />
+              {/* Shown only when there is one, like "meanings that could not be
+                  read" above. It counts papers a two-pass build recorded as
+                  belonging to neither of its passes, which is what keeps the
+                  three counts adding up to the papers read whatever the build
+                  wrote down; above zero it means the build's own record of
+                  itself is incomplete. */}
+              {pv.papers_read_pass_unmarked !== null
+                && pv.papers_read_pass_unmarked !== 0 && (
+                <Figure
+                  label="papers the record puts in neither pass"
+                  value={count(pv.papers_read_pass_unmarked)} absent="built in one pass"
+                  counts="Papers this map read that its own record of the build does not place in either pass. They are counted here rather than folded into one of the two, so the two figures above always add up to the papers read."
+                  moves="Nothing should. Anything above zero means the build recorded itself incompletely, which is why this line appears only on a map that has one."
+                  others={rest.map((m) => ({
+                    concept: m.concept,
+                    value: count(m.passes?.papers_read_pass_unmarked ?? null),
+                  }))}
+                />
+              )}
+            </>
+          )}
         </div>
       </Section>
 

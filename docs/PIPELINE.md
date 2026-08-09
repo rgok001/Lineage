@@ -904,14 +904,15 @@ write. Ever.
 made of, from the map's own rows (issue #30, `[F2]`). Every figure is selected
 from migration `016`'s two views, `map_report` and `map_report_by_source`, from
 migration `017`'s `map_report_by_type`, and from migration
-`019_map_report_read_years.sql`'s `map_report_read_years` (issue #182), and
+`019_map_report_read_years.sql`'s `map_report_read_years` (issue #182), and from
+migration `020_map_report_passes.sql`'s `map_report_passes` (issue #193), and
 computed here not at all, so this command and `/g/<id>/report` read one
-expression and cannot disagree about the same map. **`019` is joined into the
-report query rather than fetched as a fourth statement**, because its grain is
-the same one row per map, so the command still issues exactly three `SELECT`s;
-the join is `LEFT` and unguarded, so a map somehow absent from that view prints
-"not recorded" for its year figures rather than dropping off the report, while a
-missing view stops the command loudly. The app guards the same view with
+expression and cannot disagree about the same map. **`019` and `020` are joined
+into the report query rather than fetched as further statements**, because their
+grain is the same one row per map, so the command still issues exactly three
+`SELECT`s; the joins are `LEFT` and unguarded, so a map somehow absent from either
+view prints "not recorded" for those figures rather than dropping off the report,
+while a missing view stops the command loudly. The app guards the same views with
 `to_regclass` instead, because it is live to strangers in the minutes between
 the Vercel deploy and Render's pre-deploy migration.
 The years block prints both series: everything from `earliest year` to `papers
@@ -919,7 +920,21 @@ with no year` is over the papers that define the term, and `oldest paper read`,
 `newest paper read`, `papers read with no year`, the two `recent window` years
 and the two window counts are over every paper read. The per-year bar shows both
 at once, `#` for a paper that defines the term and `-` for one read that did not,
-so the tail of the bar is the gap between the two populations. **It reads `LINEAGE_READ_URL`
+so the tail of the bar is the gap between the two populations.
+`The two passes` is its own section (issue #193): which pass of the build read a
+paper, and, under it, **#188's free half** — the defining rate over what the
+second pass read, banded by ten of selection rank, with the band width stated and
+each band carrying its own first and last rank. That ladder prints here and on no
+other surface, because it answers a question for whoever sets the seat count and
+not for somebody reading a map. The section also prints the two falsifiers rather
+than leaving a reader to add up: the ranked papers against the papers the second
+pass read, and `papers read = N in the first pass + N in the second + N in
+neither`, each marked when it does not match. **Every figure in the section reads
+"built in one pass" on every map in this database today**, because nothing records
+a paper's pass until #192's orchestration lands and migration `020` ships the
+question over an empty seam; `passes the build recorded` prints its own words,
+"nothing recorded how this map was built", rather than the conclusion drawn from
+its own absence. **It reads `LINEAGE_READ_URL`
 and never `DATABASE_URL`, and issues no statement but `SELECT`** — the second
 tool in this pipeline built that way, and for `recheck_stamp.py`'s reason: its
 value is that an Operator can run it against production and paste the answer into

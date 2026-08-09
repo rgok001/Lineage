@@ -2,8 +2,9 @@
 
 Ticket #30 ([F2]); the design is docs/design/f2-map-report.md. The figures come
 from migration 016's two views, migration 017's third (the mix of kinds of
-link, issue #162) and migration 019's fourth (what the map read, by year, issue
-#182) and are computed nowhere else, so this command and
+link, issue #162), migration 019's fourth (what the map read, by year, issue
+#182) and migration 020's fifth (which pass of the build read a paper, issue
+#193) and are computed nowhere else, so this command and
 `/g/<id>/report` read one expression and cannot disagree about the same map.
 
 **It reads LINEAGE_READ_URL and never DATABASE_URL, and it issues no statement
@@ -103,9 +104,25 @@ READ_YEAR_COLUMNS = """r.read_year_min, r.read_year_max, r.read_year_counts,
   r.papers_read_with_no_year, r.recent_window_start, r.recent_window_end,
   r.papers_read_recent, r.papers_defining_recent"""
 
-REPORTS = (f"SELECT {COLUMNS},\n  {READ_YEAR_COLUMNS}\n"
+# Which pass of the build read a paper (migration 020, issue #193). Same grain
+# again — one row per map — so it joins into the report row rather than arriving
+# as a fourth table, and LEFT and unguarded for the reasons above.
+#
+# **Every one of these is NULL on every map in this database today**, and that is
+# the design rather than a gap: nothing in the schema records a paper's pass
+# until #192's orchestration lands, migration 020 ships the question over an
+# empty seam, and `pass_two_outcome` carries the words for it. Printing zeros
+# here would report four maps as having run a second pass that read nothing.
+PASS_COLUMNS = """q.passes_recorded, q.pass_two_outcome, q.pass_two_seats,
+  q.pass_two_candidates, q.pass_two_candidates_cleared, q.papers_read_pass_one,
+  q.papers_read_pass_two, q.papers_read_pass_unmarked, q.papers_defining_pass_two,
+  q.papers_linking_into_pass_one, q.pass_two_rank_bands,
+  q.pass_two_rank_band_width"""
+
+REPORTS = (f"SELECT {COLUMNS},\n  {READ_YEAR_COLUMNS},\n  {PASS_COLUMNS}\n"
            "FROM map_report m\n"
            "LEFT JOIN map_report_read_years r USING (genealogy_id)\n"
+           "LEFT JOIN map_report_passes q USING (genealogy_id)\n"
            "ORDER BY concept, prompt_version")
 
 BUCKETS = """
@@ -189,6 +206,17 @@ def _fixed(f: float, places: int) -> str:
     regex has no sign), so the two roundings are untested below zero.
     """
     return str(Decimal(f).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP))
+
+
+def text(v) -> str | None:
+    """A figure the view publishes as words rather than as a number.
+
+    `pass_two_outcome` is the only one today and it is never NULL, but this is
+    written to return None for one anyway: the absent branch is what every other
+    formatter here has, and a figure that cannot be absent today is one migration
+    from being able to be.
+    """
+    return None if v is None else str(v)
 
 
 def year(v) -> str | None:
@@ -306,6 +334,49 @@ SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
         ("of those, papers that define the term", "papers_defining_recent", count,
          "not recorded"),
     ]),
+    # Which pass of the build read a paper (migration 020, issue #193). Its own
+    # section here, where the page puts it in a block at the foot of "When the
+    # papers were written": the page's question is "did this map read recent
+    # work, and did it go looking or was it given the seats", which is one
+    # glance; this command's reader is the Operator and the ladder below needs a
+    # heading to sit under.
+    #
+    # **"built in one pass" is the absent word for every count, and it is not a
+    # zero.** Nothing records a paper's pass yet, so every one of these reads it
+    # on every map in this database. Once a build IS recorded, a zero is a real
+    # zero and `why the second pass ended` says which of the four states produced
+    # it.
+    ("The two passes", [
+        ("why the second pass ended", "pass_two_outcome", text, "not recorded"),
+        # Its own absent words, and deliberately not the others': this figure is
+        # literally "what the build wrote down about itself", so "built in one
+        # pass" would be this row answering with the conclusion drawn from its
+        # own absence. The row above it says the conclusion.
+        ("passes the build recorded", "passes_recorded", count,
+         "nothing recorded how this map was built"),
+        ("papers read in the first pass", "papers_read_pass_one", count,
+         "built in one pass"),
+        ("papers read in the second pass", "papers_read_pass_two", count,
+         "built in one pass"),
+        # Above zero means the build's own record of itself is incomplete. It
+        # exists so the three counts sum to `papers read` whatever the build
+        # wrote, and `render` marks it when it does not.
+        ("papers the record puts in neither pass", "papers_read_pass_unmarked",
+         count, "built in one pass"),
+        ("second-pass papers that define the term", "papers_defining_pass_two",
+         count, "built in one pass"),
+        # The tool's reading, not a checked fact: an edge is a judgement about
+        # direction and kind. The closest honest figure to "the idea moved
+        # recently" and not that claim.
+        ("second-pass papers linked to a first-pass meaning",
+         "papers_linking_into_pass_one", count, "built in one pass"),
+        ("seats the second pass reserved", "pass_two_seats", count,
+         "built in one pass"),
+        ("recent papers that cite this map", "pass_two_candidates", count,
+         "built in one pass"),
+        ("of those, papers the second pass could have read",
+         "pass_two_candidates_cleared", count, "built in one pass"),
+    ]),
     ("The run", [
         ("runs recorded", "runs_recorded", count, "not recorded"),
         ("time the run took", "run_wall_clock", duration, "not recorded"),
@@ -391,6 +462,67 @@ def render(row: dict, others: list[dict], buckets: list[dict], types: list[dict]
                 if total != int(row["edges_total"]):
                     line += "   <- DOES NOT MATCH typed relationships above"
                 out.append(line)
+        # #188's free half, and it prints here and on no other surface (issue
+        # #193). The defining rate over what the second pass actually read, in
+        # bands of ten by selection rank, so a falling rate says the seat count
+        # is larger than the map had papers worth reading. It costs nothing,
+        # because it counts work the build already did.
+        #
+        # **It bounds R from above and cannot bound it from below**: past the
+        # point where the rate falls off the seats are certainly wasted, and
+        # nothing here can say whether a seat below that point earned its place.
+        # That needs one deliberate over-read to twice the seat count, on the
+        # first two-stage map, which is the paid half of #188 and is not this.
+        # And it measures whether a reserved paper DEFINES the term, never
+        # whether it MOVED it.
+        #
+        # Off the page deliberately, like "quote slots" since #108: it answers a
+        # question for whoever sets the seat count, not for somebody reading a
+        # map.
+        if title == "The two passes":
+            heading = "  The second pass's ranking, by band of selection rank"
+            out += ["", heading, "  " + "-" * (len(heading) - 2)]
+            bands = row["pass_two_rank_bands"]
+            read2 = row["papers_read_pass_two"]
+            if row["passes_recorded"] is None:
+                out.append("  this map was built in one pass, so there is no second "
+                           "pass to rank")
+            elif not bands:
+                # Two different findings and they must not print the same words:
+                # nothing was read, or things were read and the build recorded no
+                # ranking for them. The second is a defect in the build's record.
+                out.append("  the second pass read nothing, so there is nothing to rank"
+                           if read2 == 0 else
+                           "  the second pass read papers and recorded no selection "
+                           "ranking for them")
+            else:
+                width = row["pass_two_rank_band_width"]
+                out.append(f"  bands are {width} ranks wide")
+                out.append(f"  {'ranks':<12}{'read':>8}{'define':>8}")
+                for b in bands:
+                    span = f"{b['from']}-{b['to']}"
+                    out.append(f"  {span:<12}"
+                               f"{int(b['read']):>8}{int(b['defining']):>8}")
+                # The falsifier, printed rather than assumed: the bands are the
+                # ranked papers, which can be fewer than the papers read if the
+                # build ranked only some of them, and never more.
+                ranked = sum(int(b["read"]) for b in bands)
+                line = f"  {'ranked':<12}{ranked:>8}"
+                if read2 is not None and ranked > int(read2):
+                    line += "   <- MORE THAN papers read in the second pass"
+                out.append(line)
+            # The other falsifier this section carries: the two passes plus the
+            # papers the record places in neither must be the papers read.
+            parts = [row["papers_read_pass_one"], row["papers_read_pass_two"],
+                     row["papers_read_pass_unmarked"]]
+            if all(p is not None for p in parts):
+                total = sum(int(p) for p in parts)
+                line = (f"  papers read = {count(parts[0])} in the first pass"
+                        f" + {count(parts[1])} in the second"
+                        f" + {count(parts[2])} in neither = {count(total)}")
+                if total != int(row["papers_with_a_reading"]):
+                    line += "   <- DOES NOT MATCH papers read above"
+                out += ["", line]
         # Three section titles are load-bearing here and nothing else reads them:
         # rename one in SECTIONS without renaming it below and the By source
         # table, the kinds-of-link table or the year histogram silently stops
