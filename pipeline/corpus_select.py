@@ -16,6 +16,8 @@ Then, either way:
   - Rank the merged pool and print a table capped at --limit, with --recent-seats
     of those seats reserved for the recency window and filled by citation
     connection and topicality together (issue #181).
+  - Add the papers a person NAMED, which skip the ranking entirely (--anchor,
+    issue #198). They are additive, so they cost nobody a seat.
 
 The embedding relevance filter (rest of Stage A) comes later; ranking here is
 citation count + how often the corpus itself references the paper.
@@ -25,6 +27,7 @@ Usage:
   python pipeline/corpus_select.py "attention" --limit 150 --json corpus.json
   python pipeline/corpus_select.py "graph neural network" --concept-id C1234
   python pipeline/corpus_select.py "dark energy" --field fields/31 --recent-since 2021
+  python pipeline/corpus_select.py "dark energy" --field fields/31 --anchor 2404.03002
 """
 
 import argparse
@@ -115,6 +118,29 @@ RECENT_TIEBREAK_PRECISION = 3
 
 ARXIV_URL_RE = re.compile(r"arxiv\.org/(?:abs|pdf)/([a-z\-]+/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?", re.I)
 ARXIV_DOI_RE = re.compile(r"10\.48550/arxiv\.(.+)$", re.I)
+
+# ── papers a person named (issue #198) ──────────────────────────────────────
+#
+# Three, and the cap is the design's point rather than a resource limit: a larger
+# allowance turns the trace form into F9 (#37, bring your own corpus) by the back
+# door. `app/lib/arxiv-id.ts` holds the same number for the same reason and the
+# two are the same rule stated at both ends of one request.
+MAX_ANCHORS = 3
+
+# The shapes an id may take here. Narrower than what the form accepts, because
+# the form normalises a pasted link or a version suffix away before it ever gets
+# here, and identical to what `arxiv_id_of` above emits — an anchor spelled any
+# other way would join to nothing in `papers` and the requester would be told
+# their paper is in a map that does not hold it.
+ANCHOR_ID_RE = re.compile(r"^(?:[a-z][a-z\-]*/\d{7}|\d{4}\.\d{4,5})$")
+
+# How a named id is resolved: arXiv mints a DOI of this form for every paper it
+# holds, old-style ids included (checked live against OpenAlex on 2026-08-09 for
+# 2404.03002 and hep-th/9711200, both of which come back with title and year).
+# It is the only OpenAlex lookup in this file that asks for one work by name, and
+# it is deliberately not a search: a search would return *a* paper for a
+# mistyped id, which is the one thing an anchor must never do.
+ANCHOR_DOI = "10.48550/arXiv.{}"
 
 
 def polite(params: dict | None = None) -> dict:
@@ -320,6 +346,85 @@ def fetch_recent_by_search(query: str, since_year: int, field: str | None,
     return data.get("results", [])
 
 
+def normalise_anchor(raw: str) -> str | None:
+    """A named arXiv id in the one spelling this system stores, or None.
+
+    The form has already folded links, `arXiv:` prefixes, version suffixes and
+    the optional subject class of an old-style id, so this is the floor under a
+    hand-typed `--anchor` and not the main gate. It is here rather than only in
+    the app because `corpus_select.py` is runnable on its own by rule, and an id
+    that reaches OpenAlex misspelled resolves to nothing and refuses the run with
+    a message about the wrong thing.
+    """
+    s = (raw or "").strip().lower()
+    s = re.sub(r"^arxiv:", "", s)
+    s = re.sub(r"v\d+$", "", s)
+    s = re.sub(r"^([a-z][a-z\-]*)\.[a-z\-]+/", r"\1/", s)
+    return s if ANCHOR_ID_RE.match(s) else None
+
+
+def fetch_anchors(ids: list[str]) -> dict[str, dict]:
+    """The works a person named, keyed by arXiv id. Refuses the run if one is not
+    findable.
+
+    **This is where condition 4 of the design lives.** A named id that does not
+    resolve stops the build by name, before a seed has been fetched or a cent of
+    embedding spent, because the alternative is a requester believing their paper
+    is in a map that does not contain it. Silence is the one outcome this feature
+    may not have, and a refusal here is louder than a refusal at the form: the
+    form can only check shape, and an id can be well-formed, resolve today and
+    still be unfetchable when the build runs.
+
+    Resolution is one OpenAlex lookup per id, by arXiv's own DOI, and never a
+    search: a search returns *a* paper for a mistyped id. Three requests at most,
+    on the polite pool.
+    """
+    if not ids:
+        return {}
+    if len(ids) > MAX_ANCHORS:
+        sys.exit(f"At most {MAX_ANCHORS} papers may be named ({len(ids)} given). The cap "
+                 f"is deliberate: naming a corpus is a different feature.")
+    found: dict[str, dict] = {}
+    missing: list[tuple[str, str]] = []
+    for raw in ids:
+        aid = normalise_anchor(raw)
+        if aid is None:
+            missing.append((raw, "that is not the shape of an arXiv id"))
+            continue
+        if aid in found:
+            continue
+        url = f"{OPENALEX}/works/doi:{ANCHOR_DOI.format(aid)}"
+        try:
+            work = get_json(url, polite({"select": WORK_FIELDS}))
+        except Exception as exc:
+            # str(exc), not the class name: "404 Client Error ... /works/doi:..."
+            # is the whole diagnosis, and a bare HTTPError is not.
+            missing.append((aid, f"{type(exc).__name__}: {exc}"))
+            time.sleep(REQUEST_PAUSE_S)
+            continue
+        # The record found must actually BE the paper asked for. OpenAlex resolves
+        # a DOI to one work, so this is belt and braces, but an anchor silently
+        # standing in for a different paper is precisely the failure the whole
+        # feature is judged on.
+        resolved = arxiv_id_of(work)
+        if resolved != aid:
+            missing.append((aid, f"OpenAlex answered with {resolved or 'a work with no arXiv id'}"))
+            time.sleep(REQUEST_PAUSE_S)
+            continue
+        found[aid] = work
+        print(f"  named paper {aid}: {(work.get('display_name') or '?')[:64]} "
+              f"({work.get('publication_year') or '?'})")
+        time.sleep(REQUEST_PAUSE_S)
+    if missing:
+        lines = "\n".join(f"  {aid}: {why}" for aid, why in missing)
+        sys.exit(f"{len(missing)} named paper(s) could not be found on OpenAlex, so this "
+                 f"run is stopping before it selects anything:\n{lines}\n"
+                 f"Nothing was fetched and nothing was spent. A named paper that cannot "
+                 f"be found must not be dropped quietly, because the person who named it "
+                 f"would then believe it is in the map.")
+    return found
+
+
 def cites_per_year(work: dict, now_year: int) -> float:
     """Citations normalised by age. Only ever used INSIDE the recency window.
 
@@ -426,6 +531,12 @@ def main() -> None:
                     help="forward-hop candidates fetched per batch of 50 seeds, "
                          "split across the two orderings (default 400; 0 skips "
                          "the forward hop entirely)")
+    ap.add_argument("--anchor", action="append", default=[], metavar="ARXIV_ID",
+                    help=f"an arXiv id that enters the corpus without competing for a "
+                         f"seat; repeatable, at most {MAX_ANCHORS}. Additive: it takes "
+                         f"no seat from a paper that earned one. It skips SELECTION and "
+                         f"nothing else, so Stage B still decides whether it defines the "
+                         f"term and Stage D still needs a real citation link")
     ap.add_argument("--min-relevance", type=float, default=0.0,
                     help="optional absolute relevance floor (default off)")
     ap.add_argument("--no-relevance-filter", action="store_true",
@@ -436,6 +547,17 @@ def main() -> None:
     # The gloss disambiguates the sense for RANKING; the search still uses the
     # bare concept to cast a wide recall net. Wide word, tight meaning.
     rel_query = args.gloss or args.concept
+
+    # The named papers are resolved FIRST, ahead of the seed search, so that a
+    # name nobody can find costs this run nothing at all: no arXiv politeness, no
+    # embedding spend, and no half-selected corpus on disk for a requeue to find
+    # (`refuse before the first write`). Everything below this line assumes every
+    # named id resolved.
+    anchor_works: dict[str, dict] = {}
+    if args.anchor:
+        print(f"Resolving {len(args.anchor)} named paper(s) against OpenAlex…")
+        anchor_works = fetch_anchors(args.anchor)
+
     if args.concept_id or args.concept_mode:
         concept_id = args.concept_id or resolve_concept(args.concept)
         print("Fetching concept-tagged arXiv seeds from OpenAlex…")
@@ -647,13 +769,76 @@ def main() -> None:
     fill = [w for w in general if w["_arxiv_id"] not in reserved_ids]
     ranked = interleave_reserved(fill, reserved, args.limit)
 
+    # ── the papers a person named (#198) ────────────────────────────────────
+    #
+    # **Additive, and that is the design's word.** They are unlike the recency
+    # reservation, which takes R of the --limit seats from the general ranking,
+    # and like pass two's seats, which extend the corpus: a named paper does not
+    # displace a paper that earned its place, so the corpus is --limit plus at
+    # most three. Three papers in 150 cannot destabilise a selection, which is
+    # most of why this proposal was cheap enough to accept.
+    #
+    # **Named AND selected on merit is one paper, not two.** An anchor already in
+    # `ranked` is marked in place: it appears once, it is disclosed as named, and
+    # it does not consume anything. That was one of the three cases the design
+    # asked to be verified.
+    #
+    # **They lead the read order.** Position in this file is read order
+    # (`interleave_reserved` says why), so a spend cap that truncates a run
+    # truncates from the end; a named paper that a cap dropped would be the
+    # silent failure this feature exists to make impossible.
+    by_aid = {w["_arxiv_id"]: w for w in ranked}
+    anchored: list[dict] = []
+    already_selected = 0
+    for aid, fetched in anchor_works.items():
+        held = by_aid.get(aid)
+        if held is not None:
+            held["_anchor"] = True
+            already_selected += 1
+            continue
+        # Prefer the record the pool already holds: it came through the same
+        # `better()` dedup as everything else and may carry references the bare
+        # arXiv-DOI record does not.
+        w = pool.get(aid) or fetched
+        w["_arxiv_id"], w["_anchor"] = aid, True
+        w.setdefault("_seed", False)
+        anchored.append(w)
+    ranked = anchored + ranked
+
     def src_of(w: dict) -> str:
+        if w.get("_anchor"):
+            return "name"
         return "rec" if w.get("_recent") else ("seed" if w["_seed"] else "exp")
 
+    if anchor_works:
+        # Printed as its own table, not merged into the one below, because the
+        # design asks an operator to see them as what they are (condition 2's
+        # rule, applied to the run's own output rather than only to the report).
+        print(f"\nPapers named by a person — {len(anchor_works)} named, "
+              f"{len(anchored)} added to the corpus, {already_selected} already "
+              f"selected on merit.")
+        print("  They skipped SELECTION and nothing else: Stage B still decides "
+              "whether each defines the term,")
+        print("  and Stage D still needs a real citation link before it will draw "
+              "a relationship.")
+        print(f"  {'arXiv ID':<14} {'Year':<5} {'Cites':>7}  {'How it entered':<16} Title")
+        print("  " + "-" * 114)
+        entries = {**{w["_arxiv_id"]: w for w in anchored}, **by_aid}
+        for aid in anchor_works:
+            w = entries[aid]
+            entered = "named + ranked" if aid in by_aid else "named only"
+            print(f"  {aid:<14} {w.get('publication_year') or '?':<5} "
+                  f"{w.get('cited_by_count') or 0:>7,}  {entered:<16} "
+                  f"{(w.get('display_name') or '?')[:56]}")
+
+    # Counted through `src_of`, so the header and the Src column below can never
+    # disagree: a paper that was both named and ranked belongs to exactly one of
+    # these four, and this is the expression that decides which.
+    by_src = Counter(src_of(w) for w in ranked)
     print(f"\nCandidate corpus for \"{args.concept}\" — {len(ranked)} papers "
-          f"({sum(w['_seed'] for w in ranked)} seed, "
-          f"{sum(not w['_seed'] and not w.get('_recent') for w in ranked)} expanded, "
-          f"{sum(bool(w.get('_recent')) for w in ranked)} reserved recent), "
+          f"({by_src['seed']} seed, {by_src['exp']} expanded, "
+          f"{by_src['rec']} reserved recent, "
+          f"{by_src['name']} named by a person), "
           f"in read order\n")
     print(f"{'#':>3}  {'arXiv ID':<14} {'Year':<5} {'Cites':>7} {'Refs':>5} {'Rel':>5} {'Src':<4} Title")
     print("-" * 116)
@@ -725,6 +910,13 @@ def main() -> None:
             # (fetch_papers.py) and are untouched by two more.
             "seeds_cited": seeds_cited.get(w["id"], 0),
             "recent_seat": bool(w.get("_recent")),
+            # Provenance survives the run in the artefact, not only in this
+            # command's stdout (#198). `record_anchors.py` reads exactly this key
+            # to write the map's disclosure, so the corpus file the stages were
+            # scoped by and the report a reader sees cannot disagree about which
+            # papers a person named — the same reasoning `record_pass.py` follows
+            # about the pass.
+            "anchor": bool(w.get("_anchor")),
         } for w in ranked]
         Path(args.json).write_text(json.dumps(out, indent=2), encoding="utf-8")
         print(f"\nWrote {len(out)} papers to {args.json}")

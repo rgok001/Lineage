@@ -4,12 +4,13 @@ import { PUBLISHED_STATUS } from "./genealogy";
 /**
  * The map report (issue #30, `[F2]`), read from migration 016's two views,
  * migration 017's third (`map_report_by_type`, issue #162), migration 019's
- * fourth (`map_report_read_years`, issue #182) and migration 020's fifth
- * (`map_report_passes`, issue #193).
+ * fourth (`map_report_read_years`, issue #182), migration 020's fifth
+ * (`map_report_passes`, issue #193) and migration 023's sixth
+ * (`map_report_anchors`, issue #198).
  *
  * Nothing here computes a figure. Every number is selected from `map_report`,
- * `map_report_by_source`, `map_report_by_type`, `map_report_read_years` or
- * `map_report_passes`, which is the whole point of
+ * `map_report_by_source`, `map_report_by_type`, `map_report_read_years`,
+ * `map_report_passes` or `map_report_anchors`, which is the whole point of
  * the ticket: the app and
  * `pipeline/map_report.py` read one expression, so the page and the shell cannot
  * disagree about the same map, and nothing is stored, so a figure cannot survive
@@ -140,6 +141,50 @@ export type PassFigures = {
   papers_linking_into_pass_one: number | null;
 };
 
+/** One paper a person named at request time (migration 023, issue #198).
+ *
+ *  `read` is whether this map holds a reading of it, which is not the same as
+ *  having been named: an id that named a paper nothing could fetch stays in this
+ *  list with `read` false, because a silently dropped name is a requester
+ *  believing their paper is in a map that does not contain it.
+ *
+ *  `defines` is Stage B's verdict, taken the same way it is taken for every other
+ *  paper. `relationships` is how many of the map's relationships touch it, and it
+ *  is **the tool's reading** rather than a checked fact, like every other edge
+ *  count on this page. Both may be false and zero on a named paper, and that is
+ *  the honest failure the whole feature rests on being visible. */
+export type AnchorPaper = {
+  arxiv_id: string;
+  title: string | null;
+  year: number | null;
+  read: boolean;
+  defines: boolean;
+  relationships: number;
+};
+
+/** How many of a map's papers a person named (migration 023, issue #198).
+ *
+ *  **Zero here is a real zero on every map, and there is no absent case.** A map
+ *  with no rows in `map_anchor_papers` had no paper named by a person, and that
+ *  is equally true of a map built before this shipped and of one built after it
+ *  with the field left empty. That is why these are plain counts while the pass
+ *  figures beside them are all nullable: "no second pass ran" and "a second pass
+ *  ran and read nothing" are different facts with identical counts, and nothing
+ *  like that exists here.
+ *
+ *  `named_papers` is null rather than empty when nobody was named, so the page
+ *  can print a sentence without inspecting the count. The actor is deliberately
+ *  NOT selected: the view publishes it for `pipeline/map_report.py`, whose reader
+ *  is the Operator, and a login has no business travelling to a public page to
+ *  support a sentence that says "the person who requested it". */
+export type AnchorFigures = {
+  papers_named: number;
+  papers_named_read: number;
+  papers_named_defining: number;
+  papers_named_linked: number;
+  named_papers: AnchorPaper[] | null;
+};
+
 export type MapReport = {
   genealogy_id: number;
   concept: string;
@@ -213,6 +258,12 @@ export type MapReport = {
    *  for every map, and a map built in one pass carries a row saying so in
    *  words, so a missing row means the read did not happen. */
   passes: PassFigures | null;
+  /** **NULL is not a map nobody named a paper for.** Same rule again: it means
+   *  migration 023 has not landed on this deployment yet. The view emits a row
+   *  for every map, and a map nobody named a paper for carries a row of zeroes,
+   *  so a missing row means the read did not happen and the page says that
+   *  rather than claiming nobody was named. */
+  anchors: AnchorFigures | null;
 };
 
 /** Named, in the view's own order, so the shape of this list and the shape of
@@ -237,7 +288,8 @@ const COLUMNS = `genealogy_id, concept, prompt_version, status,
 function shape(r: Record<string, unknown>, buckets: ReportBucket[],
                types: ReportTypeCount[] | null,
                reading: ReadYears | null,
-               passes: PassFigures | null): MapReport {
+               passes: PassFigures | null,
+               anchors: AnchorFigures | null): MapReport {
   const n = (k: string) => num(r[k]) ?? 0;      // counts: the view coalesces these
   const m = (k: string) => num(r[k]);           // measurements: absence is meaningful
   return {
@@ -294,6 +346,7 @@ function shape(r: Record<string, unknown>, buckets: ReportBucket[],
     types,
     reading,
     passes,
+    anchors,
   };
 }
 
@@ -487,6 +540,54 @@ async function passesFor(ids: number[]): Promise<Map<number, PassFigures> | null
 }
 
 /**
+ * How many of each map's papers a person named (migration 023, issue #198).
+ *
+ * **Guarded exactly like `typesFor`, `readYearsFor` and `passesFor` above, and
+ * for the same reason**: the migration lands after the app that reads it, because
+ * a push deploys Vercel and Render at once and Render's pre-deploy is what
+ * applies it. The probe is unqualified so it resolves the name against the same
+ * `search_path` the next statement does (#92's correction), and its answer is a
+ * snapshot, so a view dropped between the two statements still raises — a known
+ * residue, not an oversight.
+ *
+ * **`named_by` and `named_by_asserted` are on the view and are not selected
+ * here.** The disclosure a reader is owed is "N of this map's papers were named
+ * by the person who requested it", which needs no login to be true, and a login
+ * selected here would be shipped to every browser that opens the page to support
+ * a sentence that does not use it. The Operator reads it through
+ * `pipeline/map_report.py`, which needs the read-only connection string to run at
+ * all.
+ */
+async function anchorsFor(ids: number[]): Promise<Map<number, AnchorFigures> | null> {
+  const [probe] = (await sql`
+    SELECT to_regclass('map_report_anchors') IS NOT NULL AS reported
+  `) as { reported: boolean }[];
+  if (!probe?.reported) return null;
+  if (!ids.length) return new Map();
+  const rows = (await sql`
+    SELECT genealogy_id, papers_named, papers_named_read, papers_named_defining,
+           papers_named_linked, named_papers
+    FROM map_report_anchors
+    WHERE genealogy_id = ANY(${ids})
+  `) as Record<string, unknown>[];
+  const out = new Map<number, AnchorFigures>();
+  for (const r of rows) {
+    out.set(Number(r.genealogy_id), {
+      // `?? 0` is right here and wrong on the pass figures four functions up,
+      // and the difference is the whole reason this block exists: the view
+      // counts rows, so every one of these is a genuine zero on a map nobody
+      // named a paper for. There is no "nothing recorded it" state to collapse.
+      papers_named: num(r.papers_named) ?? 0,
+      papers_named_read: num(r.papers_named_read) ?? 0,
+      papers_named_defining: num(r.papers_named_defining) ?? 0,
+      papers_named_linked: num(r.papers_named_linked) ?? 0,
+      named_papers: (r.named_papers ?? null) as AnchorPaper[] | null,
+    });
+  }
+  return out;
+}
+
+/**
  * Every map's report, newest map first.
  *
  * The page needs all of them rather than one, because each figure is published
@@ -533,10 +634,11 @@ export async function listMapReports(): Promise<MapReport[]> {
     ORDER BY genealogy_id DESC
   `) as Record<string, unknown>[];
   const ids = rows.map((r) => Number(r.genealogy_id));
-  // In parallel, so #162's two extra round trips, #182's two and #193's two
-  // cost one wait rather than six on a page already taking most of a second.
-  const [buckets, types, reading, passes] = await Promise.all([
-    bucketsFor(ids), typesFor(ids), readYearsFor(ids), passesFor(ids),
+  // In parallel, so #162's two extra round trips, #182's two, #193's two and
+  // #198's two cost one wait rather than eight on a page already taking most of
+  // a second.
+  const [buckets, types, reading, passes, anchors] = await Promise.all([
+    bucketsFor(ids), typesFor(ids), readYearsFor(ids), passesFor(ids), anchorsFor(ids),
   ]);
   return rows.map((r) => {
     const id = Number(r.genealogy_id);
@@ -550,6 +652,7 @@ export async function listMapReports(): Promise<MapReport[]> {
     return shape(r, buckets.get(id) ?? [],
                  types === null ? null : types.get(id) ?? null,
                  reading === null ? null : reading.get(id) ?? null,
-                 passes === null ? null : passes.get(id) ?? null);
+                 passes === null ? null : passes.get(id) ?? null,
+                 anchors === null ? null : anchors.get(id) ?? null);
   });
 }

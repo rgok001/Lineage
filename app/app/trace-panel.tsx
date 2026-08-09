@@ -174,6 +174,31 @@ export default function TracePanel({
             style={{ ...input, flex: "1 1 100%" }}
           />
           <input
+            name="anchors"
+            placeholder="Papers it should not miss, by arXiv id, e.g. 2404.03002 (optional, up to 3)"
+            maxLength={120}
+            title="Up to three arXiv ids, separated by spaces or commas"
+            style={{ ...input, flex: "1 1 100%" }}
+          />
+          {/* Attached to its control rather than to the page, unlike the
+              arXiv-only caveat above: that one is about whether this tool suits
+              you at all and a signed-out reader needs it, this one is about how
+              to use a field only a signed-in reader is shown.
+              What it must say, and what it must not, is the design's first
+              integrity condition (issue #198): naming a paper skips SELECTION
+              and nothing else. It buys a reading, not a place on the map, and
+              the honest failure — a named paper that defines nothing and links
+              to nothing — is a figure on the report rather than something the
+              tool hides. No em dash; house style. */}
+          <p style={{ flexBasis: "100%", margin: "-.15rem 0 .1rem", fontSize: ".78rem",
+            lineHeight: 1.55, color: "var(--ink-soft)" }}>
+            If you know a paper this map should not miss, name up to three by their arXiv
+            id. Named papers are read and checked like any other; naming one does not make
+            it matter. It earns a place on the map only through the papers it actually
+            cites, and if it turns out not to define the term it is counted among the
+            papers that do not. Every map says how many of its papers a person named.
+          </p>
+          <input
             name="note"
             placeholder="Why you want it (optional)"
             maxLength={500}
@@ -320,10 +345,11 @@ function TraceRow({ r, owner, skewMs }: { r: TraceRequest; owner: boolean; skewM
             {/* The worker always writes `stages`; the fallback only covers a row
                 whose progress predates it, and it still has to track what
                 the worker's plan returns, or a live run reads as "stage 13 of 7".
-                29 since #173: 28 in the nominal two-pass plan, plus the step that
-                records how the second pass ended. The worker corrects the total
-                downward when it skips a pass. */}
-            stage {p.stage_no ?? "?"}/{p.stages ?? 29} · {p.stage ?? "…"}
+                30 since #198: 28 in the nominal two-pass plan, plus the step that
+                records how the second pass ended and the step that records the
+                papers a person named. The worker corrects the total downward when
+                it skips a pass. */}
+            stage {p.stage_no ?? "?"}/{p.stages ?? 30} · {p.stage ?? "…"}
             {p.current != null && p.total != null && <> · {p.current} of {p.total}</>}
           </div>
           {p.message && (

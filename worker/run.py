@@ -12,6 +12,7 @@ them, and re-clusters over both passes together. Only then is the map published.
     BEFORE    save the current map, if this concept already has one
     PASS ONE  select corpus -> fetch -> extract -> audit -> B -> C -> D
                   -> reground -> E --no-publish -> record pass one
+                  -> record the papers a person named
     PASS TWO  pass_two_select -> fetch -> extract -> audit -> B --dry-run
                   -> [the spend gate] -> B -> union -> C -> D
                   -> reground -> E --no-publish -> record pass two
@@ -261,8 +262,9 @@ def trace_paths(concept: str) -> dict[str, str]:
     }
 
 
-def plan_for(concept: str, corpus_limit: int, field: str,
-             gloss: str | None) -> dict[str, list[tuple[str, list[str]]]]:
+def plan_for(concept: str, corpus_limit: int, field: str, gloss: str | None,
+             anchors: list[str] | None = None,
+             named_by: str | None = None) -> dict[str, list[tuple[str, list[str]]]]:
     """Every phase of a two-pass build, as (name, argv) pairs.
 
     Phases rather than one flat list, because which of them run is decided while
@@ -278,6 +280,15 @@ def plan_for(concept: str, corpus_limit: int, field: str,
     # The gloss disambiguates a polysemous sense; it steers corpus relevance and
     # Stage B's extraction question. The field scopes the corpus to a discipline.
     gloss_arg = ["--gloss", gloss] if gloss else []
+    # The papers the requester named (#198). Pass-through and nothing more: the
+    # worker adds no rule of its own about them, and every one of the design's
+    # five conditions is enforced where it belongs — the cap and the shape at the
+    # form, existence and the additive seat in `corpus_select.py`, the reading in
+    # Stage B, the citation link in Stage D, the disclosure in `record_anchors.py`.
+    # A named id that resolves to nothing fails corpus selection by name, which is
+    # the first step of pass one and has spent nothing when it does.
+    anchor_args = [a for aid in (anchors or []) for a in ("--anchor", aid)]
+    named_by_arg = ["--named-by", named_by] if named_by else []
     seats = pass_two_seats(corpus_limit)
 
     # ── before anything ─────────────────────────────────────────────────────
@@ -309,7 +320,7 @@ def plan_for(concept: str, corpus_limit: int, field: str,
     pass_one = [
         ("select corpus", py + ["pipeline/corpus_select.py", concept,
                                 "--limit", str(corpus_limit), "--field", field,
-                                "--json", corpus_json] + gloss_arg),
+                                "--json", corpus_json] + gloss_arg + anchor_args),
         ("fetch papers", py + ["pipeline/fetch_papers.py", corpus_json]),
         ("extract text", py + ["pipeline/extract_text.py"]),
         # What the grounding check is about to rest on. Free, and it runs here
@@ -351,6 +362,15 @@ def plan_for(concept: str, corpus_limit: int, field: str,
                                              "--no-publish"]),
         ("record what pass one read", py + ["pipeline/record_pass.py", concept,
                                             "--pass", "1", "--corpus", corpus_json]),
+        # On EVERY build, anchored or not, because the step also clears what a
+        # previous build of this map recorded: a map anchored once and rebuilt
+        # with nobody named must come back saying nobody named a paper. It is
+        # here rather than in `finish` because the corpus it reads is pass one's
+        # and because it needs the genealogy row Stage C has just written; pass
+        # two adds papers and cannot add named ones.
+        ("record the papers a person named",
+         py + ["pipeline/record_anchors.py", concept,
+               "--corpus", corpus_json] + named_by_arg),
     ]
 
     # ── pass two ────────────────────────────────────────────────────────────
@@ -471,8 +491,9 @@ def plan_for(concept: str, corpus_limit: int, field: str,
             "seats": seats, "paths": paths}
 
 
-def stages_for(concept: str, corpus_limit: int, field: str,
-               gloss: str | None) -> list[tuple[str, list[str]]]:
+def stages_for(concept: str, corpus_limit: int, field: str, gloss: str | None,
+               anchors: list[str] | None = None,
+               named_by: str | None = None) -> list[tuple[str, list[str]]]:
     """The nominal sequence: both passes run and nothing is skipped.
 
     What the progress feed's stage count is initialised from, and the one flat
@@ -480,7 +501,7 @@ def stages_for(concept: str, corpus_limit: int, field: str,
     real build runs a subset of it plus, at most, one build-record step and the
     fallback.
     """
-    p = plan_for(concept, corpus_limit, field, gloss)
+    p = plan_for(concept, corpus_limit, field, gloss, anchors, named_by)
     return (p["snapshot"] + p["pass_one"] + p["pass_two_select"] + p["pass_two_fetch"]
             + p["pass_two_read"] + p["finish"])
 
@@ -913,8 +934,9 @@ def run_snapshot(runner: "StageRunner", plan: dict, concept: str) -> None:
 
 
 def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: int,
-            field: str, gloss: str | None) -> None:
-    plan = plan_for(concept, corpus_limit, field, gloss)
+            field: str, gloss: str | None, anchors: list[str] | None = None,
+            named_by: str | None = None) -> None:
+    plan = plan_for(concept, corpus_limit, field, gloss, anchors, named_by)
     seats = plan["seats"]
     nominal = (plan["snapshot"] + plan["pass_one"] + plan["pass_two_select"]
                + plan["pass_two_fetch"] + plan["pass_two_read"] + plan["finish"])
@@ -1080,14 +1102,32 @@ def sweep_stale(conn: psycopg.Connection) -> None:
                   f"marked failed rather than restarted again")
 
 
-def claim(conn: psycopg.Connection) -> tuple[int, str, int, str, str | None] | None:
+def claim(conn: psycopg.Connection) -> tuple | None:
+    """Take the oldest approved request, or None.
+
+    `anchors` (migration 023, #198) is selected here rather than looked up later
+    so the whole job description arrives in one statement, and `requested_by`
+    comes with it: the login is what `record_anchors.py` writes as the
+    authenticated actor, and this worker only relays what the app obtained from a
+    session.
+
+    **Selected through a fallback, because the worker can be one migration
+    behind.** A push deploys the app and the worker at once and Render's
+    pre-deploy is what applies migrations, so between a rollback and a redeploy
+    this process can meet a `trace_requests` with no such column. Naming it
+    unconditionally would leave every queued build unclaimable with an
+    `UndefinedColumn` on the poll, which is a worse failure than a build that
+    reads no names; `to_jsonb(t)` costs one row's serialisation and asks the
+    question the row itself can answer.
+    """
     row = conn.execute(
-        """UPDATE trace_requests
+        """UPDATE trace_requests t
            SET status = 'running', started_at = now(), updated_at = now()
            WHERE id = (SELECT id FROM trace_requests WHERE status = 'approved'
                        ORDER BY decided_at NULLS FIRST, created_at
                        LIMIT 1 FOR UPDATE SKIP LOCKED)
-           RETURNING id, concept, corpus_limit, field_id, gloss""").fetchone()
+           RETURNING id, concept, corpus_limit, field_id, gloss, requested_by,
+                     to_jsonb(t) -> 'anchors'""").fetchone()
     conn.commit()
     return row
 
@@ -1160,11 +1200,18 @@ def main() -> None:
                 time.sleep(args.poll)
                 continue
 
-            job_id, concept, corpus_limit, field, gloss = job
+            job_id, concept, corpus_limit, field, gloss, requested_by, anchors = job
+            # A row from before migration 023, or one whose requester named
+            # nobody, both arrive as an empty list here; only the corpus file
+            # written by the build can tell those apart, and only the report
+            # needs to.
+            anchors = [a for a in (anchors or []) if isinstance(a, str) and a.strip()]
             print(f'[job {job_id}] claimed: "{concept}" (field {field}, corpus limit {corpus_limit}'
-                  f'{", glossed" if gloss else ""})')
+                  f'{", glossed" if gloss else ""}'
+                  f'{f", {len(anchors)} paper(s) named" if anchors else ""})')
             try:
-                run_job(conn, job_id, concept, corpus_limit, field, gloss)
+                run_job(conn, job_id, concept, corpus_limit, field, gloss,
+                        anchors, requested_by)
             except StageFailed as e:
                 print(f"[job {job_id}] FAILED: {e}")
                 fail_job(conn, job_id, str(e), e.tail)

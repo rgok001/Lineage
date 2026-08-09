@@ -13,8 +13,9 @@ export const dynamic = "force-dynamic"; // computed on read, never stored
  * One screen, one column, no interactivity. Every number is selected from
  * migration 016's two views, migration 017's third (the mix of kinds of link,
  * issue #162), migration 019's fourth (what the map read, by year, issue
- * #182) and migration 020's fifth (which pass of the build read a paper, issue
- * #193), so this page and `pipeline/map_report.py` read one
+ * #182), migration 020's fifth (which pass of the build read a paper, issue
+ * #193) and migration 023's sixth (papers a person named, issue #198),
+ * so this page and `pipeline/map_report.py` read one
  * expression and cannot disagree about the same map, and nothing is stored, so
  * no figure here can survive the curatorial edit that invalidates it.
  *
@@ -473,6 +474,29 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
     `${twoPassMaps === 1 ? "was" : "were"} built in more than one pass, so a ` +
     `second pass’s reading is not yet something this page can show you.`;
 
+  /**
+   * Papers a person named at request time (issue #198, condition 2 of the design).
+   *
+   * **Zero is a real zero here and there is no absent case**, which is what makes
+   * this block different from the two-passes block above. A map with no rows in
+   * the record had no paper named by a person, and that is equally true of a map
+   * built before the field existed and of one built after it with the field left
+   * empty, so `nobody named a paper for this map` is a measurement rather than a
+   * silence dressed as one. The only genuine absence is `an === null`, which
+   * means migration 023 has not landed on this deployment yet, and that branch
+   * says so instead.
+   *
+   * The comparison sentence is counted from the rows rather than written down
+   * (issue #89), so it moves on its own the day a second anchored map lands.
+   */
+  const an = r.anchors;
+  const anchoredMaps = all.filter(
+    (m) => m.anchors !== null && m.anchors.papers_named > 0).length;
+  const noneNamedSentence =
+    `Nobody named a paper for this map: every paper in it was chosen by this ` +
+    `system. ${maps(anchoredMaps)} ` +
+    `${anchoredMaps === 1 ? "has" : "have"} a paper somebody named.`;
+
   const noRunMaps = all.filter((m) => m.runs_recorded === 0).length;
   const runRecordSentence =
     noRunMaps === 0
@@ -580,6 +604,139 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           moves="The map being rebuilt."
           others={others((m) => m.papers_not_defining, count)}
         />
+
+        {/* Papers a person named (issue #198), at the foot of this section
+            because the question it answers is the one this section raises: these
+            figures say how much was read, and a reader is owed the difference
+            between a paper this system went and found and a paper somebody
+            handed it. Decision 16 keeps kinds of claim in separate tiers and has
+            so far governed quotes; this extends the same discipline to corpus
+            membership.
+            Set like "the two passes" at the foot of the years section: its own
+            quiet label, its own paragraph naming what it counts, its own note
+            answering what would change it, then figures or a sentence. */}
+        <div style={{ padding: ".85rem 0", marginTop: ".4rem",
+          borderTop: "1px solid var(--line-soft)" }}>
+          <div style={{ ...mono, fontSize: ".68rem", letterSpacing: ".08em",
+            textTransform: "uppercase", color: "var(--ink-faint)" }}>
+            papers a person named
+          </div>
+          <p style={{ fontFamily: "var(--font-display)", fontSize: ".92rem",
+            lineHeight: 1.55, color: "var(--ink-soft)", margin: ".35rem 0 0",
+            maxWidth: "44rem" }}>
+            Whoever asks for a map may name up to three papers it should not miss.
+            A named paper is added to what gets read and is then treated exactly like
+            every other paper: it is read, its quotes are checked the same way, and a
+            relationship to it is drawn only where one paper really does cite the
+            other. Being named buys a reading and nothing else, so a named paper can
+            end up defining nothing and connected to nothing, and this block says when
+            one has.
+          </p>
+          <p style={{ fontFamily: "var(--font-display)", fontSize: ".92rem",
+            lineHeight: 1.55, color: "var(--ink-faint)", margin: ".15rem 0 0",
+            maxWidth: "44rem" }}>
+            <span style={{ fontStyle: "italic" }}>What would change this:</span>{" "}
+            Only mapping the term again, and somebody naming different papers when
+            they do.
+          </p>
+          {an === null ? (
+            /* The #92 fallback again (see the mix of kinds of link below): the
+               app is live for a few minutes against a schema one migration
+               behind, and losing one block is honest where a 500 would take the
+               whole page. It must not print "nobody named a paper" here, which
+               is a claim this page cannot make when it could not read. */
+            <p style={{ ...prose, fontSize: ".9rem", margin: ".8rem 0 0" }}>
+              Whether anybody named a paper for this map is not counted on this page
+              at the moment. That is this page&rsquo;s reach and not a fact about the
+              map.
+            </p>
+          ) : an.papers_named === 0 ? (
+            <p style={{ ...prose, fontSize: ".9rem", margin: ".8rem 0 0" }}>
+              {noneNamedSentence}
+            </p>
+          ) : (
+            <>
+              <Figure
+                label="papers named by the person who asked for this map" lead
+                value={count(an.papers_named)} absent="not recorded"
+                tail={an.papers_named_read === an.papers_named
+                  ? `, all of which were read`
+                  : `, ${an.papers_named_read.toLocaleString()} of which were read`}
+                counts="Papers a person asked this map to include, out of the papers read above. They did not take a place from a paper the system chose: naming a paper adds it to the reading list rather than swapping it for something else. Where fewer were read than were named, an id named a paper this system could not fetch, and it is left in this count rather than dropped so that nobody is told a paper is here when it is not."
+                moves="Only mapping the term again, and somebody naming different papers when they do."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: count(m.anchors?.papers_named ?? null),
+                }))}
+              />
+              <Figure
+                label="named papers that define the term"
+                value={outOfMaybe(an.papers_named_defining, an.papers_named_read)}
+                absent="none were read"
+                counts="Of the named papers this map read, the ones found to give the term a definition of their own. It is decided by reading the paper, in the same words and by the same step as for every other paper here, and being named changes nothing about it. A named paper that defines nothing is counted among the papers that do not, above."
+                moves="The map being rebuilt, and a paper being read differently the second time, in either direction."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: outOfMaybe(m.anchors?.papers_named_defining ?? null,
+                                    m.anchors?.papers_named_read ?? null),
+                }))}
+              />
+              <Figure
+                label="named papers carrying a relationship"
+                value={outOfMaybe(an.papers_named_linked, an.papers_named_read)}
+                absent="none were read"
+                counts="Of the named papers this map read, the ones with at least one relationship touching them. A relationship is only ever drawn where one of the two papers really does cite the other, so naming a paper cannot give it one. This is the tool's reading and not a checked fact, like every relationship count on this page."
+                moves="The map being rebuilt, or someone editing the map deleting a relationship."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: outOfMaybe(m.anchors?.papers_named_linked ?? null,
+                                    m.anchors?.papers_named_read ?? null),
+                }))}
+              />
+              {/* The list, because a count alone does not let a reader tell WHICH
+                  paper a person supplied, and that is what condition 2 of the
+                  design asks for. Same table furniture as "By source". */}
+              {an.named_papers && an.named_papers.length > 0 && (
+                <table style={{ ...mono, fontSize: ".78rem", borderCollapse: "collapse",
+                  width: "100%", marginTop: ".9rem" }}>
+                  <thead>
+                    <tr style={{ color: "var(--ink-faint)", textAlign: "left" }}>
+                      {["arXiv id", "year", "read", "defines the term", "relationships", ""]
+                        .map((h) => (
+                          <th key={h} style={{ padding: ".35rem .6rem", fontWeight: 400,
+                            borderBottom: "1px solid var(--line)" }}>{h}</th>
+                        ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {an.named_papers.map((p) => (
+                      <tr key={p.arxiv_id}>
+                        <td style={{ padding: ".3rem .6rem", color: "var(--ink)" }}>
+                          <a href={`https://arxiv.org/abs/${p.arxiv_id}`}
+                            style={{ color: "var(--edge-extends)" }}>{p.arxiv_id}</a>
+                        </td>
+                        <td style={{ padding: ".3rem .6rem" }}>{p.year ?? "no year"}</td>
+                        <td style={{ padding: ".3rem .6rem" }}>
+                          {p.read ? "yes" : "could not be read"}
+                        </td>
+                        <td style={{ padding: ".3rem .6rem" }}>
+                          {p.read ? (p.defines ? "yes" : "no") : "not read"}
+                        </td>
+                        <td style={{ padding: ".3rem .6rem" }}>
+                          {p.relationships.toLocaleString()}
+                        </td>
+                        <td style={{ padding: ".3rem .6rem", color: "var(--ink-soft)",
+                          fontFamily: "var(--font-display)" }}>
+                          {p.title ?? "title not recorded"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
+          )}
+        </div>
       </Section>
 
       {/* "Extracted text" and "string-matched" are the sentences that carry the

@@ -123,8 +123,10 @@ pipeline/            stages A-H + auxiliaries (Python, CLI-first; the worker
   common.py          env loading, polite HTTP session, data_dir()
   check_extraction.py  audit of extracted-text fidelity (no model, no network)
   db/migrate.py      ordered SQL migrations, schema_migrations table
-  db/migrations/     001..015
+  db/migrations/     001..023
   recheck_stamp.py   re-checks stored stamps against the papers (read-only)
+  record_pass.py     which pass of a build read which papers (#192)
+  record_anchors.py  which of a map's papers a person named (#198)
 .claude/            settings.json (carries the LINEAGE_NO_DB guard; tracked),
                      launch.json, and memory/ (agents' lessons, boards and
                      verdicts; gitignored). The role prompts are NOT here
@@ -145,7 +147,8 @@ app/                 Next.js app (Vercel root directory is app/)
                      skeleton.tsx holds the loading shapes every boundary shares
                      (concepts)/ is a route group, not a URL segment: it exists
                      so / can have a loading.tsx that /about does not get
-  lib/               db.ts, authz.ts, genealogy.ts, traces.ts, actions
+  lib/               db.ts, authz.ts, genealogy.ts, traces.ts, actions,
+                     arxiv-id.ts (an arXiv id out of what a person typed, #198)
 data/                DATA_DIR (gitignored): raw papers, texts, exports, models
 ```
 
@@ -167,7 +170,7 @@ destinations table added for them.
 
 ## 3. Data model
 
-Six tables and two views, migrations `001` through `016`, applied by
+Six tables and two views, migrations `001` through `023`, applied by
 `python pipeline/db/migrate.py` (tracked in `schema_migrations`). Migrations
 `008`-`009` are data fixes (paths relative to `DATA_DIR`; correcting future
 publication years OpenAlex mis-dated). `010`-`012` carry the paper-centric turn
@@ -480,6 +483,56 @@ times a run has been restarted after dying without an error, and is read only by
 the worker's sweep, never by the app; `genealogy_id` links the finished map. A
 partial unique index allows only one open request per concept, enforced at the
 database level because app-level checks can be raced by simultaneous submits.
+`anchors` (migration 023, `023_anchor_papers.sql`, issue #198) is a `text[]` of
+the arXiv ids the requester named, at most three. **NULL and the empty array are
+different claims**: NULL means the request predates the field, the empty array
+means the field was offered and nobody was named, and the app writes `'{}'`
+deliberately for the second. The CHECK caps the array at three and refuses a NULL
+or empty-string element; it does **not** test the shape of an id, which lives in
+`app/lib/arxiv-id.ts` and `corpus_select.ANCHOR_ID_RE` and would be a third value
+the moment one of them moved. It also does not catch an element of pure
+whitespace, because a per-element predicate needs a subquery and a CHECK
+constraint may not contain one (PostgreSQL: `cannot use subquery in check
+constraint`, found by executing the migration against a real server rather than
+by reading it; `psql` reports the failed `ALTER TABLE` and carries on, so the
+table would have shipped with no constraint at all).
+
+**map_anchor_papers and map_report_anchors** (023, `023_anchor_papers.sql`,
+issue #198): which of a map's papers a person named at request time, and the
+report figure that discloses them. Storage and read shape in one migration,
+because there is one ticket; what survives from `020`'s design is the shape that
+made it safe, a separate **view** rather than more columns on `map_report`, since
+a missing column cannot be guarded by `to_regclass` and would 500 the report page
+for the minutes between the Vercel deploy and Render's pre-deploy migration.
+
+`map_anchor_papers` is one row per (map, arXiv id), keyed **on the id and not on
+`papers.id`**, unlike `map_build_pass_papers` — an id that was named and could
+not be fetched has no `papers` row, and that is exactly the case a requester must
+be able to see, so a foreign key there would delete the evidence of the failure.
+`named_by` and `named_by_asserted` are decision 18's split unchanged: a request
+made through the site carries the first, because the app wrote that login from a
+session and the worker only relays it; a corpus anchored from the command line
+carries the second, which is all a script running for whoever holds the `.env`
+can honestly claim. `named_rank` is the position in the order the ids were typed.
+`pipeline/record_anchors.py` is the only writer and clears the map's whole record
+before each build, so a map anchored once and rebuilt with nobody named comes
+back saying nobody named a paper.
+
+`map_report_anchors` carries `papers_named`, `papers_named_read`,
+`papers_named_defining`, `papers_named_linked`, `named_by`, `named_by_asserted`
+and `named_papers` (a JSONB list of `{arxiv_id, title, year, read, defines,
+relationships}`, in the order named). **Every count is a real zero on every map
+in this database and there is no absent case**, which is the one way this view
+differs from `map_report_passes`: "no second pass ran" and "a second pass ran and
+read nothing" are different facts with identical counts, while a map with no rows
+here had no paper named by a person, and that is equally true of a map built
+before the feature shipped and of one built after it with the field left empty.
+So no `COALESCE` fabricates anything and both consumers state the zero in words.
+`papers_named` and `papers_named_read` differ exactly when a named id could not
+be fetched or produced no reading, and `named_by`/`named_by_asserted` are
+selected by `pipeline/map_report.py` and deliberately **not** by
+`app/lib/report.ts`: the sentence a reader is owed is about "the person who
+requested it" and needs no login to be true.
 
 **map_report_by_source and map_report** (016, `016_map_report.sql`): the map
 report (issue #30, `[F2]`), two of the three views in the schema (the third is
@@ -863,6 +916,13 @@ heartbeat, which also sweeps). Full walkthrough knowledge condensed:
   gate: a request nobody approved is invisible to it). The claim is a single
   `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED) RETURNING`, so
   two workers can never take the same job and Postgres itself is the queue.
+  The RETURNING list carries `requested_by` and the papers the requester named
+  (#198); the latter is selected as `to_jsonb(t) -> 'anchors'` rather than by
+  name, because a rollback can leave this process one migration ahead of the
+  schema and naming a column that is not there would make every queued build
+  unclaimable with an `UndefinedColumn` on the poll. It costs one row's
+  serialisation and yields NULL in exactly the two cases that mean the same thing
+  to the build: no such column, and nobody named.
 - **Execution.** Runs the pipeline stages as subprocesses (`python -u`,
   unbuffered) in order, passing `--corpus` to Stage B and, since #190, the
   same file to Stage C — the first stops a past trace's corpus being re-billed,
@@ -1086,6 +1146,19 @@ fixtures, which is why it was taken there.
   every map at once. And the footer says "Reading a set of papers costs real
   money in model usage", because "corpus" is introduced on `/about` and appears
   nowhere else in the app.
+  **The form takes up to three papers a map should not miss** (issue #198), by
+  arXiv id, optional, shown to a signed-in reader only because it is a field only
+  they can submit. Its hint is attached to the control rather than to the page,
+  unlike the arXiv-only caveat above it, and says the four things the design's
+  first integrity condition requires: named papers are read and checked like any
+  other, naming one does not make it matter, it earns a place on the map only
+  through the papers it actually cites, and if it turns out not to define the
+  term it is counted among the papers that do not. A successful submit echoes the
+  count and the normalised ids back, because the field takes free text and folds
+  duplicates. The queue rows deliberately do not show the named ids: the
+  disclosure surface is the report, and `listTraceRequests` naming a new column
+  would 500 `/trace` and `/api/traces` during the deploy window for a repeat of
+  what the reader was already told at submit.
 - `/g/[id]` : the front door, an influence map (`InfluenceMap.tsx`, client).
   Two header claims are counted rather than assumed (decision 18): the badge
   reads "*X* of *Y* links quote-verified" instead of a flat "quote-verified",
@@ -1472,6 +1545,23 @@ fixtures, which is why it was taken there.
   relationships), the same counts split by source, shape, when the papers were
   written with a per-year histogram, the run, and a closing list of the three
   things the page cannot tell you.
+  **How much was read ends with the papers a person named** (issue #198),
+  because the difference between a paper this system went and found and a paper
+  somebody handed it belongs within one glance of the totals. Decision 16 keeps
+  kinds of claim in separate tiers and has so far governed quotes; this extends
+  the same discipline to corpus membership. Three figures — how many were named
+  and how many of those were read, how many of the read ones define the term, how
+  many carry a relationship — then a table naming every id, with `read`,
+  `defines the term` and `relationships` per row and a link to the paper on
+  arXiv. **A map nobody named a paper for says so in one sentence rather than
+  drawing an empty block**, and that sentence is a measurement: zero here is a
+  real zero on every map, unlike the pass figures beside it. The only absent case
+  is `map_report_anchors` missing, which means the migration has not landed on
+  this deployment yet, and the block then says the page could not count rather
+  than claiming nobody was named. The actor is recorded and is **not** on this
+  page: the sentence a reader is owed is about "the person who requested it", and
+  a login would travel to every browser to support a sentence that does not use
+  it. `pipeline/map_report.py` prints it, resolved with decision 18's precedence.
   **Shape ends with the mix of kinds of link** (issue #162), the figure that says
   whether the taxonomy described this literature at all. It is a small table
   rather than six more figures — the page's history is a fight against rendering
@@ -2047,7 +2137,22 @@ first line (section 7). requestTrace normalises and whitelists the concept
 argument and a filename), refuses already-traced concepts for everyone
 (re-running Stage C would overwrite curated nodes), applies non-owner quotas
 (1 open request, 3 per week), and inserts owner submissions directly as
-`approved`. deleteGenealogy requires the concept name typed back and verifies
+`approved`. Since #198 it also parses the papers a requester named: at most
+three arXiv ids, normalised to the one spelling the pipeline stores, and **a
+malformed one refuses the whole submission with the id named** rather than being
+dropped, because a silently discarded id is a requester believing their paper is
+in a map that does not contain it. It is shape validation and not an existence
+check, deliberately: `corpus_select.py` resolves every named id against OpenAlex
+before the build spends anything and refuses the run by name, and an id can be
+well-formed, resolve at request time and still be unfindable when the build runs,
+so a check here would be a second answer to a question the later one has to
+settle anyway. The insert names the `anchors` column even when nobody was named,
+so "offered and declined" is stored as the empty array; a `42703` from the
+minutes when Vercel is ahead of Render's migration is **caught rather than probed
+for** and the two arms differ — nobody named, so nothing is lost and the request
+queues in the old shape; papers named, so the request is refused with nothing
+submitted, because queueing it would build a map missing the papers the requester
+asked for and say nothing about it. deleteGenealogy requires the concept name typed back and verifies
 it server-side, nulls `trace_requests.genealogy_id` (trace history outlives
 the map), and lets edges cascade; papers and definitions survive, so deletion
 re-opens the concept for cheap re-tracing.

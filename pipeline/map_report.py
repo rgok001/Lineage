@@ -3,8 +3,9 @@
 Ticket #30 ([F2]); the design is docs/design/f2-map-report.md. The figures come
 from migration 016's two views, migration 017's third (the mix of kinds of
 link, issue #162), migration 019's fourth (what the map read, by year, issue
-#182) and migration 020's fifth (which pass of the build read a paper, issue
-#193) and are computed nowhere else, so this command and
+#182), migration 020's fifth (which pass of the build read a paper, issue
+#193) and migration 023's sixth (papers a person named, issue #198) and are
+computed nowhere else, so this command and
 `/g/<id>/report` read one expression and cannot disagree about the same map.
 
 **It reads LINEAGE_READ_URL and never DATABASE_URL, and it issues no statement
@@ -59,7 +60,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import env  # noqa: E402
+from common import edit_actor, env  # noqa: E402
 
 # Only the read-only role. Named deliberately unlike DATABASE_URL so that no
 # existing code path can route through it by accident (CLAUDE.md), and read here
@@ -119,10 +120,31 @@ PASS_COLUMNS = """q.passes_recorded, q.pass_two_outcome, q.pass_two_seats,
   q.papers_linking_into_pass_one, q.pass_two_rank_bands,
   q.pass_two_rank_band_width"""
 
-REPORTS = (f"SELECT {COLUMNS},\n  {READ_YEAR_COLUMNS},\n  {PASS_COLUMNS}\n"
+# Papers a person named at request time (migration 023, issue #198). Same grain
+# again — one row per map — so it joins into the report row, and LEFT and
+# unguarded for the reasons above.
+#
+# **Unlike `PASS_COLUMNS`, every count here is a real zero on every map in this
+# database**, and no `COALESCE` fabricates it: the view counts rows in
+# `map_anchor_papers`, and a map with none had no paper named by a person. That
+# is equally true of a map built before the feature shipped and of one built
+# after it with the field left empty, so there is no state to distinguish and no
+# absent word to invent. `named_papers` is the exception and is NULL when nobody
+# was named, so the list can be skipped without inspecting the count.
+#
+# `named_by` and `named_by_asserted` print HERE and on no other surface: the
+# page's sentence is about "the person who requested it" and needs no login to be
+# true, while this command's reader is the Operator, who needs the read-only
+# connection string to run it at all. Resolved with decision 18's precedence.
+ANCHOR_COLUMNS = """n.papers_named, n.papers_named_read, n.papers_named_defining,
+  n.papers_named_linked, n.named_by, n.named_by_asserted, n.named_papers"""
+
+REPORTS = (f"SELECT {COLUMNS},\n  {READ_YEAR_COLUMNS},\n  {PASS_COLUMNS},\n"
+           f"  {ANCHOR_COLUMNS}\n"
            "FROM map_report m\n"
            "LEFT JOIN map_report_read_years r USING (genealogy_id)\n"
            "LEFT JOIN map_report_passes q USING (genealogy_id)\n"
+           "LEFT JOIN map_report_anchors n USING (genealogy_id)\n"
            "ORDER BY concept, prompt_version")
 
 BUCKETS = """
@@ -255,6 +277,27 @@ SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
         ("papers read", "papers_with_a_reading", count, "not recorded"),
         ("papers that define the term", "papers_defining", count, "not recorded"),
         ("papers that do not define the term", "papers_not_defining", count, "not recorded"),
+        # Papers a person named at request time (migration 023, issue #198). In
+        # this section rather than one of its own, where the page puts it, and
+        # for the page's reason: these figures say how much was read, and the
+        # difference between a paper this system found and a paper somebody
+        # handed it belongs inside one glance of the totals. The list itself
+        # prints under the section, like the by-source and kinds-of-link tables.
+        #
+        # The absent words are never reached today and are written anyway: the
+        # view counts rows, so these are zeroes rather than absences on every map.
+        # Every label here is unique across this whole list and is spelled the
+        # same way on the page. "of those, papers that define the term" was the
+        # obvious wording for the third and is already taken, by the recency
+        # block below, over a different population — the exact one-noun-two-
+        # populations trap #123 was about.
+        ("papers named by the person who asked for this map", "papers_named", count,
+         "not recorded"),
+        ("named papers this map read", "papers_named_read", count, "not recorded"),
+        ("named papers that define the term", "papers_named_defining", count,
+         "not recorded"),
+        ("named papers carrying a relationship", "papers_named_linked", count,
+         "not recorded"),
     ]),
     ("Evidence", [
         ("definitions verified", "definitions_verified", count, "not recorded"),
@@ -413,6 +456,35 @@ def render(row: dict, others: list[dict], buckets: list[dict], types: list[dict]
                 ref = " · ".join(f"{o['concept']} {fmt(o[col]) or absent}" for o in others)
                 line += f"\n  {'':<{LABEL_WIDTH}}  the other maps in this system: {ref}"
             out.append(line)
+        # Which papers a person named (issue #198), under the section whose
+        # totals they are part of, where the page puts them. A count alone cannot
+        # tell a reader WHICH paper somebody supplied, and being able to is the
+        # design's second integrity condition; the honest failure it exists to
+        # expose — named, read, defines nothing, connected to nothing — is a line
+        # of this table and not a sentence anybody has to write.
+        if title == "How much was read":
+            named = row["named_papers"]
+            if named:
+                who, basis = edit_actor({"by": row["named_by"],
+                                         "by_asserted": row["named_by_asserted"]})
+                out += ["", f"  Named by {who} ({basis})" if who
+                        else "  Named, actor not recorded",
+                        "  " + "-" * 30]
+                out.append(f"  {'arXiv ID':<14}{'Year':>5}  {'Read':<20}"
+                           f"{'Defines':<10}{'Links':>6}  Title")
+                for p in named:
+                    # "not read" rather than "no" where the paper never arrived:
+                    # Stage B gave no verdict on it, and printing "no" would
+                    # report a reading that never happened.
+                    defines = ("yes" if p.get("defines")
+                               else "no" if p.get("read") else "not read")
+                    out.append(
+                        f"  {str(p.get('arxiv_id') or '?'):<14}"
+                        f"{p.get('year') or '?':>5}  "
+                        f"{('yes' if p.get('read') else 'COULD NOT BE READ'):<20}"
+                        f"{defines:<10}"
+                        f"{int(p.get('relationships') or 0):>6}  "
+                        f"{(p.get('title') or '?')[:44]}")
         if title == "Evidence":
             out += ["", "  By source", "  ---------"]
             mine = [b for b in buckets if b["genealogy_id"] == row["genealogy_id"]]

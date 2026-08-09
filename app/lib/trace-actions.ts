@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { MAX_ANCHORS, parseAnchors } from "./arxiv-id";
 import { getViewer, isOwner, requireOwner, requireViewer } from "./authz";
 import { sql } from "./db";
 import { getArxivFields, isKnownField } from "./openalex";
@@ -45,12 +46,37 @@ export async function requestTrace(
     String(formData.get("gloss") ?? "").replace(/[\x00-\x1f]/g, " ").trim().slice(0, 200) ||
     null;
 
+  // Papers the requester names (issue #198). Every id is normalised to the one
+  // spelling this system stores and a bad one is NAMED BACK rather than dropped:
+  // a silently discarded id is a requester believing their paper is in a map that
+  // does not contain it, which is the one failure this feature may not have.
+  //
+  // Shape here, existence in the pipeline. `corpus_select.py` resolves every
+  // named id against OpenAlex before the build fetches or spends anything and
+  // refuses the whole run by name if one does not resolve, so a check here would
+  // be a second answer to a question the later one has to settle anyway: an id
+  // can be well-formed, resolve at request time, and still be unfindable when the
+  // build runs. The 500-character bound is the same posture the note field has;
+  // the cap is enforced after duplicates fold.
+  const anchorsRaw = String(formData.get("anchors") ?? "").slice(0, 500);
+  const anchorParse = parseAnchors(anchorsRaw);
+
   if (!CONCEPT_RE.test(concept)) {
     return {
       ok: false,
       message: "Concept names are 2–60 characters: letters, numbers, spaces, and hyphens.",
     };
   }
+
+  if (!anchorParse.ok) {
+    return {
+      ok: false,
+      message: anchorParse.reason === "too many"
+        ? `Name at most ${MAX_ANCHORS} papers. Naming more than that is a different thing from pointing at the ones a map should not miss.`
+        : `“${anchorParse.bad}” is not an arXiv id, so nothing was submitted. Use the id as it appears on the paper, like 2404.03002 or hep-th/9711200, separated by spaces or commas.`,
+    };
+  }
+  const anchors = anchorParse.ids;
 
   // The picker is not the allow-list, because this is a public HTTP endpoint no
   // matter what the UI renders (issue #175). The old check was a shape test,
@@ -99,13 +125,29 @@ export async function requestTrace(
     ? Math.min(300, Math.max(5, Number(formData.get("corpus_limit")) || 150))
     : 150;
 
-  try {
-    if (owner) {
+  // `anchors` writes the empty array rather than nothing when nobody was named,
+  // so the row records "the field was offered and declined" instead of "the field
+  // did not exist" — which is what NULL means on this column, and which only rows
+  // predating migration 023 may say.
+  const insert = async (withAnchors: boolean) => {
+    if (owner && withAnchors) {
+      await sql`
+        INSERT INTO trace_requests
+          (concept, note, requested_by, corpus_limit, field_id, gloss, anchors, status, decided_by, decided_at)
+        VALUES
+          (${concept}, ${note}, ${viewer.login}, ${corpusLimit}, ${fieldId}, ${gloss}, ${anchors}, 'approved', ${viewer.login}, now())
+      `;
+    } else if (owner) {
       await sql`
         INSERT INTO trace_requests
           (concept, note, requested_by, corpus_limit, field_id, gloss, status, decided_by, decided_at)
         VALUES
           (${concept}, ${note}, ${viewer.login}, ${corpusLimit}, ${fieldId}, ${gloss}, 'approved', ${viewer.login}, now())
+      `;
+    } else if (withAnchors) {
+      await sql`
+        INSERT INTO trace_requests (concept, note, requested_by, field_id, gloss, anchors)
+        VALUES (${concept}, ${note}, ${viewer.login}, ${fieldId}, ${gloss}, ${anchors})
       `;
     } else {
       await sql`
@@ -113,23 +155,66 @@ export async function requestTrace(
         VALUES (${concept}, ${note}, ${viewer.login}, ${fieldId}, ${gloss})
       `;
     }
+  };
+
+  try {
+    await insert(true);
   } catch (e) {
+    const code = (e as { code?: string }).code;
     // 23505 = the partial unique index on open requests per concept: someone
     // beat us to it between our checks and the insert. The index is the real
     // guard; this is just the polite version of its message.
-    if ((e as { code?: string }).code === "23505") {
+    if (code === "23505") {
       return { ok: false, message: `There is already an open request for “${concept}”.` };
     }
-    throw e;
+    // 42703 = there is no `anchors` column yet. A push deploys Vercel and Render
+    // at once and Render's pre-deploy is what runs the migration, so for a few
+    // minutes this app is live against a schema one migration behind, and
+    // CLAUDE.md requires it to tolerate that. Caught rather than probed for,
+    // because a probe answers about a NAME and this asks the question that
+    // matters — can this statement run here, now — and costs nothing on every
+    // deployment that has the column (#92's third case).
+    //
+    // The two arms are different on purpose. Nobody named a paper, so nothing is
+    // lost: queue the request in its old shape, and the row's NULL then says
+    // truthfully that no name is recorded for it. Somebody DID name papers, so
+    // queueing without them would build a map missing the papers they asked for
+    // and tell them nothing — the one outcome this feature may not have. Refuse,
+    // name the reason, and let them press the button again in a minute.
+    if (code === "42703") {
+      if (anchors.length) {
+        return {
+          ok: false,
+          message: "The papers you named could not be recorded yet, so nothing was submitted. This part of the site finishes updating within a few minutes; try again then, or submit without naming any.",
+        };
+      }
+      console.warn("[trace] trace_requests.anchors is not there yet; queued without it");
+      try {
+        await insert(false);
+      } catch (e2) {
+        if ((e2 as { code?: string }).code === "23505") {
+          return { ok: false, message: `There is already an open request for “${concept}”.` };
+        }
+        throw e2;
+      }
+    } else {
+      throw e;
+    }
   }
 
   revalidatePath("/");
   revalidatePath("/trace");
+  // The count is echoed back rather than left implied: the field takes free text
+  // and folds duplicates, so "3 papers" beside a submit is the only place a
+  // requester learns that what they typed was read as what they meant.
+  const named = anchors.length
+    ? ` ${anchors.length} named paper${anchors.length > 1 ? "s" : ""} will be read: ${anchors.join(", ")}.`
+    : "";
   return {
     ok: true,
     message: owner
-      ? `Queued. “${concept}” starts shortly; progress appears below.`
-      : `Request received. A curator reviews each one before it runs; progress will appear below.`,
+      ? `Queued. “${concept}” starts shortly; progress appears below.${named}`
+      : `Request received. A curator reviews each one before it runs; progress will appear below.${named}`,
   };
 }
 

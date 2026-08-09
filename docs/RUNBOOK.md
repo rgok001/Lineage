@@ -156,6 +156,37 @@ sentence, not a code. A map that should read "built in one pass" has its record
 removed rather than set to `passes = 1`:
 `DELETE FROM map_build_passes WHERE genealogy_id = N;`.
 
+**Naming papers a map should not miss** (issue #198). Through the site: the
+request form on `/trace` takes up to three arXiv ids. From the command line, the
+same thing is two flags:
+
+```sh
+python pipeline/corpus_select.py "dark energy" --field fields/31 \
+    --limit 150 --json data/corpus_dark_energy.json \
+    --anchor 2404.03002 --anchor 2404.03000
+# … the rest of the build …
+python pipeline/record_anchors.py "dark energy" \
+    --corpus data/corpus_dark_energy.json          # then check it:
+python pipeline/record_anchors.py "dark energy" --show
+```
+
+Three things to know before using it. **An id that OpenAlex cannot resolve stops
+the selection by name**, before anything is fetched or spent, so a typo costs a
+retype and never a silent omission; re-run with the id corrected. **The named
+papers are additive**, so a 150-paper corpus with three named papers holds 153
+and nobody lost a seat. And **`record_anchors.py` clears the map's whole record
+before writing**, so it is a re-statement and not an addition: to make a map read
+"nobody named a paper", re-run it against a corpus file in which no entry has its
+`anchor` flag set, or `DELETE FROM map_anchor_papers WHERE genealogy_id = N;`.
+Run from the
+command line, the record carries `named_by_asserted` (from `LINEAGE_ACTOR`, else
+`user@host`) rather than an authenticated login, and the report says which.
+
+Being named buys a paper a reading and nothing else. If it turns out not to
+define the term it is counted among the papers that do not, and if nothing in the
+map cites it, it carries no relationship. Both show on `/g/<id>/report` under
+`papers a person named`, which is the point rather than a defect.
+
 **Backup and restore.** **The backup of record is the snapshot the worker takes
 before every build** (issue #173), at `DATA_DIR/snapshots/<concept>_<pv>_<stamp>.json`
 — on Render that is `/data/snapshots/`. It holds the genealogy row, its

@@ -52,7 +52,7 @@ Eight lettered stages, A to H, each a standalone CLI script reading root `.env`.
 The pipeline is CLI-first by rule: the worker orchestrates these same commands
 and adds nothing to them.
 
-**The worker runs a build in TWO PASSES, twenty-eight steps at most, and
+**The worker runs a build in TWO PASSES, thirty steps at most, and
 publishes once at the very end** (issue #192, the design on #184). The passes are
 what the letters cannot show: pass one selects a corpus the way it always did and
 assembles a map from it, pass two asks that map which of its papers were the
@@ -68,7 +68,7 @@ BEFORE    save the current map (snapshot_map.py --allow-missing)
 PASS ONE  select corpus, fetch papers, extract text, audit extracted text,
           extract definitions (B), cluster concept-states (C), classify edges (D),
           re-check definition quotes, ground & assemble pass one (E --no-publish),
-          record what pass one read
+          record what pass one read, record the papers a person named
 PASS TWO  ask the map what came next (pass_two_select), fetch the nominated
           papers, extract text, audit extracted text, estimate what reading them
           costs (B --dry-run)   ← the spend gate decides here
@@ -153,6 +153,42 @@ origin of attention, never says "attention" (it says "align") and scores lower
 than the Adam optimizer paper against the query. Ancestors enter via
 citations only. Stage A is recall; Stage B is the semantic gate. Output: a
 ranked corpus JSON.
+
+**Papers a person named** (`--anchor ARXIV_ID`, repeatable, at most 3; issue
+#198, accepted on the consolidated ruling on #184). The requester of a map may
+name up to three arXiv ids at request time, and they enter the corpus without
+competing for a seat. **An anchor bypasses selection and nothing else**: Stage B
+still asks it whether it defines the term, the grounding check still applies, and
+Stage D still requires a real citation link before it will draw a relationship,
+so a named paper that does not belong comes back as a paper that defines nothing
+and connects to nothing, and both of those are already figures on the report.
+
+Four properties are load-bearing and each is checked rather than assumed.
+**Additive**: unlike the recency reservation, which takes R of the `--limit`
+seats from the general ranking, and like pass two's seats, a named paper does not
+displace a paper that earned its place, so the corpus is `--limit` plus at most
+three. **Once, not twice**: a paper both named and selected on merit is marked in
+place and consumes nothing. **First in read order**: position in the corpus file
+is read order, so a spend cap truncates from the end, and a named paper a cap
+dropped would be the silent failure this feature exists to prevent. **Refused
+before the first write**: every named id is resolved against OpenAlex by arXiv's
+own DOI (`10.48550/arXiv.<id>`, which resolves old-style ids too) ahead of the
+seed search, and an id that does not resolve stops the run by name having fetched
+nothing and spent nothing. It is a lookup and never a search, because a search
+returns *a* paper for a mistyped id. The corpus JSON sets an `anchor` flag on
+each, so provenance survives in the artefact; `record_anchors.py` reads that key
+and nothing else in the pipeline reads it at all, which is what makes "an anchor
+bypasses selection and nothing else" a property of the code rather than a promise.
+
+**Recording who named them** (`record_anchors.py <concept> --corpus PATH
+[--named-by LOGIN]`). Runs on every build, anchored or not, because it also
+clears what a previous build of the same map recorded: a map anchored once and
+rebuilt with the field left empty must come back saying nobody named a paper.
+The actor is decision 18's split — `--named-by` for the authenticated login the
+app took from a session and the worker relays, and `common.actor()` written to
+`named_by_asserted` for a command-line run. The report figure is on
+`/g/<id>/report` and in `pipeline/map_report.py`; `docs/AS-BUILT.md` §3 holds the
+columns.
 
 **The forward hop** (`expand_forward`, `--recent-since YEAR`, `--max-forward N`;
 issue #180). The backward expansion asks what the seeds *cite*, so everything it

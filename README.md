@@ -57,6 +57,13 @@ python pipeline/corpus_select.py "attention" --limit 150 --json corpus.json
 #                      Science; 'all' drops the field filter)
 #   --gloss "..."    : disambiguate a polysemous sense; becomes the relevance
 #                      query (e.g. "kernel" --gloss "kernel methods in SVMs")
+#   --anchor ID      : a paper the map should not miss, by arXiv id. Repeatable,
+#                      at most 3, and additive: it takes no seat from a paper
+#                      that earned one. It skips SELECTION and nothing else, so
+#                      Stage B still decides whether it defines the term and
+#                      Stage D still needs a real citation link. An id OpenAlex
+#                      cannot resolve stops the run by name, before anything is
+#                      fetched or spent
 
 # Pass two's selection: the recent papers an ALREADY-BUILT map nominates.
 # Reads the map (nodes + edges), writes files, changes no row. No LLM call, with
@@ -111,6 +118,12 @@ python pipeline/record_pass.py "attention" --build --passes 2 \
     --outcome "The second pass filled all 15 of its seats and read them." \
     --seats 15 --candidates 611 --cleared 45
 python pipeline/record_pass.py "attention" --show   # what is recorded; writes nothing
+
+# Which of a map's papers a person named (the report's disclosure; migration 023).
+# Run on every build: it also clears what the previous build recorded, so a map
+# rebuilt with nobody named comes back saying nobody named a paper
+python pipeline/record_anchors.py "attention" --corpus corpus.json --named-by rgok001
+python pipeline/record_anchors.py "attention" --show  # writes nothing
 
 # Stage F: per-paper magnitude (attention + displacement). Run after Stage D,
 # which populates the citation cache it reads
