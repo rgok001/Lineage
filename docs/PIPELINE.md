@@ -551,6 +551,36 @@ Stage B definition quotes, never the S2 citation context, because S2's text
 comes from its own PDF extraction and will not string-match our LaTeX-derived
 text. Direction convention: cited = ancestor = source; citing = descendant =
 target.
+**Every successful classification is cached on disk** in
+`DATA_DIR/edge_class_cache`, content-addressed, same never-evict posture as
+`s2_cache` beside it (issue #172); to buy fresh classifications, delete the
+directory. The key **names the semantic inputs** rather than leaning on a hash of
+the assembled prompt to carry them: concept, prompt version, model, the two arXiv
+ids, a digest of each paper's definition text, and a digest of the citation
+contexts in the order the model reads them — plus the prompt hash, which stays
+because `SYSTEM` and `USER` have changed once already (migration 010 added the
+rationale) and a cache that survives a prompt change serves answers to a question
+nobody asked. The prompt hash also carries the two concept-state labels, which is
+why #189 had to land first. An aborted run now costs wall-clock and no dollars,
+which is what makes #2's atomic rebuild affordable, and it is the measurement
+#184's two-stage build rests on. Consequences worth knowing: a run whose
+candidates are all cached **needs no `ANTHROPIC_API_KEY`** (the client is built
+only when something has to be bought), and `--dry-run` reports how many
+candidates would come back free. Only a parsed answer is ever written — caching a
+failure would make the failure permanent and free — and a cache file that is
+unreadable, malformed, outside the six-type taxonomy or carrying a confidence
+outside 0 to 1 is a miss rather than an error, so no file on disk can put a value
+in `edges` that the column's own CHECK would refuse.
+Measured on the same throwaway PostgreSQL harness as #189, extended to 8 papers
+in 4 clusters with 6 cross-cluster links: **C, D, C, D over an unchanged corpus
+classified 6 and then 0, $0.0270 then $0.0000, with the two edge sets identical**
+row for row including confidence and rationale. Deleting the edges and re-running
+Stage D restored the same 6 for $0.0000. Re-clustering after one definition was
+moved to another cluster by hand re-bought the 4 pairs touching a cluster whose
+membership changed and reused the 1 pair whose two clusters were untouched. Ten
+cache files poisoned five ways (unknown edge type, confidence 4.0, a boolean
+confidence, truncated JSON, wrong top-level type) produced 6 misses, no error,
+and every edge still inside the taxonomy.
 
 **Stage E: grounding and assembly** (`stage_e_ground.py <concept>`).
 First sweeps out any edge naming a concept-state `genealogies.nodes` no longer
