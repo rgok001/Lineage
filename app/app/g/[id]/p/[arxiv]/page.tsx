@@ -5,6 +5,7 @@ import { sql } from "../../../../../lib/db";
 import { getMapRow, readableQuote, TURNING_QUANTILE } from "../../../../../lib/genealogy";
 import { parseMapId } from "../../../../../lib/map-id";
 import { STAMP_COLOR, STAMP_LABEL, edgeStampOf, stampOf } from "../../../../../lib/stamp";
+import VersionNote from "../../version-note";
 
 export const dynamic = "force-dynamic";
 
@@ -158,6 +159,9 @@ export default async function PaperPage({ params }: { params: Promise<{ id: stri
   return (
     <main style={{ padding: "2rem 1.5rem 4rem" }}>
       <div style={{ maxWidth: "44rem", margin: "0 auto" }}>
+        {/* A dossier is a paper as one version of one map read it, so it says
+            which version that was (issue #208). */}
+        <VersionNote id={gid} concept={g.concept} versions={g.versions} />
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>
           <Link href={`/g/${id}`} style={{ color: stream?.color ?? "var(--ink-soft)", textDecoration: "none" }}>‹ the map</Link>
           {stream && (

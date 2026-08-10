@@ -750,6 +750,26 @@ async function stagesFor(ids: number[]): Promise<Map<number, StageFigures> | nul
  * `genealogies.status` selected straight through by migration 016's view, so
  * this is the same column the other three read functions test.
  *
+ * **And current maps only, as of issue #208, which is the same lesson one turn
+ * on.** #194's finding was that a leak is always in two places — the map's own
+ * report, and the map as everybody else's reference point — and versions make
+ * the second one arrive without the first. "The other maps in this system" has
+ * to mean current maps: if superseded versions join the set, a concept rebuilt
+ * three times contributes three points, `n` inflates, and every comparison on
+ * the page silently weights concepts by how often we happened to rebuild them.
+ * That is a figure moving for a reason that is about our operations rather than
+ * about the literature.
+ *
+ * **The subject and the comparison set part company here, and #209 is where
+ * that lands.** A superseded version renders in full at its own address
+ * (#208), report included, so the map named in the URL must be fetchable by id
+ * whether or not it is current, while the maps it is compared against must not
+ * be. Until #209 splits this function into those two reads, the filter below is
+ * both, and a superseded version's own report is not among what it returns.
+ * Nothing can reach that state today: no second version can exist until #207
+ * ships the build that mints one, and every map in this database is version 1
+ * and current.
+ *
  * **`n` therefore counts published maps**, which is what the page's "N of the M
  * maps in this system" should always have meant. `pipeline/map_report.py` still
  * reads every map, unfiltered and with each map's status printed in its own
@@ -759,14 +779,34 @@ async function stagesFor(ids: number[]): Promise<Map<number, StageFigures> | nul
  * the same way `check_map.py` does.
  */
 export async function listMapReports(): Promise<MapReport[]> {
+  // **Does the currency view exist?** (issue #208.) A probe rather than a
+  // try/catch, and the difference matters here more than anywhere else in the
+  // app: what is guarded is a FILTER, so a silent fallback on a transient
+  // failure would not lose a figure, it would quietly widen the comparison set
+  // to include superseded versions — the exact defect this filter exists to
+  // prevent, invisible on the page. A probe can only answer "absent" when the
+  // relation is genuinely absent, which is the minutes between the Vercel deploy
+  // and Render's pre-deploy, and there the fallback is exact rather than
+  // degraded: before migration 025 there is one published row per concept, so
+  // `status = 'complete'` returns precisely the set the view would.
+  //
+  // Unqualified, like the five probes above it, so it resolves the name against
+  // the same `search_path` the next statement does (#92's correction).
+  const [probe] = (await sql`
+    SELECT to_regclass('genealogies_current') IS NOT NULL AS versioned
+  `) as { versioned: boolean }[];
+  const currentOnly = probe?.versioned === true
+    ? sql.unsafe("AND EXISTS (SELECT 1 FROM genealogies_current c WHERE c.id = r.genealogy_id)")
+    : sql.unsafe("");
   // `sql.unsafe` is the driver's documented escape for a raw fragment, and what
   // it is handed here is a compile-time constant in this file with no value from
   // anywhere else in it. Naming the columns in one place is what lets
   // `pipeline/map_report.py`'s list be compared with this one.
   const rows = (await sql`
-    SELECT ${sql.unsafe(COLUMNS)} FROM map_report
-    WHERE status = ${PUBLISHED_STATUS}
-    ORDER BY genealogy_id DESC
+    SELECT ${sql.unsafe(COLUMNS)} FROM map_report r
+    WHERE r.status = ${PUBLISHED_STATUS}
+    ${currentOnly}
+    ORDER BY r.genealogy_id DESC
   `) as Record<string, unknown>[];
   const ids = rows.map((r) => Number(r.genealogy_id));
   // In parallel, so #162's two extra round trips, #182's two, #193's two,

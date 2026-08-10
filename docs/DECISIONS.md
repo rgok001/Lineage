@@ -947,6 +947,34 @@ The why behind the load-bearing choices, in one place:
     required. Recorded in the as-built and the runbook rather than left to be
     discovered.
 
+42. **A map's id names a version for ever; the concept gets a separate address**
+    (2026-08-10, issue #208, the Architect's ruling on the F4 design, #32). The
+    obvious alternative — `/g/17` means "the dark energy map, whatever version
+    that is now" — is wrong for this product specifically. A reader who cites a
+    map in a literature review is citing a set of claims, and if the id silently
+    comes to name a different set, **their citation points at something they
+    never read** and the tool whose whole value is that a claim can be checked
+    has broken the check. The same reasoning already governs quotes, stamps and
+    BibTeX keys here. So a superseded version renders in full at its own address
+    — map, evidence, threads, dossier, report, export — with a line saying it was
+    replaced and where the current one is; `/g/<id>/current` is the address that
+    follows the concept, and the concepts list shows current versions only.
+    **The four read functions therefore have three different rules and are
+    deliberately not uniform**, which is the part a later reader is most likely
+    to want to "fix": the list is current-only because "which concepts have been
+    mapped" has one answer per concept, while `getGenealogy` and `getMapRow`
+    serve any published version because an id is a version. Currency is layered
+    on `status = 'complete'` (#168) and never replaces it, so a build in flight
+    is invisible whether or not the currency filter was remembered.
+    **And the guard differs with what is guarded.** The list's currency filter is
+    probed for with `to_regclass`, because a silent fallback on a filter would
+    put superseded versions back on the front page without saying so; the version
+    facts a page prints are read behind a `try`, because a missing *column*
+    cannot be probed (#182) and losing them costs a line rather than a rule. The
+    fallback in both directions is exact rather than degraded: before migration
+    025 there is one published row per concept, so the old query returns the same
+    set as the view.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record

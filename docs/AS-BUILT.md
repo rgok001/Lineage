@@ -138,7 +138,10 @@ app/                 Next.js app (Vercel root directory is app/)
                      /g/[id] (the influence map), /g/[id]/river/[sid] (a thread's
                      account), /g/[id]/p/[arxiv] (a paper's dossier),
                      /g/[id]/evidence (the old detailed view + workbench),
-                     /api/traces, /api/viewer, /api/auth
+                     /g/[id]/current (a redirect to the concept's current
+                     version, #208), /api/traces, /api/viewer, /api/auth
+                     g/[id]/version-note.tsx says which version a page is, and
+                     renders nothing while a concept has one (#208)
                      layout.tsx + nav.tsx hold the one tab bar
                      signin-button.tsx is a client component; lib/auth-actions.ts
                      holds the two Server Actions it submits
@@ -1302,6 +1305,89 @@ every map is `complete`**, which is the state today: the live reading says
 nothing regressed, and the per-status behaviour is only ever provable against
 fixtures, which is why it was taken there.
 
+**An id names a version, permanently, and the concept has its own address**
+(issue #208, F4). Migration 025 gave a map `version`, `is_current` and
+`superseded_at` (#206); this is the wave that reads them. The rule the routes
+hold is that **a link always shows what it showed**: `/g/17` is version 1 of dark
+energy for ever, and renders in full — map, evidence, threads, dossier, report,
+export — whether or not a later run has replaced it, because a reader who cited
+it cited a set of claims and an id that quietly came to mean a different set
+would break the one check this product exists to offer. The four read functions
+therefore have three different rules, and making them uniform would be the
+mistake:
+
+| function | serves | rule |
+|---|---|---|
+| `listGenealogies` | the concepts list | current versions only, one card per concept |
+| `getGenealogy` | `/g/<id>/evidence`, the workbench | any published version |
+| `getMapRow` | the map, threads, dossier, export | any published version |
+| `listMapReports` | the report and its comparisons | current versions only (#209 splits the subject out) |
+
+`status = 'complete'` stays exactly where #168 put it in all four. **Currency is
+a second, narrower test layered on publication and never a replacement for it**:
+an unpublished row is also a not-current row, and both facts have to hold
+independently, so a `running` build stays invisible whether or not anyone
+remembered the currency filter. On the fixture that means a rebuild in flight
+beside a concept's current version appears in no list, at no address, and in no
+version strip.
+
+**The list filters through `genealogies_current` behind a probe; the version
+facts ride on the row behind a catch**, and the difference is deliberate. What
+the list guards is a *filter*, so a silent fallback would put every superseded
+version back on the front page: `to_regclass` can only answer "absent" when the
+relation genuinely is, which is the minutes between the Vercel deploy and
+Render's pre-deploy, and there the fallback is exact rather than degraded because
+one published row per concept makes the two queries return the same set. It rides
+in the statement `listGenealogies` was already issuing for `map_report`, so the
+page pays no extra round trip. What `getMapRow` and `getGenealogy` guard is three
+*columns*, which cannot be probed for (#182), so they ask the real question and
+catch the failure (#44's pattern): nothing is spent on every deployment that has
+run 025, and in the deploy window the reader gets the map and loses a line.
+`listMapReports` pays one extra round trip for its probe, which is the price of
+the filter not being able to widen quietly.
+
+**What a reader is told**: `version-note.tsx`, mounted on the map, the evidence,
+a thread and a dossier. A superseded version gets one quiet line above the page —
+*"This is version 1 of the “alpha” map. It was replaced on 4 August 2026. See the
+current version."* — and a strip naming which version this is of how many, each
+linking to its own `/g/<id>`. A published version that is not current and was
+never recorded as replaced reads *"It is not the current one"* and gets no
+invented date; if nothing of that concept is current it says so rather than
+offering a link it does not have. Nothing is coloured: the stamp colours mean
+verified and inferred and are not spent on chrome. **On every map in this
+database the component renders nothing at all**, because one published version
+per concept means `version 1 of 1`, current. The report page carries the same
+facts as figures in its run section instead (#209), and the export's preamble
+names the version only when there is more than one to disambiguate — the BibTeX
+is untouched, because it cites papers and not maps.
+
+**`/g/<id>/current`** is the concept's address: a 307 to whichever version is
+current, `no-store`, and 404 for an id nobody minted or a build that has not
+published. It is a route handler rather than a page precisely because every page
+under `/g/[id]` sits behind a loading boundary that flushes a 200 shell before
+the page runs (#159), so only a handler's status line can testify about a
+redirect. **307 and never 308**: which version is current is the thing that
+changes, and a permanent redirect would pin a reader to version 1 for ever
+because of one request made before version 2 existed.
+
+Measured against a throwaway PostgreSQL with 001-025 applied, over a fixture of
+three published versions of one concept, three other concepts (one of them
+published but not current), an unpublished map and a rebuild in flight beside a
+current version, driving the compiled read functions, the compiled `/current`
+handler and the compiled note through a stub that executes the shipped query
+text: **76 assertions, 0 failed**, in three schema states — the view present, the
+view dropped, and 001-024 with no version columns at all. In the last of those
+every figure is what it is today, the note renders nothing, `/current` sends a
+reader to the version they named, and the fallback logs its cause. On a
+live-shaped fixture (four published maps, one per concept, 025's own backfill
+making them version 1 and current) the compiled read functions of `master` and of
+this change return **byte-identical results, md5 `54ca07f9c62780a796b80d19c53bd6a9`
+over 43,909 bytes** once the one new key is set aside, and all four exports are
+byte-identical. That identity is not vacuous: demoting one of the four is
+detected — the concepts list and the report's comparison set drop to three while
+the map stays readable at its own address — and `master`'s functions cannot see
+the difference at all.
+
 **Routes.**
 - `/` : the map list, with a link to `/trace` showing how many runs are in
   flight. Its closing line used to read "then curated by hand", unconditionally,
@@ -1480,6 +1566,12 @@ fixtures, which is why it was taken there.
   machine-learning papers and rewriting that by hand would be inventing it.
   (`/g/[id]/river` redirects to the map; the path is kept working
   because it was the front door for a day.)
+- `/g/[id]/current` : a 307 to the current version of that version's concept
+  (issue #208, F4). The "latest" target for anything outside the app that wants
+  to follow the map rather than one reading of it, with no slug, no new id space
+  and no new table. 404 for an id nobody minted and for a map that has not
+  published, exactly as the map itself answers; `no-store`, and never a permanent
+  redirect. See the F4 block above for the whole rule.
 - `/g/[id]/export` : the writing scaffold, built by `lib/export.ts`.
   `?thread=<id>` scopes it to one thread, `?format=bib` returns the BibTeX
   instead of the Markdown. Two formats rather than one archive: no zip

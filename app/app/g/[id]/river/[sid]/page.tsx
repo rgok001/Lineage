@@ -5,6 +5,7 @@ import { sql } from "../../../../../lib/db";
 import { getMapRow, readableQuote } from "../../../../../lib/genealogy";
 import { parseMapId } from "../../../../../lib/map-id";
 import { STAMP_COLOR, STAMP_LABEL, stampOf } from "../../../../../lib/stamp";
+import VersionNote from "../../version-note";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +58,10 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
   return (
     <main style={{ padding: "2rem 1.5rem 5rem" }}>
       <div style={{ maxWidth: "42rem", margin: "0 auto" }}>
+        {/* A thread of a superseded version is still a thread somebody may have
+            cited, so it renders in full and says which version it belongs to
+            (issue #208). */}
+        <VersionNote id={gid} concept={data.concept} versions={data.versions} />
         <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", color: "var(--ink-soft)" }}>
           <Link href={`/g/${id}`} style={{ color: c, textDecoration: "none" }}>‹ the map</Link>
           {" / "}<span style={{ color: "var(--ink)" }}>{s.name}</span>

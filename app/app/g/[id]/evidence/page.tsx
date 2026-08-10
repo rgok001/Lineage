@@ -7,6 +7,7 @@ import { getViewer, isOwner } from "../../../../lib/authz";
 import { EDGE_MEANING, EDGE_TYPES, editActor, editOp, editWhen, getGenealogy, readableQuote, type Edge, type RankedPaper, type Genealogy, type UserEdit } from "../../../../lib/genealogy";
 import { parseMapId } from "../../../../lib/map-id";
 import { STAMP_COLOR, STAMP_LABEL, stampOf } from "../../../../lib/stamp";
+import VersionNote from "../version-note";
 
 export const dynamic = "force-dynamic";
 
@@ -120,6 +121,11 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
 
   return (
     <main style={{ maxWidth: 940, margin: "0 auto", padding: "1rem 1.5rem 5rem" }}>
+      {/* A reader can arrive straight here from a citation, so the sentence
+          saying which version they are reading belongs on this page too, not
+          only on the map's front door (issue #208). The evidence of a superseded
+          version is shown in full, unchanged. */}
+      <VersionNote id={g.id} concept={g.concept} versions={g.versions} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
         <Link href={`/g/${g.id}`} style={{ fontSize: ".8rem", color: "var(--ink-soft)" }}>‹ the map</Link>
         {/* Issue #103: the report is part of the trust story this page tells,

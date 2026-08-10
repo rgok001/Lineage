@@ -6,6 +6,7 @@ import { parseMapId } from "../../../lib/map-id";
 import { readingWindowSentence } from "../../../lib/reading-window";
 import HashTarget from "../../hash-target";
 import InfluenceMap from "./InfluenceMap";
+import VersionNote from "./version-note";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,10 @@ export default async function GenealogyPage({ params }: { params: Promise<{ id: 
 
   return (
     <main style={{ maxWidth: 1400, margin: "0 auto", padding: "1rem 1.5rem 4rem" }}>
+      {/* Above the title, because it is about which map this is (issue #208).
+          Renders nothing on a current map that has no siblings, which is every
+          map in this database today. */}
+      <VersionNote id={gid} concept={data.concept} versions={data.versions} />
       <header style={{ padding: "0 0 1.2rem" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", flexWrap: "wrap" }}>
           <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: "2.1rem", margin: 0, letterSpacing: "-.01em" }}>
