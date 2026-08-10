@@ -915,6 +915,38 @@ The why behind the load-bearing choices, in one place:
     claimed under the table it ran with, and the as-built (section 3) records
     which ones are overstated and by how much.
 
+41. **A constraint is dropped in the commit that removes what needs it, not one
+    wave earlier** (2026-08-10, issue #206, against the F4 design on #32). The
+    design ended migration `025` with `DROP CONSTRAINT
+    genealogies_concept_pv_key`, in a ticket whose stated reason for existing is
+    that it changes no behaviour. Those cannot both hold. `stage_c_cluster.py`
+    upserts with `ON CONFLICT (concept, prompt_version)`, and Postgres resolves
+    an `ON CONFLICT` target's arbiter index when it **plans** the statement, so
+    with the constraint gone that INSERT raises `InvalidColumnReference` on every
+    build — including the first build of a concept nobody has mapped, where a
+    conflict cannot occur. Executed on a throwaway PostgreSQL against Stage C's
+    own statement text, not reasoned about.
+    **So `025` ships the whole shape and none of the drop**, which moves to #207,
+    the commit that rewrites Stage C to insert. Nothing in `025` wants it: the
+    partial index, the CHECK and `UNIQUE (concept, prompt_version, version)` are
+    independent of it, and the last of those is the replacement key, applied and
+    verified now so #207's drop is one line against something already in place.
+    **The general rule this records**: when a migration removes a guarantee and
+    the code that relies on it is in a different ticket, the guarantee outlives
+    the ticket boundary, not the other way round. A schema change lands early and
+    harmlessly; a schema change that removes something lands with its caller or
+    it lands as an outage. 007's own header names three guarantees, and the third
+    — thirteen scripts resolving a map by `(concept, prompt_version)` with a bare
+    `fetchone()` — is not replaced by the partial index, which keys on `(concept)
+    WHERE is_current` and answers a different question.
+    **One behaviour did change and was accepted rather than designed around**:
+    the CHECK refuses re-clustering a live map in place, because that sets
+    `status = 'running'` on a current row. It is the destructive overwrite F4
+    exists to remove, refused a wave early, loudly, with the constraint named;
+    the operator path — delete first, then re-trace — is what decision 12 already
+    required. Recorded in the as-built and the runbook rather than left to be
+    discovered.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record

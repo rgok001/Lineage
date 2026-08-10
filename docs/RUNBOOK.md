@@ -456,6 +456,49 @@ nothing behind them. **`genealogies.spend_usd` reads `0.0000` on every map and i
 written by nothing** (issue #85); it is not a fallback and nothing in the view,
 the page or the command reads it.
 
+**Applying migration 025 (the version shape).** Nothing to do: it is additive,
+it backfills itself, and it needs no live-data step after it. It applies in the
+ordinary Render pre-deploy and no page changes. Three things an operator should
+know before the next build, though.
+
+**It refuses to apply if two published maps share a concept.** The backfill makes
+every `status = 'complete'` row current and the partial index allows one current
+row per concept, so a duplicate fails the index and rolls the whole migration
+back — `migrate.py` applies every pending file in one transaction. The message is
+`could not create unique index "genealogies_one_current_per_concept"` naming the
+concept. That is deliberate: two published maps for one term is a state somebody
+has to decide about, and a migration that picked a winner would decide it
+unwatched. Resolve it by deleting or un-publishing one, then re-run the migration.
+
+**Re-clustering a live map in place is now refused.** `stage_c_cluster.py
+"<concept>"` sets `status = 'running'` on the row it finds, and a *current* row
+cannot leave `complete` — the CHECK `genealogies_current_is_published` refuses
+it, naming itself. That is the destructive overwrite F4 exists to remove,
+arriving with the shape rather than with the swap. The path is unchanged from
+what decision 12 already requires: **delete the map first, then re-trace.**
+Unaffected: `--embed-only` (it returns before the upsert, so the repair after
+`stage_b_extract.py --refresh` still works), Stage C on a concept with no
+published map, Stage E's publish, the workbench, the threads job and the claims
+job. `restore_snapshot.py` restores the snapshot's own `status`, so restoring a
+mid-build snapshot **onto a current row** hits the same refusal; restore onto the
+`running` row the recovery path is written for, which is not current.
+
+**Until #207 lands, a map published after this migration is not current.** Stage
+E sets `status = 'complete'` and touches nothing else, so a build that finishes
+in this window lands `is_current = false`. Nothing reads currency yet, so the map
+is fully visible on the site — but it would vanish the moment #208's
+currency-filtered reads deploy. If a build completes in this window, either
+promote it by hand from a terminal with database access:
+
+```sh
+psql "$DATABASE_URL" -c "UPDATE genealogies SET is_current = true
+                          WHERE id = <id> AND status = 'complete'"
+```
+
+or confirm #207's backfill has covered it. The partial index will refuse the
+promotion if the concept already has a current map, which is the right answer:
+that is two published maps for one concept and it is the case above.
+
 **Reading a cost cell.** The figure is scraped by the worker from the `spend $X`
 lines the stages print, kept in `trace_requests.progress`, and published only
 when that key holds a JSON number. There are three things a cost cell can say and

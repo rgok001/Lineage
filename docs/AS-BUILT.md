@@ -172,12 +172,24 @@ destinations table added for them.
 
 ## 3. Data model
 
-Six tables and two views, migrations `001` through `023`, applied by
-`python pipeline/db/migrate.py` (tracked in `schema_migrations`). Migrations
-`008`-`009` are data fixes (paths relative to `DATA_DIR`; correcting future
-publication years OpenAlex mis-dated). `010`-`012` carry the paper-centric turn
-and are described inline below. `016` adds no table and no column at all: it is
-the two report views, described at the end of this section.
+Nine tables and twelve views, migrations `001` through `025`, applied by
+`python pipeline/db/migrate.py` (tracked in `schema_migrations`). The counts are
+read off a database with every migration applied, not maintained by hand — they
+said "six tables and two views" for several migrations after they stopped being
+true:
+
+    tables  definitions, edges, genealogies, map_anchor_papers,
+            map_build_pass_papers, map_build_passes, map_build_stages, papers,
+            trace_requests
+    views   genealogies_current, map_invariant, map_invariant_findings,
+            map_pass_build, map_pass_papers, map_report, map_report_anchors,
+            map_report_by_source, map_report_by_type, map_report_passes,
+            map_report_read_years, map_report_stages
+
+Migrations `008`-`009` are data fixes (paths relative to `DATA_DIR`; correcting
+future publication years OpenAlex mis-dated). `010`-`012` carry the
+paper-centric turn and are described inline below. `016` adds no table and no
+column at all: it is the two report views, described at the end of this section.
 
 **papers** (001, 002, 015): one row per fetched arXiv paper. Notable columns:
 `raw_path` and `extracted_text_path` point into `DATA_DIR`;
@@ -242,7 +254,7 @@ and for somebody to one day measure where matches land.
 **edges** (001, 010, 015): see below; the eight `source_`/`target_`-prefixed
 stamp columns are the same four facts twice, one per quote.
 
-**genealogies** (001, 007, 012): the map itself. `nodes` is JSONB
+**genealogies** (001, 007, 012, 025): the map itself. `nodes` is JSONB
 (concept-states with members and year ranges), `user_edits` is the append-only
 curatorial audit trail (each entry `{op, detail, at}` plus at most one of `by`
 and `by_asserted`; decision 18), `spend_usd` accumulates cost, `status` is one of
@@ -261,6 +273,48 @@ and the cross-currents where one thread fed another). The column and the types
 in `lib/genealogy.ts` still carry the river vocabulary the interface has since
 dropped; the reader sees "threads". Null until the generation job has run for
 that map, and `/g/[id]` redirects to `/g/[id]/evidence` when it is null.
+
+**Migration 025 (`025_map_versions.sql`, issue #206) adds the version shape, and
+nothing reads it yet.** Three columns — `version INT NOT NULL DEFAULT 1`,
+`is_current BOOLEAN NOT NULL DEFAULT false`, `superseded_at TIMESTAMPTZ` — and
+three rules the database now holds that were previously conventions:
+
+- `genealogies_one_current_per_concept`, a unique index on `(concept) WHERE
+  is_current`: at most one current map per concept, **per concept and not per
+  (concept, prompt_version)**, so a newer prompt version's map supersedes the
+  older rather than putting two cards for one term on the concepts list.
+- `genealogies_current_is_published`, `CHECK (NOT is_current OR status =
+  'complete')`: current implies published. It constrains currency by status and
+  not the reverse, so a published map that is not current stays legal — that is
+  every superseded version.
+- `genealogies_concept_pv_version_key`, `UNIQUE (concept, prompt_version,
+  version)`: a version number cannot be issued twice.
+
+The backfill made the four published maps version 1 and current; everything else
+in the table is `is_current = false`. `superseded_at` is the record written by
+the swap that clears `is_current`, and is NULL everywhere today because no swap
+has happened — it is never inferred from `is_current`, because a row that was
+never current was never replaced either. **Nothing forbids `is_current = true`
+beside a non-NULL `superseded_at`**; that fourth constraint is raised on #207,
+beside the swap that would write the column.
+
+**007's `UNIQUE (concept, prompt_version)` is still in place**, though the F4
+design retires it. It cannot go until Stage C stops upserting on it: Postgres
+resolves an `ON CONFLICT` target's arbiter index when it *plans* the statement,
+so dropping the constraint makes `stage_c_cluster.py`'s insert raise
+`InvalidColumnReference` on every build, including the first build of a concept
+nobody has mapped. The drop is #207's, in the commit that rewrites Stage C.
+
+**One behaviour did change, and it is the only one.** Re-clustering a *live* map
+in place — `stage_c_cluster.py <concept>` with no `--embed-only`, which sets
+`status = 'running'` on the existing row — is now refused by the CHECK, because
+the row is current. That is the destructive overwrite F4 exists to remove,
+refused a wave early and loudly, with the constraint named in the message. The
+operator path is unchanged: delete the map first, which is what decision 12
+already requires. `--embed-only` returns before the upsert (`stage_c_cluster.py`
+line 320 against line 410) so the repair path after `stage_b --refresh` is not
+affected, Stage C on a concept with no published map still works, and Stage E's
+publish still works.
 
 **edges** (001, 010, 015): typed relationships between nodes, with FK to both papers,
 both verbatim quotes, `confidence`, and `verified` (the grounding verdict).
@@ -985,6 +1039,27 @@ The migration also issues a `GRANT SELECT` to `lineage_ro`, guarded by a `DO`
 block that checks `pg_roles` so a local database without that role still
 migrates; without it the read-only CLI would fail against production while
 working perfectly for the owner.
+
+**genealogies_current** (025, `025_map_versions.sql`, issue #206):
+`SELECT * FROM genealogies WHERE is_current`. **It has no consumer yet** — #206
+ships the shape alone so a defect in it is found on an unchanged system — and the
+reads that will probe for it arrive with #208 and #209.
+
+It is a view rather than a `WHERE` clause in four read functions because of the
+deploy window (decision 31): Vercel deploys the app minutes before Render's
+pre-deploy runs the migration, a missing *column* cannot be guarded, and a
+missing *relation* is guarded by #92's `to_regclass` probe. The fallback is
+correct rather than degraded — before `025` there is exactly one row per concept,
+so an app that cannot find the view and reads `status = 'complete'` returns
+precisely the same set, verified row for row on a fixture.
+
+**The `SELECT *` is expanded at `CREATE` time and then frozen**, so a later
+migration that adds a column to `genealogies` will not see it appear here: that
+migration must `DROP VIEW genealogies_current` and recreate it, after its
+`ALTER`. Verified by adding a column and reading the view's columns back. This is
+the one view where `SELECT *` is deliberate, because it is a filter and not a
+projection; the no-`SELECT *` rule above is about *consumers* of the report
+views and is unchanged.
 
 ---
 
