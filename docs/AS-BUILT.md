@@ -1044,9 +1044,12 @@ migrates; without it the read-only CLI would fail against production while
 working perfectly for the owner.
 
 **genealogies_current** (025, `025_map_versions.sql`, issue #206):
-`SELECT * FROM genealogies WHERE is_current`. **It has no consumer yet** — #206
-ships the shape alone so a defect in it is found on an unchanged system — and the
-reads that will probe for it arrive with #208 and #209.
+`SELECT * FROM genealogies WHERE is_current`. #206 shipped the shape alone, with
+no consumer, so a defect in it would be found on an otherwise unchanged system.
+**Its first consumer is `listMapReports` in `app/lib/report.ts`** (issue #209),
+which probes for it with `to_regclass` and uses it to hold the report's
+comparison set to one map per concept; the concepts list and the map routes
+follow with #208.
 
 It is a view rather than a `WHERE` clause in four read functions because of the
 deploy window (decision 31): Vercel deploys the app minutes before Render's
@@ -1396,6 +1399,64 @@ byte-identical. That identity is not vacuous: demoting one of the four is
 detected — the concepts list and the report's comparison set drop to three while
 the map stays readable at its own address — and `master`'s functions cannot see
 the difference at all.
+
+**Since issue #209 that fourth read is two reads with two rules**, and
+`listMapReports` takes the id of the map being reported as an argument rather
+than being filtered afterwards. The subject is fetched by id and may be any
+*published* version, current or superseded, because a cited version has to stay
+readable; the comparison set is one map per concept — the current version of
+each, read through `genealogies_current` — and it **excludes the subject's whole
+concept, not merely the subject's row.** Both halves of that are load-bearing.
+Without the currency filter a term mapped three times would contribute three
+points and `n` would count versions rather than terms, weighting a concept by how
+often it was rebuilt; and excluding only the subject's row would put the *current*
+version of the same term among "the other maps in this system" on a superseded
+version's report, which is a false population and a different comparison set from
+the one the current version sees. `status = 'complete'` is untouched and governs
+both halves, so currency is a second, narrower test layered on publication and
+never a replacement for it. `n` is therefore the number of terms, on every
+version's report, and it does not move when a term is mapped again.
+
+The read is guarded by one `to_regclass('genealogies_current')` probe, asked once
+in `listMapReports` and handed down to the version read, so the page cannot name
+its comparison population one way and print version figures the other. **A probe
+and not `edgeTotalAndReading`'s try/catch**, which is this repository's other
+shape for the same deploy window: that one is right where the fallback still
+answers the page's primary question, and here the fallback changes the
+*population*, so a transient failure caught in a `catch` would silently widen `n`
+— the defect the ticket exists to prevent, arriving with nothing but a log line.
+With the view absent the app reads `status = 'complete'` alone, which before
+migration 025 returns precisely the same set because there is one published row
+per concept. That is a claim about the deploy window and not about the branch:
+driven against a fixture holding three versions with the view dropped, the
+fallback returns all six published rows and the page prints "n=6". The state is
+unreachable, because no second version can exist until the worker that mints them
+has deployed with the migration that creates the view, and it is recorded because
+the fallback's correctness rests on that rather than on anything the function
+does.
+
+**Measured against a real PostgreSQL with 001 to 025 applied** (2026-08-10),
+driving the compiled `listMapReports` and the compiled report page over a fixture
+of seven maps: `dark energy` at three published versions plus a fourth build left
+`running`, `embedding` and `attention` current, `kernel` published but not
+current with no `superseded_at` — the residue migration 025's header names — and
+an unpublished `polysemy`. Every dark energy version's report prints "n=3" and
+names exactly `attention` and `embedding`, **identical whether the subject is
+version 1, version 2 or the current version 3**; `embedding`'s report names
+`attention` and one dark energy point, not three. The `running` build, the
+unpublished map and an id nobody minted all 404. `kernel` prints "n=4", which is
+correct: it has no current version, so it is nobody's reference point and it
+compares against the three terms that do. Because migration 007's `UNIQUE
+(concept, prompt_version)` is still in place and forbids two versions of one term
+at one prompt version, the fixture was run twice — once with the constraint kept
+and the versions differing by prompt version, which is the only multi-version
+state today's schema can reach, and once with the constraint dropped, which is
+the statement #207 will carry. Both give the same comparison set and the same
+`n`. A third run against the schema at migration **024** — no version columns and
+no view, which is what the app is live against for the minutes between the Vercel
+deploy and Render's pre-deploy — renders every page printing "n=3" and says in
+words that which version you are reading is not counted, rather than claiming
+version 1 of 1.
 
 **Routes.**
 - `/` : the map list, with a link to `/trace` showing how many runs are in
@@ -2021,6 +2082,49 @@ the difference at all.
   and says nothing). Page height went from 6407 px to 6706 px on every one of the
   four: the block is server-rendered inside the streamed content, so it lengthens
   the page without anything arriving late to push something down.
+  **The run section opens with which version of the map you are reading** (issue
+  #209, migration `025_map_versions.sql`), at the head of the section that
+  already holds the build record, because the build behind a version and the
+  version's standing were only ever one question. Its own quiet label, its own
+  paragraph — a rebuild adds a version rather than replacing one, every version
+  keeps its address, and a hand edit stays on the version it was made against
+  (#212) because a new build groups the papers afresh — then three figures and a
+  table. The figures are `which version this is`, whose value is "version N" with
+  the standing and the count of published versions beside it; `replaced on`; and
+  `changes made to this version by hand`, counted with `curatorialEdits` so that a
+  recovery script's `restore` is not reported as somebody's editorial work. The
+  table lists every published version of the term, oldest first, marking the one
+  you are reading and the current one, with each version's own edit count linking
+  to that version's audit trail and its report. **Never "version 3 of 3"**: a
+  build that dies takes a version number and publishes nothing, so the number a
+  version was given and the number a reader can open are two counts and "of"
+  would assert they are one.
+  **"Not current" is never rendered as "superseded" from the flag alone.**
+  Migration 025 keeps `is_current` and `superseded_at` independent precisely
+  because a row that was never current was never replaced either, and the first
+  draft of this block inferred one from the other and printed "replaced, and the
+  date was not recorded" over a build that died halfway; running it over a fixture
+  holding that row is what showed it. The three states now read "not replaced:
+  this is the current version", the date, and "nothing records it being replaced".
+  A superseded version's header says which version it is, when it was replaced and
+  which version is current now, each clause omitted when the fact behind it is
+  absent, and it states this without apologising: a superseded version is what the
+  tool read at the time, and it stays readable so that somebody who cited it can
+  still check it.
+  **Where more than one published version of a term was built the same way, the
+  block says which figures are shared.** Whether a paper defines a term is
+  recorded once per term rather than once per version — that sharing is what makes
+  a rebuild cheap — so "papers read", "papers that define the term" and the year
+  figures count every paper read for the term, including papers a later version
+  brought in, while the meanings, relationships and evidence figures are stored
+  with the version and are its own. The sentence renders only when a sibling
+  shares this version's prompt version, since with one version there is nothing to
+  share with. **This is a real limit and not only a caption**: measured on the
+  fixture, all three dark energy versions report "papers read 4" while version 1's
+  own map holds three. Filed as issue #213 rather than fixed here, because the
+  fix re-keys `map_report`'s definition side through `map_pass_papers` and the
+  fallback for maps built before migration 020 is the whole difficulty, which
+  should not be designed against a database where no map has a second version.
   **The run section opens its own total up, step by step** (issue #47, migration
   `024_build_stage_spend.sql`). It sits under "what the run cost" and inside the
   same `owner` gate that figure carries, and only below it: it is that number's

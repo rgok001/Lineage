@@ -8,6 +8,10 @@ link, issue #162), migration 019's fourth (what the map read, by year, issue
 024's seventh (what each step of the build spent, issue #47) and are
 computed nowhere else, so this command and
 `/g/<id>/report` read one expression and cannot disagree about the same map.
+Which version of its concept a map is comes from migration 025's columns on
+`genealogies` rather than from an eighth view (issue #209): those are stored
+facts, not figures anything computes, so there is nothing for a view to hold on
+behalf of two surfaces. `app/lib/report.ts` carries the argument in full.
 
 **It reads LINEAGE_READ_URL and never DATABASE_URL, and it issues no statement
 but SELECT**, modelled on `recheck_stamp.py` for the same reason: it is a tool
@@ -18,10 +22,11 @@ a view holds no data.
 
 It does, however, COMMIT. `with psycopg.connect(...)` commits on the way out of
 the block -- that is what psycopg's connection context manager does, and nothing
-here suppresses it -- so a statement counter watching this command sees three
-SELECTs and one commit, not three SELECTs and nothing (issue #93; it was two
-before #162 added the kinds of link). The commit carries no change, because the
-only statements in the transaction are those three
+here suppresses it -- so a statement counter watching this command sees four
+SELECTs and one commit, not four SELECTs and nothing (issue #93; it was two
+before #162 added the kinds of link and three before #209 added the versions).
+The commit carries no change, because the only statements in the transaction are
+those four
 SELECTs, and it is left alone rather than turned into a rollback: what makes this
 command safe to point at production is the read-only role and the statements it
 issues, and rearranging the transaction to make a sentence true would be
@@ -44,9 +49,16 @@ prints. Beside each figure it prints the same figure for every other map, and th
 sample size, which is the number of rows the view returned rather than a number
 written in here.
 
+A concept can name more than one map since #209, because a rebuild adds a version
+rather than replacing one. Naming a concept reports every version of it, in
+version order; `--version N` picks one. `--json` still emits exactly one object
+for a named concept -- the current version, with a note on stderr saying so --
+because the flag decides the shape and the data never does.
+
 Usage:
   python pipeline/map_report.py "attention"
   python pipeline/map_report.py "attention" --prompt-version v2
+  python pipeline/map_report.py "attention" --version 2  # one version of it
   python pipeline/map_report.py --all
   python pipeline/map_report.py "attention" --json      # one JSON object
   python pipeline/map_report.py --all --json            # a JSON array, always
@@ -61,7 +73,14 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import edit_actor, env  # noqa: E402
+from common import curatorial_edits, edit_actor, env  # noqa: E402
+
+# What publication is, spelled here because this command has no access to
+# `app/lib/genealogy.ts`'s `PUBLISHED_STATUS` and the two must agree. It is
+# Stage E's own word (`UPDATE genealogies SET status='complete'`), it is what
+# every read path in the app tests, and it is what migration 025's backfill used
+# to decide which rows became version 1 and current.
+PUBLISHED_STATUS = "complete"
 
 # Only the read-only role. Named deliberately unlike DATABASE_URL so that no
 # existing code path can route through it by accident (CLAUDE.md), and read here
@@ -160,14 +179,41 @@ STAGE_COLUMNS = """p.stages_recorded, p.stages_with_a_cost, p.stages_with_no_cos
   p.spend_outside_passes, p.costliest_stage, p.costliest_stage_usd,
   p.costliest_stage_share, p.stage_record_basis, p.stage_record_run_id, p.stages"""
 
+# Which version of its concept a map is (migration 025, issue #209). These are
+# columns of `genealogies` and not of a report view, because they are stored
+# facts rather than figures anything computes -- `app/lib/report.ts` carries the
+# argument for why no eighth view was added for them.
+#
+# The join is back to the table `map_report` is built from, keyed on the map's
+# own id, so it cannot multiply a row. LEFT for the reason the others are: a
+# report row with no `genealogies` row is impossible and therefore worth being
+# able to see, and it prints as an absence rather than dropping the map.
+#
+# **It joins a subquery exposing four columns and not the table.** `genealogies`
+# carries `concept`, `prompt_version` and `status` too, and `COLUMNS` above names
+# those bare -- so joining the table makes every one of them ambiguous and the
+# whole statement raises `AmbiguousColumn` (found by running it, not by reading
+# it). Qualifying `COLUMNS` with `m.` would have fixed it too and would have
+# broken the thing that list exists for: it is compared name for name with its
+# twin in `app/lib/report.ts`.
+#
+# **Unguarded, like every other join here**: the Operator runs this against a
+# database whose migrations have been applied, so a missing column should stop it
+# loudly. The app carries the `to_regclass` probe instead, because it is live to
+# strangers during the few minutes between the Vercel deploy and Render's
+# pre-deploy migration.
+VERSION_COLUMNS = """g.version, g.is_current, g.superseded_at"""
+
 REPORTS = (f"SELECT {COLUMNS},\n  {READ_YEAR_COLUMNS},\n  {PASS_COLUMNS},\n"
-           f"  {ANCHOR_COLUMNS},\n  {STAGE_COLUMNS}\n"
+           f"  {ANCHOR_COLUMNS},\n  {STAGE_COLUMNS},\n  {VERSION_COLUMNS}\n"
            "FROM map_report m\n"
            "LEFT JOIN map_report_read_years r USING (genealogy_id)\n"
            "LEFT JOIN map_report_passes q USING (genealogy_id)\n"
            "LEFT JOIN map_report_anchors n USING (genealogy_id)\n"
            "LEFT JOIN map_report_stages p USING (genealogy_id)\n"
-           "ORDER BY concept, prompt_version")
+           "LEFT JOIN (SELECT id, version, is_current, superseded_at\n"
+           "             FROM genealogies) g ON g.id = m.genealogy_id\n"
+           "ORDER BY concept, prompt_version, version")
 
 BUCKETS = """
 SELECT genealogy_id, unit, source, total, verified, inferred, stale
@@ -189,6 +235,30 @@ TYPES = """
 SELECT genealogy_id, edge_type, taxonomy_rank, edges, edges_share
 FROM map_report_by_type
 ORDER BY genealogy_id, taxonomy_rank NULLS LAST, edge_type
+"""
+
+# Every version of every concept (migration 025, issue #209), so each map's
+# report can list the siblings a reader can open and say which of them carries
+# somebody's hand edits. #212 rules that an edit stays on the version it was made
+# against, so the count is per version and is never added up across them.
+#
+# **Every row, whatever its status, unlike the page.** `/g/<id>/report` lists
+# published versions only, because an unpublished one is not a version a reader
+# can open; this command's reader is the Operator, for whom a build that took
+# version 4 and never published it is exactly the thing worth seeing, and it is
+# the number #211 will count. So the table below prints `status` and the page has
+# no such column.
+#
+# `user_edits` comes over the wire and is counted in Python by
+# `common.curatorial_edits`, not by `jsonb_array_length` here: what counts as
+# curation has one definition per language, and the SQL form would count a
+# recovery script's `restore` as somebody's editorial work (incident 12).
+VERSIONS = """
+SELECT id AS genealogy_id, concept, prompt_version, version, is_current,
+       superseded_at, status,
+       COALESCE(user_edits, '[]'::jsonb) AS user_edits
+FROM genealogies
+ORDER BY concept, version, id
 """
 
 
@@ -268,6 +338,31 @@ def year(v) -> str | None:
         return None
     f = float(v)
     return str(int(f)) if f.is_integer() else f"{f:.1f}"
+
+
+def flag(v) -> str | None:
+    """A stored boolean, as a word. None stays None so the row prints its own
+    absent words rather than reporting false about a column nothing answered."""
+    return None if v is None else ("yes" if v else "no")
+
+
+def when(v) -> str | None:
+    """A calendar day: "12 August 2026", the same three parts in the same order
+    as `longDate` on `/g/<id>/report`.
+
+    Spelled and never numeric, because 12/08/2026 is two different days on two
+    sides of the Atlantic and this one is the date a version of a map stopped
+    being the live one. Not `strftime("%-d")`, which is not portable to Windows,
+    where this command is also run.
+
+    The page renders its date in UTC so that every reader of one map sees one
+    string; this prints whatever zone psycopg hands back, which is the Operator's,
+    and the two can therefore differ by a day for a replacement that happened near
+    midnight. That is deliberate and is the same split as `edit_when`: this
+    command's reader is one person looking at their own database, the page's
+    readers are strangers who must all see the same thing.
+    """
+    return None if v is None else f"{v.day} {v:%B %Y}"
 
 
 def duration(v) -> str | None:
@@ -442,6 +537,40 @@ SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
         ("of those, papers the second pass could have read",
          "pass_two_candidates_cleared", count, "built in one pass"),
     ]),
+    # Which version of its concept this map is (migration 025, issue #209). Its
+    # own section here, immediately before the run whose record produced it,
+    # where the page puts the same figures in a block at the head of "The run":
+    # the build behind a version and the version's standing are one question, and
+    # the table below needs a heading to sit under.
+    #
+    # **Every count here is a real count and none of them is an absence**, like
+    # the named-paper figures and unlike the pass ones: migration 025's columns
+    # are NOT NULL with defaults and its backfill made every published map version
+    # 1, so a NULL could only mean the LEFT JOIN found no `genealogies` row, which
+    # is a state this database cannot be in. The absent words are written anyway,
+    # because a figure that cannot be absent today is one migration from being
+    # able to be.
+    ("Which version this is", [
+        ("which version this is", "version_label", text, "not recorded"),
+        ("is it the current version", "is_current", flag, "not recorded"),
+        # Its own absent words and deliberately not "not recorded": a current
+        # version has not been replaced, which is a fact and not a silence.
+        # `replaced_on` is composed in `version_figures` precisely so that a
+        # version replaced without a date being written says THAT instead, rather
+        # than sharing these words and reading as though it were still live.
+        ("replaced on", "replaced_on", text,
+         "not replaced: this is the current version"),
+        ("changes made to this version by hand", "curatorial_edits_this_version",
+         count, "not counted"),
+        ("published versions of this map", "versions_published", count,
+         "not counted"),
+        # Command-only, like `named_by` and `stage_record_run_id`. A build that
+        # took a version number and never published is invisible to a reader and
+        # is exactly what an Operator wants to see; the gap between these two
+        # counts is the abandoned rows #211 will read.
+        ("versions of this map recorded, published or not", "versions_recorded",
+         count, "not counted"),
+    ]),
     ("The run", [
         ("runs recorded", "runs_recorded", count, "not recorded"),
         ("time the run took", "run_wall_clock", duration, "not recorded"),
@@ -510,17 +639,94 @@ SECTIONS: list[tuple[str, list[tuple[str, str, object, str]]]] = [
 LABEL_WIDTH = max(len(label) for _s, figs in SECTIONS for label, *_ in figs)
 
 
+def attach_version_figures(rows: list[dict], versions: list[dict]) -> None:
+    """Compose each map's version figures onto its report row, in place.
+
+    **Every row gets every key, not only the map being printed.** The comparison
+    line beside each figure reads `o[col]` for every other map, so a key present
+    on one row and missing on another is a KeyError in the middle of a report --
+    the same reason the joins above are LEFT.
+
+    `versions` is every row of `genealogies`, whatever its status, so this can
+    report the published count a reader sees and the recorded count only an
+    Operator does. The two differ by builds that took a version number and never
+    published, which is #211's reading.
+    """
+    # How a map is named on somebody else's reference line. It was the concept
+    # alone until versions existed, and on this command -- which reports every
+    # map, not one per concept -- three versions of one term then printed as
+    # "dark energy 4 · dark energy 4 · dark energy 4", three identical labels for
+    # three different maps. The version is added only where the term appears more
+    # than once, so a database of one map per term prints exactly what it printed
+    # before. Display only; the map's identity is its id, which the header prints.
+    seen: dict[str, int] = {}
+    for row in rows:
+        seen[row["concept"]] = seen.get(row["concept"], 0) + 1
+
+    for row in rows:
+        mine = [v for v in versions if v["concept"] == row["concept"]]
+        me = next((v for v in mine if v["genealogy_id"] == row["genealogy_id"]), None)
+        # The map's id and not its version number: the first draft said
+        # "dark energy version 2" and the version row then read "dark energy
+        # version 2 version 2", because that row's value is itself "version 2".
+        # The id is the map's identity anyway, and the header prints it.
+        row["ref_label"] = (row["concept"] if seen[row["concept"]] < 2
+                            else f'{row["concept"]} #{row["genealogy_id"]}')
+        row["versions"] = mine
+        row["versions_recorded"] = len(mine)
+        row["versions_published"] = len([v for v in mine
+                                         if v["status"] == PUBLISHED_STATUS])
+        row["curatorial_edits_this_version"] = (
+            None if me is None else len(curatorial_edits(me["user_edits"])))
+        if row["version"] is None:
+            # No `genealogies` row behind this report row, which the views cannot
+            # produce. Every version figure reads as an absence, and `replaced on`
+            # gets words of its own rather than falling through to "not replaced",
+            # which would be this command asserting the map is live.
+            row["version_label"] = None
+            row["replaced_on"] = "not recorded: no map row to read a version from"
+            continue
+        row["version_label"] = f"version {row['version']}"
+        # **Not current does NOT mean replaced**, and the first draft of this said
+        # it did: it printed "replaced, and the date was not recorded" over a
+        # build that died halfway and over a map nobody has ever published, both
+        # of which were never current and so were never replaced either.
+        # Migration 025's header states exactly that about these two columns, and
+        # the bug was written anyway; running it over a fixture holding both rows
+        # is what showed it. Four states, four sentences, and only the current one
+        # returns None so that the absent branch has exactly one meaning.
+        row["replaced_on"] = (
+            None if row["is_current"]
+            else when(row["superseded_at"]) or
+            ("nothing records this version being replaced"
+             if row["status"] == PUBLISHED_STATUS
+             else "never published, so never replaced"))
+
+
 def render(row: dict, others: list[dict], buckets: list[dict], types: list[dict],
            n: int) -> list[str]:
+    # The version rides in the header beside the status, because both say what
+    # the reader is looking at rather than what is in it (issue #209). Absent
+    # rather than guessed where the join found nothing.
+    # "not current" and never "superseded" where no date says so: a build that
+    # died is not current and was not replaced by anything.
+    standing = (f', {row["version_label"]}, ' + (
+        "current" if row["is_current"]
+        else f'superseded {when(row["superseded_at"])}' if row["superseded_at"]
+        else "not current")) if row.get("version_label") else ""
     out = [f'What "{row["concept"]}" is made of  (prompt {row["prompt_version"]}, '
-           f'map {row["genealogy_id"]}, {row["status"]})', ""]
+           f'map {row["genealogy_id"]}, {row["status"]}{standing})', ""]
     out.append("Counted from this map's own rows just now. Nothing here is stored, so a")
     out.append("change to the map changes these figures immediately. A verified quote has")
     out.append("been string-matched against that paper's own extracted text; the shape --")
     out.append("the grouping, the relationships and their direction -- is this tool's")
     out.append("reading, so none of it is the history of the term. No figure here is a")
-    out.append(f"score and none has a threshold behind it. Reference points are the other")
-    out.append(f"maps in this system, n={n}.")
+    out.append(f"score and none has a threshold behind it. Reference points are every")
+    out.append(f"other map in this database, published or not and current or superseded,")
+    out.append(f"n={n}. That is deliberately a wider set than /g/<id>/report compares")
+    out.append(f"against, which is one map per term, the current version of each; so the")
+    out.append(f"two surfaces print the same figures for a map and can print a different")
+    out.append(f"n beside them.")
 
     for title, figures in SECTIONS:
         out += ["", title, "-" * len(title)]
@@ -528,7 +734,8 @@ def render(row: dict, others: list[dict], buckets: list[dict], types: list[dict]
             value = fmt(row[col]) or absent
             line = f"  {label:<{LABEL_WIDTH}}  {value}"
             if others:
-                ref = " · ".join(f"{o['concept']} {fmt(o[col]) or absent}" for o in others)
+                ref = " · ".join(f"{o['ref_label']} {fmt(o[col]) or absent}"
+                                 for o in others)
                 line += f"\n  {'':<{LABEL_WIDTH}}  the other maps in this system: {ref}"
             out.append(line)
         # Which papers a person named (issue #198), under the section whose
@@ -670,6 +877,49 @@ def render(row: dict, others: list[dict], buckets: list[dict], types: list[dict]
                 if total != int(row["papers_with_a_reading"]):
                     line += "   <- DOES NOT MATCH papers read above"
                 out += ["", line]
+        # Every version of this map (issue #209), under the section whose figures
+        # describe one of them. A count alone cannot tell a reader WHICH version
+        # carries somebody's hand edits, and #212's rule -- an edit stays on the
+        # version it was made against -- is only checkable if that is visible.
+        #
+        # It prints unpublished versions too, where the page cannot: `status` is a
+        # column here and the page has no such column, because a build that took a
+        # version number and never finished is a fact about our operations rather
+        # than about the term.
+        if title == "Which version this is":
+            heading = "  Every version of this map"
+            out += ["", heading, "  " + "-" * (len(heading) - 2)]
+            mine = row.get("versions") or []
+            if not mine:
+                # The report row came out of `genealogies` and this query reads
+                # `genealogies`, so an empty list here is not a state a map can be
+                # in.
+                out.append("  no versions recorded for this term, which cannot be true "
+                           "of a map that has a report: read it as a defect.")
+            else:
+                out.append(f"  {'version':>7}  {'map':>6}  {'prompt':<8}{'status':<12}"
+                           f"{'current':<9}{'replaced on':<22}{'by hand':>8}  which")
+                for v in mine:
+                    # "not replaced" covers both a current version and one that
+                    # nothing records replacing, which is what a died build looks
+                    # like. The `current` column beside it says which.
+                    replaced = ("" if v["is_current"] else when(v["superseded_at"]) or "")
+                    out.append(
+                        f"  {int(v['version']):>7}  {int(v['genealogy_id']):>6}  "
+                        f"{str(v['prompt_version'])[:7]:<8}"
+                        f"{str(v['status'])[:11]:<12}"
+                        f"{('yes' if v['is_current'] else 'no'):<9}"
+                        f"{(replaced or 'not replaced'):<22}"
+                        f"{len(curatorial_edits(v['user_edits'])):>8}  "
+                        f"{'THIS ONE' if v['genealogy_id'] == row['genealogy_id'] else ''}")
+                # The falsifier, printed rather than assumed: migration 025's
+                # partial unique index makes two current versions of one concept
+                # impossible, so seeing two here means the index is gone.
+                live = [v for v in mine if v["is_current"]]
+                if len(live) > 1:
+                    out.append(f"  <- {len(live)} versions of this term say they are "
+                               f"current, which genealogies_one_current_per_concept "
+                               f"is supposed to make impossible.")
         # The breakdown itself (issue #47), under the section whose figures it
         # opens up. It prints here and not on the page's reader tier for the
         # reason "quote slots" has been command-only since #108: the page shows
@@ -773,6 +1023,13 @@ def as_json(row: dict, buckets: list[dict], types: list[dict]) -> str:
     `Decimal` is serialised as a string rather than a float: these are exact
     values out of Postgres and turning a count or a spend into a binary float on
     the way out would be this command inventing a number.
+
+    Since #209 the row also carries the keys `attach_version_figures` composed --
+    `versions`, `versions_recorded`, `versions_published`, `version_label`,
+    `replaced_on`, `curatorial_edits_this_version` -- which are the only ones here
+    that are not a column of some view. They are named for what they are rather
+    than hidden: a consumer that wants the raw facts still has `version`,
+    `is_current` and `superseded_at` beside them.
     """
     def plain(v):
         return str(v) if isinstance(v, Decimal) else v
@@ -795,6 +1052,9 @@ def main() -> None:
                     help="defaults to PROMPT_VERSION from the environment")
     ap.add_argument("--all", action="store_true",
                     help="report on every map, so the reference points can be read here")
+    ap.add_argument("--version", type=int, default=None,
+                    help="which version of the named concept; defaults to every "
+                         "version, and to the current one under --json")
     ap.add_argument("--json", action="store_true",
                     help="JSON on stdout and to no file: an object for a named "
                          "concept, an array for --all however many maps exist")
@@ -813,9 +1073,16 @@ def main() -> None:
         cur = conn.execute(TYPES)
         tnames = [d.name for d in cur.description]
         types = [dict(zip(tnames, r)) for r in cur.fetchall()]
+        cur = conn.execute(VERSIONS)
+        vnames = [d.name for d in cur.description]
+        versions = [dict(zip(vnames, r)) for r in cur.fetchall()]
 
     if not rows:
         sys.exit("No maps in this database, so there is nothing to report on.")
+
+    # Before anything selects or prints, so that a row this command reports and a
+    # row it only uses as a reference point carry the same keys (issue #209).
+    attach_version_figures(rows, versions)
 
     # The sample size is what came back, never a literal: a number written here
     # would be wrong the first time somebody maps a third concept.
@@ -831,6 +1098,15 @@ def main() -> None:
             have = ", ".join(f'{r["concept"]} ({r["prompt_version"]})' for r in rows)
             sys.exit(f'No map for "{args.concept}" at prompt {pv}. '
                      f"This database holds: {have}.")
+        # A concept can now name several maps (issue #209), where migration 007's
+        # UNIQUE (concept, prompt_version) used to make that impossible. Without
+        # `--version` every one of them is reported, in version order, each with
+        # its own header saying which it is.
+        if args.version is not None:
+            chosen = [r for r in chosen if r["version"] == args.version]
+            if not chosen:
+                sys.exit(f'No version {args.version} of "{args.concept}" at prompt '
+                         f"{pv}. Run without --version to see the versions there are.")
 
     if args.json:
         # **The flag decides the shape, never the row count** (issue #93). This
@@ -845,7 +1121,20 @@ def main() -> None:
             print(json.dumps([json.loads(as_json(r, buckets, types)) for r in chosen],
                              indent=2))
         else:
-            print(as_json(chosen[0], buckets, types))
+            # **Still exactly one object, whatever the data holds** (#93's rule,
+            # which versions are the first thing that could have broken it): a
+            # concept naming three maps must not turn this into an array on a
+            # database where a term has been rebuilt. The current version is what
+            # a reader means by "the map for this term"; `chosen` is ordered by
+            # version, so the fallback is the newest. The note goes to stderr, so
+            # stdout stays one parseable object.
+            pick = next((r for r in chosen if r["is_current"]), chosen[-1])
+            if len(chosen) > 1:
+                print(f'"{args.concept}" has {len(chosen)} versions at prompt '
+                      f'{pick["prompt_version"]}; reporting version {pick["version"]} '
+                      f'(map {pick["genealogy_id"]}). Pass --version N for another.',
+                      file=sys.stderr)
+            print(as_json(pick, buckets, types))
         return
 
     for i, row in enumerate(chosen):

@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { getViewer, isOwner } from "../../../../lib/authz";
 import { parseMapId } from "../../../../lib/map-id";
 import { EDGE_MEANING } from "../../../../lib/genealogy";
-import { listMapReports, type MapReport } from "../../../../lib/report";
+import { listMapReports, type MapReport, type VersionFigures } from "../../../../lib/report";
+import { supersededOn } from "../version-note";
 
 export const dynamic = "force-dynamic"; // computed on read, never stored
 
@@ -78,6 +79,23 @@ const money = (v: number | null): string | null => {
 
 const year = (v: number | null) =>
   v === null ? null : Number.isInteger(v) ? String(v) : v.toFixed(1);
+
+/**
+ * A calendar day, for the one date this page prints (issue #209).
+ *
+ * **`supersededOn` from `version-note.tsx` and not a second formatter here.**
+ * That component states the same fact in a sentence on the map, the evidence, a
+ * thread and a dossier (#208) while this page states it as a figure, but both
+ * are formatting one column of one row: a second implementation is a second
+ * thing to change when the wording moves, and the two would be free to disagree
+ * about a date on one map. Its reasons are worth repeating rather than
+ * duplicating — the long form because "12/08/2026" is two different days on two
+ * sides of the Atlantic, the pinned locale because this is server-rendered and
+ * shared, so every reader of a map must see one string. `when()` in
+ * `pipeline/map_report.py` is the Python twin, and prints the Operator's own day.
+ */
+const longDate = (iso: string | null): string | null =>
+  (iso === null ? null : supersededOn(iso));
 
 type Fmt = (v: number | null) => string | null;
 
@@ -248,7 +266,13 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   // one route has to work out why the next one is different (issue #159).
   const gid = parseMapId(id);
   if (gid === null) notFound();
-  const [all, viewer] = await Promise.all([listMapReports(), getViewer()]);
+  // The id is handed to the read, not applied to its result (issue #209). The
+  // map named in the URL may be a superseded version, which is not in the
+  // comparison population and would not be in this array if it were not asked
+  // for by name; and asking by name is what lets that population be one point
+  // per concept rather than one per version. `lib/report.ts` carries the whole
+  // argument.
+  const [all, viewer] = await Promise.all([listMapReports(gid), getViewer()]);
   const r = all.find((m) => m.genealogy_id === gid);
   if (!r) notFound();
   const rest = all.filter((m) => m.genealogy_id !== r.genealogy_id);
@@ -538,6 +562,73 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         ? `No map in this system has a run record at all, so those cells read not recorded rather than zero on every one of the ${n}.`
         : `${maps(noRunMaps)} ${noRunMaps === 1 ? "has" : "have"} no run record at all, so those cells read not recorded rather than zero.`;
 
+  /**
+   * Which version of this map you are reading (issue #209, designing F4, #32).
+   *
+   * **A map is rebuilt by adding a version, never by overwriting one** (#207),
+   * and an id names a version for ever (#208), so a reader who arrives here from
+   * a citation may be reading something that is no longer the live map. Every
+   * figure on this page is counted from the version named in the URL; what
+   * changes with the version is which figures they are, and a page that did not
+   * say which version it had counted would be publishing one map's numbers under
+   * another map's name.
+   *
+   * **On the four maps that exist today every one of these reads "version 1",
+   * "the only published version", "not replaced". That is true and gets no
+   * special case**: the same words describe a map nobody has rebuilt and a map
+   * whose rebuild is still to come, and a block that appeared only after a second
+   * version existed would leave a reader of the first one unable to tell whether
+   * they were reading the live map or an old one.
+   *
+   * The genuine absence is `vs === null`, which means migration 025 has not
+   * landed on this deployment yet, and that branch says so rather than claiming
+   * version 1 of 1.
+   */
+  const vs = r.versions;
+  /** **"not the current one" and never "superseded" from the flag alone.** A
+   *  version that is not current was usually replaced, and a published version
+   *  that was never current was not: nothing in `genealogies` lets one be
+   *  inferred from the other, which is what migration 025's header says about
+   *  these two columns, and the row below prints the date or its absence. */
+  const standingOf = (v: VersionFigures) =>
+    (v.is_current ? "the current one" : "not the current one");
+  const versionValue = (v: VersionFigures | null) =>
+    (v === null ? null : `version ${v.version}`);
+  /** **Never "version 3 of 3".** A build that died holds a version number and
+   *  never publishes, so the number this version was given and the number of
+   *  versions a reader can open are two different counts, and "of" would assert
+   *  they are one. The count is named as what it is instead. */
+  const versionTail = (v: VersionFigures) =>
+    (v.siblings.length === 1
+      ? `, ${standingOf(v)}, and the only published version of this map`
+      : `, ${standingOf(v)}, of ${v.siblings.length} published versions`);
+  /** Three states and three different sentences, because any two of them sharing
+   *  one form of words would be false about one of them: a current version has
+   *  not been replaced; a version that stopped being current on a recorded day
+   *  says the day; and a version that is not current with nothing recording a
+   *  replacement is neither of those. **The third is not "superseded on a date
+   *  nobody wrote".** A published version that was never the current one was
+   *  never replaced either, and migration 025 keeps the flag and the date
+   *  independent precisely so that neither is inferred from the other; an earlier
+   *  draft of this line inferred it and asserted a replacement that never
+   *  happened. The fourth case is a map whose version figures could not be read
+   *  at all. Only "not replaced" returns null, so the row's absent words have
+   *  exactly one meaning. */
+  const replacedCell = (v: VersionFigures | null): string | null =>
+    (v === null ? "not counted on this page"
+      : v.is_current ? null
+        : longDate(v.superseded_at) ?? "nothing records it being replaced");
+  const currentVersion = vs?.siblings.find((s) => s.is_current) ?? null;
+  /** The counts a version's report can and cannot claim as its own, said only
+   *  where the distinction can bite. Papers and definitions are shared across
+   *  versions of one concept built at the same setting — that sharing is what
+   *  makes a rebuild cheap — while the relationships, the meanings and the
+   *  evidence figures are stored per version and are this version's own. On a
+   *  concept with one published version there is nothing to share with and the
+   *  sentence would be a caveat about an impossibility, so it is not printed. */
+  const sharedReading = vs !== null &&
+    vs.siblings.filter((s) => s.prompt_version === r.prompt_version).length > 1;
+
   const mono = { fontFamily: "var(--font-mono)" as const };
   const prose = {
     fontFamily: "var(--font-display)", fontSize: ".95rem", lineHeight: 1.65,
@@ -575,6 +666,60 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           figures below say how much of each this map holds; none of them is a score,
           and there is no grade, no colour and no pass mark anywhere on the page.
         </p>
+        {/* Where this version stands, in the header, because it governs how
+            every figure below is read (issue #209). It states a fact and does
+            not apologise: a superseded version is not wrong, it is what the tool
+            read at the time, and it stays readable at its own address for ever
+            (#208) precisely so that somebody who cited it can still check it.
+            The block in "The run" carries the figures; this is the one sentence
+            a reader needs before the first number. */}
+        {vs === null ? (
+          /* The #92 fallback: the app is live for a few minutes against a schema
+             one migration behind, and losing a sentence is honest where a 500
+             would take the whole page. It must not say "version 1 of 1" here,
+             which is a claim this page cannot make when it could not read. */
+          <p style={{ ...prose, fontSize: ".9rem", margin: ".7rem 0 0",
+            color: "var(--ink-faint)" }}>
+            Which version of this map you are reading is not counted on this page at
+            the moment. That is this page&rsquo;s reach and not a fact about the map.
+          </p>
+        ) : (
+          <p style={{ ...prose, fontSize: ".9rem", margin: ".7rem 0 0",
+            color: "var(--ink-faint)" }}>
+            You are reading version {vs.version} of this map
+            {vs.is_current
+              ? ", which is the current one."
+              : ", which is not the current one."}{" "}
+            {vs.is_current
+              ? (vs.siblings.length === 1
+                ? "It is the only published version so far. If the term is mapped again, this version keeps this address and the new one becomes current."
+                : `${vs.siblings.length} versions of it are published, and each keeps its own address for ever.`)
+              : (
+                /* Two independent clauses rather than four sentences, because
+                   the date and the replacement are two facts and either can be
+                   missing: a version can stop being current with nothing
+                   recording the day, and a term can have no current version at
+                   all. Neither is inferred from the other. */
+                <>
+                  {longDate(vs.superseded_at)
+                    ? `It was replaced on ${longDate(vs.superseded_at)}.`
+                    : "It is no longer the current version, and nothing here records when that changed."}
+                  {currentVersion ? (
+                    <>
+                      {" Version "}{currentVersion.version} is the current map for
+                      this term:{" "}
+                      <Link href={`/g/${currentVersion.genealogy_id}/report`}
+                        style={{ color: "var(--edge-extends)" }}>
+                        read that version&rsquo;s report
+                      </Link>.
+                    </>
+                  ) : " No version of this map is current now."}
+                  {" "}Every figure below is counted from this version, as it stands
+                  now, and not from the current one.
+                </>
+              )}
+          </p>
+        )}
         <p style={{ ...mono, fontSize: ".72rem", color: "var(--ink-faint)", marginTop: ".9rem" }}>
           <Link href={`/g/${id}`} style={{ color: "var(--edge-extends)" }}>← the map</Link>
           {" · "}
@@ -590,12 +735,28 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       </header>
 
       {/* The reference-point caveat, at the point where it first applies rather
-          than in the header (issue #106), in the words issue #111 asked for. */}
+          than in the header (issue #106), in the words issue #111 asked for.
+          It now names the population it counts (issue #209): `n` is one map per
+          concept and never one per version, so a term mapped four times is one
+          point here and not four, and a reader cannot take `n` for a count of
+          everything this system holds. `lib/report.ts` enforces it in the read
+          rather than here in a filter, because the same leak has to be closed in
+          both places at once (#194). */}
       <p style={{ ...mono, fontSize: ".72rem", color: "var(--ink-faint)", lineHeight: 1.7,
         margin: "1.6rem 0 0", maxWidth: "44rem" }}>
-        Beside each figure is the same figure for every other map in this system.
-        With only a few maps to compare against, read those as points of comparison,
-        not as an average or as what a map should show. n={n}
+        Beside each figure is the same figure for every other map in this system:
+        one map per term, the current version of each, never two versions of the
+        same term. With only a few maps to compare against, read those as points of
+        comparison, not as an average or as what a map should show. n={n}
+        {vs !== null && !vs.is_current && (
+          <>
+            {" "}Those are the maps as they stand today, not the maps that stood
+            beside this version when it was built. Nothing in this system records
+            what their figures were on a past date, so this page compares against
+            the present and says so rather than reconstructing a past it cannot
+            check.
+          </>
+        )}
       </p>
 
       {/* "Reading" carried two meanings four inches apart (issue #124, item 3):
@@ -1413,13 +1574,175 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
 
       <Section
         title="The run"
-        lede="What building this map took. These come from the record kept while a
+        lede="Which version of this map you are reading, and what building that version
+              took. The figures below come from the record kept while a
               map is being built for someone who asked for it, so a map built directly
               by the team, rather than through a request on this site, has none of them
-              and says so. Where a figure reads not
+              and says so. Every one of them describes the build behind this version
+              and no other. Where a figure reads not
               recorded, nothing in this system holds it; it is not zero and it is not
               an estimate."
       >
+        {/* Which version this is (issue #209), at the head of the section that
+            already holds the build record, because these are facts about the
+            same thing: the build that produced this version is the run the
+            figures below describe, and the two were only ever one question.
+            Set like "the two passes" and "papers a person named": its own quiet
+            label, its own paragraph naming what it counts, its own note
+            answering what would change it, then figures or a sentence. */}
+        <div style={{ padding: ".85rem 0", borderTop: "1px solid var(--line-soft)" }}>
+          <div style={{ ...mono, fontSize: ".68rem", letterSpacing: ".08em",
+            textTransform: "uppercase", color: "var(--ink-faint)" }}>
+            which version this is
+          </div>
+          <p style={{ fontFamily: "var(--font-display)", fontSize: ".92rem",
+            lineHeight: 1.55, color: "var(--ink-soft)", margin: ".35rem 0 0",
+            maxWidth: "44rem" }}>
+            Mapping a term again does not replace the map that was there: it adds a
+            version, and every version keeps its own address and stays readable, so a
+            reader who cited one can still open the thing they read. One version at a
+            time is the current one for a term, and that is the one the list of maps
+            offers. Changes made by hand stay on the version they were made against
+            and are never carried into a new one: a new build groups the papers afresh,
+            so an edit moved across could end up attached to a group its author never
+            saw.
+          </p>
+          <p style={{ fontFamily: "var(--font-display)", fontSize: ".92rem",
+            lineHeight: 1.55, color: "var(--ink-faint)", margin: ".15rem 0 0",
+            maxWidth: "44rem" }}>
+            <span style={{ fontStyle: "italic" }}>What would change this:</span>{" "}
+            Only mapping the term again, which adds a version and makes whichever one
+            was current the version before it. Nothing about this version changes when
+            that happens except that it stops being the current one.
+          </p>
+          {vs === null ? (
+            /* The #92 fallback again (see the mix of kinds of link above): the
+               app is live for a few minutes against a schema one migration
+               behind, and losing one block is honest where a 500 would take the
+               whole page. It must not print "version 1 of 1" here, which is a
+               claim this page cannot make when it could not read. */
+            <p style={{ ...prose, fontSize: ".9rem", margin: ".8rem 0 0" }}>
+              Which version of this map you are reading is not counted on this page at
+              the moment. That is this page&rsquo;s reach and not a fact about the map.
+            </p>
+          ) : (
+            <>
+              <Figure
+                label="which version this is" lead
+                value={versionValue(vs)} absent="not counted on this page"
+                tail={versionTail(vs)}
+                counts="Which build of this term produced the map you are reading, and how many builds of it are published. Every figure on this page is counted from this version alone. The count is of versions a reader can open: a build that started and never finished takes a version number and publishes nothing, so the number this version was given can be higher than the number of versions there are."
+                moves="Only mapping the term again."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: versionValue(m.versions),
+                  tail: m.versions === null ? undefined
+                    : `, ${standingOf(m.versions)}`,
+                }))}
+              />
+              <Figure
+                label="replaced on"
+                value={replacedCell(vs)}
+                absent="not replaced: this is the current version"
+                counts="The day this version stopped being the current map for its term. It is the date of the change and not a judgement about the version: a replaced version is what this tool read at that time, it is not withdrawn, and every quote in it is still checked the same way. Where it says nothing records it being replaced, this version is not the current one and nothing in this system says when that changed or what replaced it."
+                moves="Only mapping the term again, which replaces whichever version is current at that moment."
+                others={rest.map((m) => ({
+                  concept: m.concept, value: replacedCell(m.versions),
+                }))}
+              />
+              <Figure
+                label="changes made to this version by hand"
+                value={count(vs.curatorial_edits)} absent="not counted on this page"
+                counts="Renames, splits, merges and deletions somebody made to this version after it was built. It counts this version only and is never added up across versions, because two versions group the papers differently and a total across them would be a number about nothing. A version showing none may still have a sibling that carries edits, and the table below says which."
+                moves="Somebody editing this version. A change made to another version never appears here."
+                others={rest.map((m) => ({
+                  concept: m.concept,
+                  value: count(m.versions?.curatorial_edits ?? null),
+                }))}
+              />
+              {/* The versions themselves, because the counts above cannot tell a
+                  reader WHICH version carries the edits, and being able to see
+                  that is what #212's rule costs them: a person who curated
+                  version 1 and then rebuilt has their work on a page that is no
+                  longer the current one, and it is still there. Same table
+                  furniture as "By source" and the named papers. It always renders
+                  and always holds at least this version, so a map nobody has
+                  rebuilt shows one row saying so rather than nothing. */}
+              <table style={{ ...mono, fontSize: ".78rem", borderCollapse: "collapse",
+                width: "100%", marginTop: ".9rem" }}>
+                <thead>
+                  <tr style={{ color: "var(--ink-faint)", textAlign: "left" }}>
+                    {["version", "", "replaced on", "changes made by hand", ""]
+                      .map((h, i) => (
+                        <th key={i} style={{ padding: ".35rem .6rem", fontWeight: 400,
+                          borderBottom: "1px solid var(--line)" }}>{h}</th>
+                      ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {vs.siblings.map((s) => (
+                    <tr key={s.genealogy_id}>
+                      <td style={{ padding: ".3rem .6rem", color: "var(--ink)" }}>
+                        {s.version}
+                      </td>
+                      <td style={{ padding: ".3rem .6rem", color: "var(--ink-soft)" }}>
+                        {[s.genealogy_id === r.genealogy_id ? "the one you are reading" : null,
+                          s.is_current ? "current" : "not current",
+                        ].filter(Boolean).join(", ")}
+                      </td>
+                      {/* "not replaced" covers a current version and one that
+                          nothing records a replacement for, and the column
+                          beside it says which. It never invents a replacement
+                          out of the flag alone. */}
+                      <td style={{ padding: ".3rem .6rem",
+                        color: longDate(s.superseded_at) ? "var(--ink)" : "var(--ink-soft)",
+                        fontStyle: longDate(s.superseded_at) ? "normal" : "italic" }}>
+                        {longDate(s.superseded_at) ?? "not replaced"}
+                      </td>
+                      <td style={{ padding: ".3rem .6rem" }}>
+                        {s.curatorial_edits === 0 ? "none" : (
+                          <Link href={`/g/${s.genealogy_id}/evidence`}
+                            style={{ color: "var(--edge-extends)" }}>
+                            {s.curatorial_edits.toLocaleString()}
+                          </Link>
+                        )}
+                      </td>
+                      <td style={{ padding: ".3rem .6rem" }}>
+                        {s.genealogy_id === r.genealogy_id ? (
+                          <span style={{ color: "var(--ink-faint)" }}>this page</span>
+                        ) : (
+                          <Link href={`/g/${s.genealogy_id}/report`}
+                            style={{ color: "var(--edge-extends)" }}>
+                            what that version is made of
+                          </Link>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {/* Printed only where it can bite, which is a term with more than
+                  one published version built the same way. Reading a paper is
+                  recorded once per paper for the whole term rather than once per
+                  version — that sharing is what makes a rebuild cheap — so the
+                  papers figures on this page widen when a later version reads
+                  something new, while everything stored on the map itself stays
+                  this version's own. Said here rather than left for a reader to
+                  discover by finding two versions with identical paper counts. */}
+              {sharedReading && (
+                <p style={{ ...prose, fontSize: ".9rem", margin: "1rem 0 0" }}>
+                  More than one version of this map was built the same way, and what
+                  this system read for a paper is recorded once for the term rather
+                  than once per version. So &ldquo;papers read&rdquo;, &ldquo;papers
+                  that define the term&rdquo; and the years above count every paper
+                  read for &ldquo;{r.concept}&rdquo;, including papers a later version
+                  brought in; the meanings, the relationships and the evidence figures
+                  are stored with this version and are its own.
+                </p>
+              )}
+            </>
+          )}
+        </div>
         {/* "A map built from the command line" appeared three times and assumed
             a reader who knows what a command line is, and that some maps are
             built without anybody asking (issue #124, item 6). All three now say

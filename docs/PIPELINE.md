@@ -1229,7 +1229,8 @@ stamp examined and not one file readable), and it does not re-anchor, repair or
 write. Ever.
 
 `map_report.py`
-(`map_report.py <concept> [--prompt-version PV] [--all] [--json]`): what a map is
+(`map_report.py <concept> [--prompt-version PV] [--version N] [--all] [--json]`):
+what a map is
 made of, from the map's own rows (issue #30, `[F2]`). Every figure is selected
 from migration `016`'s two views, `map_report` and `map_report_by_source`, from
 migration `017`'s `map_report_by_type`, and from migration
@@ -1244,6 +1245,28 @@ view prints "not recorded" for those figures rather than dropping off the report
 while a missing view stops the command loudly. The app guards the same views with
 `to_regclass` instead, because it is live to strangers in the minutes between
 the Vercel deploy and Render's pre-deploy migration.
+**Which version of its concept a map is comes from migration `025`'s columns on
+`genealogies`** (issue #209), joined the same way and for the same reason, and
+from a fourth `SELECT` over every `genealogies` row for the per-version table.
+They are stored facts rather than figures anything computes, so no eighth view
+was added for them; `app/lib/report.ts` carries the argument. The join names a
+subquery exposing four columns and not the table, because `genealogies` also
+carries `concept`, `prompt_version` and `status`, which `COLUMNS` names bare, and
+joining the table makes all three ambiguous. The command's own "Which version this
+is" section prints the version, whether it is current, when it was replaced, the
+hand edits on that version, and both the published count and the count including
+builds that took a version number and never published — the second of which is
+the Operator's half and has no equivalent on the page, along with the `status`
+column on the table of every version. **The command's reference points are every
+map in the database, published or not and current or superseded, and its opening
+paragraph now says so**: `/g/<id>/report` compares against one map per term, so
+the two surfaces print the same figures for a map they both show and can print a
+different `n` beside them, which is the same deliberate divergence #194 recorded.
+A concept can now name more than one map, so naming one reports every version of
+it in version order unless `--version N` picks one; `--json` still emits exactly
+one object for a named concept — the current version, with a note on stderr
+saying which was chosen — because the flag decides the shape and the data never
+does (#93).
 The years block prints both series: everything from `earliest year` to `papers
 with no year` is over the papers that define the term, and `oldest paper read`,
 `newest paper read`, `papers read with no year`, the two `recent window` years

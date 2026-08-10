@@ -1,5 +1,5 @@
 import { sql } from "./db";
-import { PUBLISHED_STATUS } from "./genealogy";
+import { curatorialEdits, PUBLISHED_STATUS } from "./genealogy";
 
 /**
  * The map report (issue #30, `[F2]`), read from migration 016's two views,
@@ -16,6 +16,19 @@ import { PUBLISHED_STATUS } from "./genealogy";
  * `pipeline/map_report.py` read one expression, so the page and the shell cannot
  * disagree about the same map, and nothing is stored, so a figure cannot survive
  * the curatorial edit that invalidates it.
+ *
+ * **`versionsFor` is the one read that does not come from a report view, and
+ * that is deliberate** (issue #209). A version's number, its currency and the
+ * date it was replaced are stored columns on `genealogies` (migration 025), not
+ * figures anything computes, so there is nothing for a view to hold in one place
+ * on behalf of two surfaces; a `map_report_versions` view would be a probe target
+ * and nothing else. The one figure that IS computed there — how many changes a
+ * person made by hand to a version — is counted in TypeScript by
+ * `curatorialEdits`, for the reason `listGenealogies` counts it that way rather
+ * than in SQL: `jsonb_array_length` would count incident 12's restore as
+ * somebody's editorial work, and what counts as curation has exactly one
+ * definition per language (`CURATORIAL_OPS` here, its twin in
+ * `pipeline/common.py`).
  *
  * **Every column is named.** `CREATE OR REPLACE VIEW` cannot change a column's
  * type, drop a column or reorder columns, so a later change to the report is a
@@ -250,6 +263,61 @@ export type StageFigures = {
   stages: StageSpend[] | null;
 };
 
+/** One published version of a map's concept (migration 025, issue #209).
+ *
+ *  `curatorial_edits` is a count of THIS version's own hand edits and is never
+ *  added to another version's. #212 rules that an edit stays on the version it
+ *  was made against, because Stage C names concept-states positionally
+ *  (decision 20) and `n3` in two versions need not denote the same meaning, so a
+ *  total across versions would be a number about nothing. Zero is a real zero on
+ *  every version, like the named-paper counts and unlike the pass counts: the
+ *  count is over `user_edits`, which is an array that is there or empty. */
+export type VersionSibling = {
+  genealogy_id: number;
+  version: number;
+  prompt_version: string;
+  is_current: boolean;
+  /** ISO, normalised at the boundary; see `isoOrNull`. Null on a version that
+   *  has not been replaced AND on one that was replaced without the date being
+   *  written, which are different facts. `is_current` is what separates them and
+   *  neither is ever inferred from the other — migration 025's header carries the
+   *  argument. */
+  superseded_at: string | null;
+  curatorial_edits: number;
+};
+
+/** Which version of its concept a map is, and where it stands (migration 025,
+ *  issue #209, designing F4/#32).
+ *
+ *  `siblings` is every PUBLISHED version of this concept, oldest first, and
+ *  always contains this map. A build that died leaves a `running` row holding a
+ *  version number and it is absent from here, so `version` can exceed
+ *  `siblings.length` and the page must never print "version 3 of 2": what is
+ *  published and what was numbered are two counts, and the page names the one it
+ *  is showing. Abandoned rows are #211's reading, not this page's.
+ *
+ *  **The whole of this is absent, not zeroed, when migration 025 has not landed
+ *  on this deployment** — see `versionsFor`. "Version 1 of 1" is a claim, and a
+ *  page that cannot read the columns must not make it.
+ *
+ *  **Not `MapVersions` in `lib/genealogy.ts`, and the difference is the set of
+ *  rows rather than a second opinion about the facts.** That one hangs off
+ *  `getMapRow` and answers about the map a page is showing, so its siblings carry
+ *  an id, a number and a flag — everything the version line needs. This one has
+ *  to answer for every map on the report at once, including each comparison
+ *  map's own standing, and its siblings additionally carry the date, the prompt
+ *  version and the count of hand edits, because the report prints a row per
+ *  version and says which of them somebody curated. Reusing the other would cost
+ *  a round trip per map and still not answer. The two agree on the underlying
+ *  facts by reading the same three columns of the same table. */
+export type VersionFigures = {
+  version: number;
+  is_current: boolean;
+  superseded_at: string | null;
+  curatorial_edits: number;
+  siblings: VersionSibling[];
+};
+
 export type MapReport = {
   genealogy_id: number;
   concept: string;
@@ -335,6 +403,13 @@ export type MapReport = {
    *  null and whose basis says so in words, so a missing row means the read did
    *  not happen. */
   stages: StageFigures | null;
+  /** **NULL is not a map with one version.** Same rule again, with a different
+   *  relation behind it: it means migration 025 has not landed on this
+   *  deployment yet, so `genealogies.version` could not be read at all. Every
+   *  published map has a version once the migration is applied — the backfill
+   *  made the four existing maps version 1, current — so a null here is the
+   *  deploy window and never a fact about the map. */
+  versions: VersionFigures | null;
 };
 
 /** Named, in the view's own order, so the shape of this list and the shape of
@@ -361,7 +436,8 @@ function shape(r: Record<string, unknown>, buckets: ReportBucket[],
                reading: ReadYears | null,
                passes: PassFigures | null,
                anchors: AnchorFigures | null,
-               stages: StageFigures | null): MapReport {
+               stages: StageFigures | null,
+               versions: VersionFigures | null): MapReport {
   const n = (k: string) => num(r[k]) ?? 0;      // counts: the view coalesces these
   const m = (k: string) => num(r[k]);           // measurements: absence is meaningful
   return {
@@ -420,6 +496,7 @@ function shape(r: Record<string, unknown>, buckets: ReportBucket[],
     passes,
     anchors,
     stages,
+    versions,
   };
 }
 
@@ -722,6 +799,100 @@ async function stagesFor(ids: number[]): Promise<Map<number, StageFigures> | nul
   return out;
 }
 
+/** `timestamptz` arrives as a `Date` from the driver's type parsers and as a
+ *  string from anything that does not apply them, and this page prints a date, so
+ *  the two are normalised to one ISO string here at the boundary — the rule
+ *  `num()` follows for numbers, and for the same reason. Anything else, including
+ *  an unparseable string, becomes null and the page prints words: a date this
+ *  file could not read must not reach the reader as a wrong date. */
+const isoOrNull = (v: unknown): string | null => {
+  if (v === null || v === undefined) return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+};
+
+/**
+ * Which version of its concept each map is (migration 025, issue #209).
+ *
+ * **Guarded like the five functions above, and the probe is the same one that
+ * decided the comparison set** — see `listMapReports`, which asks it once and
+ * hands the answer down. That is the departure from the pattern and it is the
+ * point: if the two asked separately they could answer differently across the
+ * seconds between them, and the page would then name its comparison population
+ * one way and print version figures the other way, about one map, on one screen.
+ *
+ * **The probe names `genealogies_current` and the query names three columns of
+ * `genealogies`**, which is a wider claim than the probe makes on its face.
+ * `migrate.py` applies each migration file in one transaction, so `025` either
+ * added the columns AND created the view or did neither; there is no state where
+ * the view exists and `version` does not. That is the same argument `passesFor`
+ * makes for probing one of migration 020's three relations, and it is what makes
+ * probing a relation on behalf of a column a decision rather than an oversight —
+ * a missing column cannot be guarded at all (#182), which is why the view exists.
+ *
+ * **`getMapRow` reads the same columns behind a `try` instead, and that is not an
+ * inconsistency** (#208). It has no probe available: its statement is the map's
+ * own row and there is no relation whose absence stands in for the columns'. Here
+ * the probe is already being paid for, because the comparison set needs the view
+ * itself, so the same answer guards both and one round trip covers them.
+ *
+ * **It reads every published version of the concepts on the page**, not only the
+ * maps being reported, because "version 2 of 3" and "version 1 carried edits and
+ * this one does not" are both claims about the siblings. `user_edits` comes over
+ * the wire for each of them: `listGenealogies` already fetches every published
+ * map's whole edit log for the front page, so this is the same cost against a set
+ * bounded by the number of concepts, and counting in SQL would put a second
+ * definition of curation in the system.
+ */
+async function versionsFor(versioned: boolean, ids: number[]):
+    Promise<Map<number, VersionFigures> | null> {
+  if (!versioned) return null;
+  if (!ids.length) return new Map();
+  const rows = (await sql`
+    SELECT g.id AS genealogy_id, g.concept, g.version, g.prompt_version,
+           g.is_current, g.superseded_at,
+           COALESCE(g.user_edits, '[]'::jsonb) AS user_edits
+    FROM genealogies g
+    WHERE g.status = ${PUBLISHED_STATUS}
+      AND g.concept IN (SELECT concept FROM genealogies WHERE id = ANY(${ids}))
+    ORDER BY g.concept, g.version, g.id
+  `) as Record<string, unknown>[];
+
+  const byConcept = new Map<string, VersionSibling[]>();
+  const conceptOf = new Map<number, string>();
+  for (const r of rows) {
+    const concept = String(r.concept);
+    const id = Number(r.genealogy_id);
+    conceptOf.set(id, concept);
+    if (!byConcept.has(concept)) byConcept.set(concept, []);
+    byConcept.get(concept)!.push({
+      genealogy_id: id,
+      // `?? 0` would be a version nobody issued. The column is NOT NULL with a
+      // default, so this can only fail if the driver hands back something
+      // unparseable, and 0 is at least visibly not a version number.
+      version: num(r.version) ?? 0,
+      prompt_version: String(r.prompt_version),
+      is_current: r.is_current === true,
+      superseded_at: isoOrNull(r.superseded_at),
+      curatorial_edits: curatorialEdits(r.user_edits).length,
+    });
+  }
+
+  const out = new Map<number, VersionFigures>();
+  for (const [id, concept] of conceptOf) {
+    const siblings = byConcept.get(concept)!;
+    const mine = siblings.find((s) => s.genealogy_id === id)!;
+    out.set(id, {
+      version: mine.version,
+      is_current: mine.is_current,
+      superseded_at: mine.superseded_at,
+      curatorial_edits: mine.curatorial_edits,
+      siblings,
+    });
+  }
+  return out;
+}
+
 /**
  * Every map's report, newest map first.
  *
@@ -761,14 +932,12 @@ async function stagesFor(ids: number[]): Promise<Map<number, StageFigures> | nul
  * about the literature.
  *
  * **The subject and the comparison set part company here, and #209 is where
- * that lands.** A superseded version renders in full at its own address
+ * that landed.** A superseded version renders in full at its own address
  * (#208), report included, so the map named in the URL must be fetchable by id
  * whether or not it is current, while the maps it is compared against must not
- * be. Until #209 splits this function into those two reads, the filter below is
- * both, and a superseded version's own report is not among what it returns.
- * Nothing can reach that state today: no second version can exist until #207
- * ships the build that mints one, and every map in this database is version 1
- * and current.
+ * be. #208 shipped one filter standing in for both, which would have kept a
+ * superseded version's own report out of what this returns; the split below
+ * replaces it.
  *
  * **`n` therefore counts published maps**, which is what the page's "N of the M
  * maps in this system" should always have meant. `pipeline/map_report.py` still
@@ -777,45 +946,119 @@ async function stagesFor(ids: number[]): Promise<Map<number, StageFigures> | nul
  * mid-build is most of its job. The two commands can still not disagree about a
  * figure for a map they both show; the command shows more maps, deliberately,
  * the same way `check_map.py` does.
+ *
+ * ── One subject, one point per concept beside it (issue #209) ───────────────
+ *
+ * **This function answers two questions and they now have two different rules**,
+ * which is the whole of #209. The page finds the map named in the URL inside what
+ * this returns, and it takes every OTHER element of the same array as that map's
+ * reference points. Under versioned maps (#206, #207) those two need opposite
+ * predicates:
+ *
+ * - **the subject** is fetched by id and may be any PUBLISHED version, current or
+ *   superseded, because #208 keeps a cited version readable at its own address
+ *   for ever and a version whose report 404s is a version nobody can check;
+ * - **the comparison set is one map per concept: the current version of each**,
+ *   and it excludes the subject's concept entirely rather than only the subject's
+ *   row.
+ *
+ * **Excluding the concept and not just the row is the load-bearing part.** If a
+ * concept rebuilt three times contributed three points, `n` would inflate and
+ * every figure on every other map's report would silently weight concepts by how
+ * often they were rebuilt. And if only the subject's own row were excluded, a
+ * superseded version's report would carry the current version of ITSELF under the
+ * heading "the other maps in this system", which is both a false population and a
+ * different comparison set from the one the current version sees — where the
+ * design requires the two to be identical. So: `n` is the number of concepts, on
+ * every version's report, for ever.
+ *
+ * `status = ${PUBLISHED_STATUS}` stays exactly where #194 put it and governs
+ * both halves. Currency is a second, narrower test layered on it for the
+ * comparison half only, never a replacement, so a `running` build stays
+ * invisible whether or not anyone remembered the currency filter.
+ *
+ * **A superseded version therefore compares against today's maps and not against
+ * the maps that existed when it was built**, and the page says so in a line,
+ * because the alternative reading would be false: nothing stores what those
+ * figures were on a past date, and reconstructing them would be a derived value
+ * with no recomputer.
+ *
+ * **The probe, and what the fallback is and is not.** Vercel deploys the app
+ * minutes before Render's pre-deploy applies the migration (decision 31), so
+ * `genealogies_current` may not be there yet; the app then reads `status =
+ * ${PUBLISHED_STATUS}` alone, which before migration 025 returns precisely the
+ * same set, because there is exactly one published row per concept. The probe is
+ * unqualified so it resolves the name against the same `search_path` the next
+ * statement does (#92's correction), and its answer is a snapshot, so a view
+ * dropped between the two statements still raises — a known residue.
+ *
+ * **"Correct rather than degraded" is a claim about that window and not about
+ * the branch.** Driven against a fixture holding three versions of one concept
+ * with the view dropped, this fallback returns all six published rows and the
+ * page reads `n = 6` with one term counted three times — the exact inflation the
+ * ticket exists to prevent. That state is unreachable in the deploy window,
+ * because no second version can exist until the worker that mints them has
+ * deployed with the migration that creates the view; it is written down because
+ * the fallback's correctness rests on that and not on anything this function
+ * does, and a later change that lets the two come apart would be silent.
+ *
+ * **A probe here and not `edgeTotalAndReading`'s try/catch**, which is the other
+ * shape this repository uses for the same window. That one asks the exact
+ * question and costs no round trip, and the condition on it is that the fallback
+ * still answers the page's primary question. It does not here: the fallback
+ * changes the POPULATION, and a transient failure caught by a `catch` would
+ * quietly widen `n` from one point per concept to one per version — the precise
+ * defect this ticket exists to prevent, arriving silently, with a logged message
+ * nobody reads. A probe answers false only for a relation that is genuinely
+ * absent, which is the state the fallback is correct in.
  */
-export async function listMapReports(): Promise<MapReport[]> {
-  // **Does the currency view exist?** (issue #208.) A probe rather than a
-  // try/catch, and the difference matters here more than anywhere else in the
-  // app: what is guarded is a FILTER, so a silent fallback on a transient
-  // failure would not lose a figure, it would quietly widen the comparison set
-  // to include superseded versions — the exact defect this filter exists to
-  // prevent, invisible on the page. A probe can only answer "absent" when the
-  // relation is genuinely absent, which is the minutes between the Vercel deploy
-  // and Render's pre-deploy, and there the fallback is exact rather than
-  // degraded: before migration 025 there is one published row per concept, so
-  // `status = 'complete'` returns precisely the set the view would.
+export async function listMapReports(subjectId: number): Promise<MapReport[]> {
+  // **Does the currency view exist?** The probe #208 added, asked once and
+  // handed down to `versionsFor`, so the page cannot name its comparison
+  // population one way and print version figures the other.
   //
   // Unqualified, like the five probes above it, so it resolves the name against
   // the same `search_path` the next statement does (#92's correction).
   const [probe] = (await sql`
     SELECT to_regclass('genealogies_current') IS NOT NULL AS versioned
   `) as { versioned: boolean }[];
-  const currentOnly = probe?.versioned === true
-    ? sql.unsafe("AND EXISTS (SELECT 1 FROM genealogies_current c WHERE c.id = r.genealogy_id)")
-    : sql.unsafe("");
+  const versioned = probe?.versioned === true;
+
   // `sql.unsafe` is the driver's documented escape for a raw fragment, and what
   // it is handed here is a compile-time constant in this file with no value from
   // anywhere else in it. Naming the columns in one place is what lets
   // `pipeline/map_report.py`'s list be compared with this one.
-  const rows = (await sql`
-    SELECT ${sql.unsafe(COLUMNS)} FROM map_report r
-    WHERE r.status = ${PUBLISHED_STATUS}
-    ${currentOnly}
-    ORDER BY r.genealogy_id DESC
-  `) as Record<string, unknown>[];
+  //
+  // `IS DISTINCT FROM`, not `<>`: an id nobody minted makes that subquery NULL,
+  // and `concept <> NULL` is NULL, which would exclude every map and 404 a page
+  // that should 404 for having no subject — the right answer by the wrong route,
+  // and the wrong answer the moment anything else reads this function.
+  const rows = (versioned
+    ? await sql`
+        SELECT ${sql.unsafe(COLUMNS)} FROM map_report m
+        WHERE m.status = ${PUBLISHED_STATUS}
+          AND (m.genealogy_id = ${subjectId}
+               OR (EXISTS (SELECT 1 FROM genealogies_current c
+                            WHERE c.id = m.genealogy_id)
+                   AND m.concept IS DISTINCT FROM
+                       (SELECT concept FROM genealogies WHERE id = ${subjectId})))
+        ORDER BY m.genealogy_id DESC
+      `
+    : await sql`
+        SELECT ${sql.unsafe(COLUMNS)} FROM map_report m
+        WHERE m.status = ${PUBLISHED_STATUS}
+        ORDER BY m.genealogy_id DESC
+      `) as Record<string, unknown>[];
   const ids = rows.map((r) => Number(r.genealogy_id));
   // In parallel, so #162's two extra round trips, #182's two, #193's two,
-  // #198's two and #47's two cost one wait rather than ten on a page already
-  // taking most of a second.
-  const [buckets, types, reading, passes, anchors, stages] = await Promise.all([
-    bucketsFor(ids), typesFor(ids), readYearsFor(ids), passesFor(ids), anchorsFor(ids),
-    stagesFor(ids),
-  ]);
+  // #198's two, #47's two and #209's one cost one wait rather than eleven on a
+  // page already taking most of a second. The probe above cannot join them: the
+  // statement that decides `ids` depends on its answer.
+  const [buckets, types, reading, passes, anchors, stages, versions] =
+    await Promise.all([
+      bucketsFor(ids), typesFor(ids), readYearsFor(ids), passesFor(ids),
+      anchorsFor(ids), stagesFor(ids), versionsFor(versioned, ids),
+    ]);
   return rows.map((r) => {
     const id = Number(r.genealogy_id);
     // `?? []` for the buckets and `?? null` for the types, and the difference is
@@ -825,11 +1068,16 @@ export async function listMapReports(): Promise<MapReport[]> {
     // series over the papers read follows the types: one row per map that
     // exists, so absence means the read did not happen. The pass figures follow
     // both.
+    // The version figures follow the types too: once migration 025 is applied
+    // every published map has a row, because the columns are NOT NULL with
+    // defaults and the backfill made the existing maps version 1. So a map
+    // missing from `versions` means the read did not happen.
     return shape(r, buckets.get(id) ?? [],
                  types === null ? null : types.get(id) ?? null,
                  reading === null ? null : reading.get(id) ?? null,
                  passes === null ? null : passes.get(id) ?? null,
                  anchors === null ? null : anchors.get(id) ?? null,
-                 stages === null ? null : stages.get(id) ?? null);
+                 stages === null ? null : stages.get(id) ?? null,
+                 versions === null ? null : versions.get(id) ?? null);
   });
 }
