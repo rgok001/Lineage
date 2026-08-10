@@ -1356,7 +1356,16 @@ invented date; if nothing of that concept is current it says so rather than
 offering a link it does not have. Nothing is coloured: the stamp colours mean
 verified and inferred and are not spent on chrome. **On every map in this
 database the component renders nothing at all**, because one published version
-per concept means `version 1 of 1`, current. The report page carries the same
+per concept means `version 1 of 1`, current. **Whether it renders anything is
+decided before any comparison against the page's map id**, and that is not
+tidiness: the first version of it decided on `published.filter(v => v.id !== id)`
+and got `13 !== "13"` on the evidence page alone, because `genealogies.id` is
+`BIGINT`, the driver leaves `int8` as a string, and `Genealogy.id` is typed
+`number` with nothing converting it. The component then returned an empty `<div>`
+whose bottom margin put **14.4 px** on that page with the text byte-identical.
+Nothing in the fixture comparison could see it; the live before-and-after reading
+takes page height as well as text, which is the only reason it was caught
+(`/g/13/evidence` 56,371 px before against 56,386 px after, CLS 0 either way). The report page carries the same
 facts as figures in its run section instead (#209), and the export's preamble
 names the version only when there is more than one to disambiguate — the BibTeX
 is untouched, because it cites papers and not maps.

@@ -55,24 +55,39 @@ export function supersededOn(v: unknown): string | null {
 
 export default function VersionNote({
   id, concept, versions,
-}: { id: number; concept: string; versions: MapVersions | null }) {
+}: {
+  /** A map id as its page has it, which is a number on three of the four pages
+   *  and a **string** on the evidence page: `genealogies.id` is `BIGINT`, the
+   *  driver hands `int8` back as a string, and `Genealogy.id` is typed `number`
+   *  without anything converting it. Compared with `Number()` below rather than
+   *  trusted, because the first version of this component compared `v.id !== id`
+   *  and got `13 !== "13"` on exactly one page. */
+  id: number | string;
+  concept: string;
+  versions: MapVersions | null;
+}) {
   // Null is "this deployment's schema has no versions" (the minutes between the
   // Vercel deploy and Render's pre-deploy), not "one version": nothing is said,
   // which is what these pages said before this ticket.
   if (!versions) return null;
   const { version, is_current, published } = versions;
+  // **Whether anything renders is decided before anything is measured against
+  // `id`.** Written the other way round it returned an empty `<div>` on a map
+  // with one version, whose bottom margin put 14.4 px on the evidence page with
+  // the text byte-identical — invisible to a text comparison, and caught only
+  // because the live reading takes page height too (#208).
+  const showNote = !is_current;
+  const showStrip = published.length > 1;
+  if (!showNote && !showStrip) return null;
+
   const current = published.find((v) => v.is_current) ?? null;
-  const others = published.filter((v) => v.id !== id);
+  const others = published.filter((v) => Number(v.id) !== Number(id));
   const when = supersededOn(versions.superseded_at);
-  // A version that is current and alone says nothing. The strip earns its line
-  // only when there is somewhere else to go, and the note only when this is not
-  // the live reading.
-  if (is_current && others.length === 0) return null;
 
   return (
     <div style={{ fontFamily: "var(--font-mono)", fontSize: ".72rem", lineHeight: 1.75,
       color: "var(--ink-soft)", margin: "0 0 .9rem" }}>
-      {!is_current && (
+      {showNote && (
         <div>
           This is version {version} of the “{concept}” map.{" "}
           {/* Two wordings, because two facts. A version the swap demoted carries
@@ -97,7 +112,7 @@ export default function VersionNote({
           )}
         </div>
       )}
-      {published.length > 1 && (
+      {showStrip && (
         <div style={{ color: "var(--ink-faint)" }}>
           Version {version} of {published.length}
           {is_current && ", the current one"}
