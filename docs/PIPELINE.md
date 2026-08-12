@@ -881,9 +881,26 @@ code stand — they cannot be told from honest empties, and invalidating every
 honest entry to chase a suspicion would cost a full re-sweep per map; an
 operator who suspects one deletes that file. The transport floor aborts when a
 source with at least one paper got not one honest answer of any kind — every
-fetch failed, the incident-12 shape the floor was built for; a partial-failure
-run instead prints one summary count line and continues, reporting rather than
-thresholding. The differential arm aborts when every honest answer for one
+fetch failed, the incident-12 shape the floor was built for. **Any transport
+failure at all aborts the sweep** (#219, breaking #217's first cut, which
+printed one summary count line and continued): the floor was fed from
+`fetch_references`, which answers from `data/s2_cache` when it can and calls the
+network otherwise, so one cached entry from any earlier run satisfied it for the
+whole source — and the cache exists precisely because the map was built before,
+which makes that the state of every rebuild. Measured on the ticket: a 12-paper
+corpus with one cached entry and eleven failing calls exited 0 and swapped 2
+edges in over a map that had 30, for two classifications paid. So the accounting
+identity that guards the swap (every candidate accounted for) now covers the
+sweep as well — zero failed fetches or no swap, no ratio, nothing to
+recalibrate. The abort lands at the end of the sweep, before a single
+classification is bought, which is free because of #217: failures are never
+cached, so a re-run retries exactly the failed papers, and anything classified
+by an earlier run is still in the #172 cache. The message names both counts —
+papers that answered, split into the reference call and the cache, against
+papers whose fetch failed — with the denominator being **fetches attempted, not
+the corpus** (the old summary line counted a paper served from disk as a fetch),
+and it prescribes no cache deletion. The differential arm aborts when every
+honest answer for one
 source is empty while another source returned references — an id scheme the
 call rejects wholesale — dormant today with one source, live when F7's
 `papers.source` column lands. A corpus whose every answer is an honest empty

@@ -25,9 +25,13 @@ Design:
   nothing swapped; a swept source none of whose reference fetches got an answer
   of any kind aborts before anything is bought (#217: the floor measures call
   success, not corpus shape — a 404 is an answer, and failures are never
-  cached). Under --dry-run the floors report instead of aborting: the dry run's
-  exit code never depends on corpus data. The slow, failure-prone half —
-  S2 fetches and LLM calls — happens on no database connection at all.
+  cached); and ANY paper whose reference fetch failed aborts the run at the end
+  of the sweep, before a single classification is bought (#219: the same
+  accounting identity that guards the swap, carried back to the sweep — a
+  candidate list built without every paper's references is not a smaller map,
+  it is an unknown one). Under --dry-run the floors report instead of aborting:
+  the dry run's exit code never depends on corpus data. The slow, failure-prone
+  half — S2 fetches and LLM calls — happens on no database connection at all.
 
 Usage:
   python pipeline/stage_d_edges.py "attention"
@@ -187,6 +191,17 @@ def store_classification(key: str, ec: "EdgeClass", model: str) -> None:
         print(f"    (could not cache classification: {exc})", file=sys.stderr)
 
 
+def s2_cache_file(arxiv_id: str) -> Path:
+    """Where this paper's reference answer is kept, if it has one.
+
+    Factored out of `fetch_references` because the sweep PROBES it before
+    calling (#219): a paper this file answers for cost no call, and the abort
+    has to say how many of each. One spelling of the path, so the probe can
+    never disagree with the read that follows it.
+    """
+    return data_dir() / "s2_cache" / f"{arxiv_id.replace('/', '_')}.json"
+
+
 def fetch_references(arxiv_id: str) -> "list[dict] | None":
     """References with citation contexts, cached on disk. The shared unauthenticated
     Semantic Scholar pool throttles hard on repeat runs, so cache to survive them.
@@ -208,9 +223,8 @@ def fetch_references(arxiv_id: str) -> "list[dict] | None":
     entry to chase a suspicion would cost a full re-sweep per map; an operator
     who suspects one deletes that file and the re-fetch answers honestly.
     """
-    cache = data_dir() / "s2_cache"
-    cache.mkdir(parents=True, exist_ok=True)
-    f = cache / f"{arxiv_id.replace('/', '_')}.json"
+    f = s2_cache_file(arxiv_id)
+    f.parent.mkdir(parents=True, exist_ok=True)
     if f.exists():
         return json.loads(f.read_text(encoding="utf-8"))
     try:
@@ -315,14 +329,21 @@ def main() -> None:
     # candidate edges: citing (newer, descendant) -> cited (older, ancestor), cross-node.
     # The sweep also keeps the books the floors below read: which sources
     # contributed papers, how many of each source's fetches got an honest
-    # answer of any kind, and whether any paper of a source returned a
-    # reference at all.
+    # answer of any kind, whether any paper of a source returned a reference at
+    # all, and — since #219 — which answers came from a call and which from
+    # disk. `fetch_references` has two provenances behind one return value, so
+    # a count taken from it alone cannot tell a sweep that worked from a sweep
+    # that read one cached entry while every call failed.
     candidates = []
     papers_by_source: dict[str, int] = {}
     honest_by_source: dict[str, int] = {}
     sources_with_refs: set[str] = set()
-    failed_fetches = 0
+    failed_fetches = answered_live = answered_cache = 0
     for citing in corpus_ids:
+        # Probed before the call, never inferred after it: the file is written
+        # by the fetch itself, so asking afterwards would call every fresh
+        # answer a cache hit.
+        from_cache = s2_cache_file(citing).exists()
         refs = fetch_references(citing)
         # papers.source does not exist yet: every paper this stage can see was
         # fetched from arXiv, so the label is a constant until F7's migration
@@ -337,6 +358,10 @@ def main() -> None:
             failed_fetches += 1
             time.sleep(S2_PAUSE_S)
             continue
+        if from_cache:
+            answered_cache += 1
+        else:
+            answered_live += 1
         honest_by_source[src] = honest_by_source.get(src, 0) + 1
         if refs:
             sources_with_refs.add(src)
@@ -363,7 +388,10 @@ def main() -> None:
     # obscure papers, #186's shape) could then never complete this stage, with
     # an error blaming an outage that never happened. fetch_references' own
     # per-paper comment had it right all along: a 404 is an answer. No ratio
-    # anywhere, nothing to recalibrate (decisions 24, 25).
+    # anywhere, nothing to recalibrate (decisions 24, 25). #219 added the third
+    # arm: measuring call success is not the same as requiring it, and the
+    # per-source floor fed on `honest_by_source` could be satisfied by answers
+    # no call was made for.
     would_abort: list[str] = []
 
     def floor(sentence: str) -> None:
@@ -376,11 +404,13 @@ def main() -> None:
         else:
             sys.exit("\nAborting: " + sentence)
 
-    if failed_fetches:
-        # Reporting, not a threshold: a partial-failure run continues, its
-        # failed papers uncached, so the next run retries exactly those.
-        print(f"  {failed_fetches} of {len(corpus_ids)} reference fetches failed "
-              f"and were not cached; a re-run retries only those.")
+    # A source that got no honest answer at all has its own message below,
+    # which names the source; it is the total case of the same fault the
+    # partial abort catches, said better, so the partial arm stands down for it
+    # rather than saying it twice. Computed rather than inferred from `floor`
+    # having exited, because under --dry-run nothing exits.
+    all_failed_sources = [s for s in papers_by_source
+                          if honest_by_source.get(s, 0) == 0]
     for src in sorted(papers_by_source):
         if honest_by_source.get(src, 0) == 0:
             # The transport floor: at least one paper and not one honest
@@ -406,6 +436,35 @@ def main() -> None:
                   f"0 with references) while another source returned references. "
                   f"That looks like an id scheme the reference call rejects for "
                   f"every {src} paper. The map's edges have NOT been touched.")
+    if failed_fetches and not all_failed_sources:
+        # #219: the accounting identity that guards the swap, carried back to
+        # the sweep. The swap replaces the WHOLE edge set, so a candidate list
+        # assembled without one paper's references does not build a smaller
+        # map, it builds an unknown one: the edges those papers would have
+        # contributed are indistinguishable from edges that do not exist, and
+        # the map ends up asserting their absence. Zero failures is the only
+        # number that permits proceeding — there is no ratio here to calibrate,
+        # for the reason decisions 24 and 25 give.
+        #
+        # Aborting here, before the classification loop, is free precisely
+        # because of #217: failures are never cached, so a re-run retries
+        # exactly these papers and reads the rest from disk. Measured on the
+        # ticket: the same corpus previously paid for two classifications and
+        # swapped two edges over a map that had thirty.
+        attempted = failed_fetches + answered_live
+        floor(f"{failed_fetches} of the {attempted} reference fetch(es) this run "
+              f"attempted failed, so the sweep is incomplete. Of the swept "
+              f"papers, {answered_live + answered_cache} answered "
+              f"({answered_live} from the reference call, {answered_cache} "
+              f"already on disk from an earlier run) and {failed_fetches} did "
+              f"not answer at all. A map built from a partial sweep cannot be "
+              f"told from a map that genuinely has fewer edges, and this swap "
+              f"replaces every edge, so the run stops before buying anything. "
+              f"The map's edges have NOT been touched. The failed fetches were "
+              f"not cached, so a re-run retries exactly those {failed_fetches} "
+              f"paper(s) and reads the rest from cache; anything classified by "
+              f"an earlier run is still cached, so the retry re-buys none of "
+              f"it.")
     if papers_by_source and not sources_with_refs and not failed_fetches and not would_abort:
         # Everything empty, everything honest: the corpus S2 holds no
         # references for. The honest edge-less map this corpus produced
