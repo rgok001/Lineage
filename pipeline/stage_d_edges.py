@@ -22,8 +22,11 @@ Design:
   short transaction at the very end, entered only when the run has consumed its
   whole candidate list. A spend-cap hit aborts with nothing swapped and marks a
   mid-build row aborted_spend_cap; ten consecutive call failures abort with
-  nothing swapped; a swept source none of whose papers returned a single
-  reference aborts before anything is bought. The slow, failure-prone half —
+  nothing swapped; a swept source none of whose reference fetches got an answer
+  of any kind aborts before anything is bought (#217: the floor measures call
+  success, not corpus shape — a 404 is an answer, and failures are never
+  cached). Under --dry-run the floors report instead of aborting: the dry run's
+  exit code never depends on corpus data. The slow, failure-prone half —
   S2 fetches and LLM calls — happens on no database connection at all.
 
 Usage:
@@ -184,26 +187,49 @@ def store_classification(key: str, ec: "EdgeClass", model: str) -> None:
         print(f"    (could not cache classification: {exc})", file=sys.stderr)
 
 
-def fetch_references(arxiv_id: str) -> list[dict]:
+def fetch_references(arxiv_id: str) -> "list[dict] | None":
     """References with citation contexts, cached on disk. The shared unauthenticated
-    Semantic Scholar pool throttles hard on repeat runs, so cache to survive them."""
+    Semantic Scholar pool throttles hard on repeat runs, so cache to survive them.
+
+    Three outcomes, and the caller's floor runs on the distinction (#217):
+    a list of references; an HONEST EMPTY `[]` — HTTP 200 with no data, or a
+    404, because Semantic Scholar does not hold every arXiv paper and "no
+    citation data for this one" is an answer, not a broken run; or None for a
+    transport FAILURE — retries exhausted, a connection error, any non-404 HTTP
+    error. Only answers are cached. The old code cached `[]` on every
+    exception, which was the entire cache-poisoning mechanism: an outage's
+    failures replayed from disk forever, indistinguishable from honest data,
+    and the abort text taught operators to delete entries that may have been
+    real answers. The claims cache beside this states the house law: caching a
+    failure would make the failure permanent and free. A re-run after an
+    outage retries exactly the failed papers (paced by S2_PAUSE_S) and hits
+    cache for the rest. Legacy `[]` entries written during past outages stand —
+    they cannot be told from honest empties, and invalidating every honest
+    entry to chase a suspicion would cost a full re-sweep per map; an operator
+    who suspects one deletes that file and the re-fetch answers honestly.
+    """
     cache = data_dir() / "s2_cache"
     cache.mkdir(parents=True, exist_ok=True)
     f = cache / f"{arxiv_id.replace('/', '_')}.json"
     if f.exists():
         return json.loads(f.read_text(encoding="utf-8"))
-    # Semantic Scholar does not hold every arXiv paper. A 404 means "no citation
-    # data for this one", not a broken run: treat it as an empty reference list,
-    # cache that, and carry on. Any transport error is likewise per-paper, so one
-    # missing id cannot abort edge classification for the whole genealogy.
     try:
         data = get_json(f"{S2}/paper/arXiv:{arxiv_id}/references", {
             "fields": "contexts,intents,isInfluential,title,externalIds", "limit": 1000,
         })
         refs = data.get("data", [])
     except Exception as e:
-        print(f"    ⚠ no S2 references for {arxiv_id} ({type(e).__name__}); treating as none")
-        refs = []
+        # get_json raises requests.HTTPError from raise_for_status, which
+        # carries the response; only a 404 is an answer. Everything else —
+        # including the RuntimeError it raises when retries run out — is a
+        # failure, returned as None and written nowhere.
+        resp = getattr(e, "response", None)
+        if resp is not None and getattr(resp, "status_code", None) == 404:
+            refs = []
+        else:
+            print(f"    ⚠ reference fetch failed for {arxiv_id} "
+                  f"({type(e).__name__}: {str(e)[:120]}); not cached, a re-run retries it")
+            return None
     f.write_text(json.dumps(refs), encoding="utf-8")
     return refs
 
@@ -287,12 +313,15 @@ def main() -> None:
               f"so they are not candidates. That is what --corpus on Stage C means.)")
 
     # candidate edges: citing (newer, descendant) -> cited (older, ancestor), cross-node.
-    # The sweep also keeps the books the per-source floor below reads: which
-    # sources contributed papers, and whether any paper of a source returned a
+    # The sweep also keeps the books the floors below read: which sources
+    # contributed papers, how many of each source's fetches got an honest
+    # answer of any kind, and whether any paper of a source returned a
     # reference at all.
     candidates = []
     papers_by_source: dict[str, int] = {}
+    honest_by_source: dict[str, int] = {}
     sources_with_refs: set[str] = set()
+    failed_fetches = 0
     for citing in corpus_ids:
         refs = fetch_references(citing)
         # papers.source does not exist yet: every paper this stage can see was
@@ -304,6 +333,11 @@ def main() -> None:
         # produces no candidates at all, which no floor over candidates can see.
         src = "arxiv"
         papers_by_source[src] = papers_by_source.get(src, 0) + 1
+        if refs is None:
+            failed_fetches += 1
+            time.sleep(S2_PAUSE_S)
+            continue
+        honest_by_source[src] = honest_by_source.get(src, 0) + 1
         if refs:
             sources_with_refs.add(src)
         for ref in refs:
@@ -322,21 +356,63 @@ def main() -> None:
             })
         time.sleep(S2_PAUSE_S)
 
-    # THE PER-SOURCE ZERO FLOOR. A source that contributed at least one paper
-    # and returned references for none of them is a broken reference call
-    # wearing a result's clothes, not that many papers' bad luck: the run would
-    # log a warning per paper, assemble a map where every such paper carries
-    # zero edges, and nothing would error. No ratio, nothing to recalibrate —
-    # one paper of a source returning one reference clears its source.
+    # THE FLOORS, measuring call success rather than corpus shape (#217). The
+    # old floor counted references returned — a fact about the corpus — when
+    # the failure it exists to catch is the call failing — a fact about the
+    # transport. A corpus S2 genuinely holds no references for (young or
+    # obscure papers, #186's shape) could then never complete this stage, with
+    # an error blaming an outage that never happened. fetch_references' own
+    # per-paper comment had it right all along: a 404 is an answer. No ratio
+    # anywhere, nothing to recalibrate (decisions 24, 25).
+    would_abort: list[str] = []
+
+    def floor(sentence: str) -> None:
+        # Under --dry-run a floor is a finding for the report, never an exit:
+        # the engineering rule's contract is "estimates cost without calling
+        # the LLM", and the estimate's answer may be "nothing — the real run
+        # would abort". A dry run's exit code must not depend on corpus data.
+        if args.dry_run:
+            would_abort.append(sentence)
+        else:
+            sys.exit("\nAborting: " + sentence)
+
+    if failed_fetches:
+        # Reporting, not a threshold: a partial-failure run continues, its
+        # failed papers uncached, so the next run retries exactly those.
+        print(f"  {failed_fetches} of {len(corpus_ids)} reference fetches failed "
+              f"and were not cached; a re-run retries only those.")
     for src in sorted(papers_by_source):
-        if src not in sources_with_refs:
-            sys.exit(f"\nAborting: all {papers_by_source[src]} swept {src} paper(s) "
-                     f"returned no references at all. That is the reference call "
-                     f"failing for the whole source, not per-paper bad luck. The "
-                     f"map's edges have NOT been touched. Beware that failed "
-                     f"fetches are cached as empty reference lists (data/s2_cache); "
-                     f"if the cause was an outage, delete those entries before "
-                     f"re-running, or the cache will replay the outage forever.")
+        if honest_by_source.get(src, 0) == 0:
+            # The transport floor: at least one paper and not one honest
+            # answer of any kind — every fetch failed. Degenerate zero,
+            # nothing to calibrate. This is the incident-12 shape the floor
+            # was built for, and it can never fire on a corpus of honest
+            # 404s, because those are answers.
+            floor(f"all {papers_by_source[src]} reference fetches for the swept "
+                  f"{src} paper(s) failed — not one answered, not even with an "
+                  f"empty list. That is the reference "
+                  f"call failing for the whole source, not the corpus. The map's "
+                  f"edges have NOT been touched, and failures are never cached, "
+                  f"so a re-run after the cause is fixed retries exactly these "
+                  f"papers.")
+        elif src not in sources_with_refs and sources_with_refs:
+            # The differential arm, for F7's actual failure: every honest
+            # answer for this source empty while another source proved the
+            # call works is an id scheme S2 rejects wholesale, not that many
+            # papers' bad luck. Dormant today — one source, no comparator —
+            # live the moment papers.source exists.
+            floor(f"every honest answer for the {papers_by_source[src]} swept "
+                  f"{src} paper(s) was empty ({honest_by_source[src]} answered, "
+                  f"0 with references) while another source returned references. "
+                  f"That looks like an id scheme the reference call rejects for "
+                  f"every {src} paper. The map's edges have NOT been touched.")
+    if papers_by_source and not sources_with_refs and not failed_fetches and not would_abort:
+        # Everything empty, everything honest: the corpus S2 holds no
+        # references for. The honest edge-less map this corpus produced
+        # before #2's floor, now with the reason stated.
+        print(f"  ⚠ all {len(corpus_ids)} swept paper(s) returned no reference "
+              f"data from S2 (honest empties, not failures); this map will "
+              f"have no edges.")
 
     print(f"  {len(candidates)} cross-node citation link(s) found\n")
     for e in candidates:
@@ -374,6 +450,10 @@ def main() -> None:
             print(f"\n[dry-run] no classification performed. Of {len(candidates)} candidate(s), "
                   f"{free} already classified and would cost nothing; "
                   f"{len(candidates) - free} would be bought.")
+            # A floor finding is part of the report the human asked for, not a
+            # failure of the reporter (#217): the run still exits 0.
+            for sentence in would_abort:
+                print(f"[dry-run] the real run would abort at the sweep: {sentence}")
         else:
             print("\nNo edges to build.")
         return

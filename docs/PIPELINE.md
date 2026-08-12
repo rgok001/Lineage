@@ -802,7 +802,8 @@ upsert and the edge decision are one transaction.
 
 **Stage D: edge classification** (`stage_d_edges.py <concept>`).
 Pulls references and citation contexts from Semantic Scholar (public endpoint,
-disk-cached in `data/s2_cache`; the shared anonymous pool throttles hard on
+disk-cached in `data/s2_cache` — answers only, failed fetches are never written
+(#217); the shared anonymous pool throttles hard on
 repeat runs and the client backs off through 429s). Finds citations that cross
 node boundaries, then Claude classifies each into the six-type taxonomy with a
 confidence score. The LLM classifies only: edge quotes are the two papers'
@@ -864,13 +865,35 @@ leaves its status alone, since its edges were not touched. The
 consecutive-failure guard now counts consecutive failures (reset on any answered
 call) and aborts at ten regardless of how many candidates already classified —
 the old guard required `written == 0`, so one success out of 305 immunised the
-run. And the reference sweep carries a per-source zero floor: a source that
-contributed at least one paper and returned references for none of them aborts
-the stage naming the source, because that is a broken call wearing a result's
-clothes — today every paper is arXiv, so the label is a constant, and the arm
-becomes real when F7's `papers.source` column lands. Every abort leaves the
-previous edges exactly as the run found them, and costs no dollars to retry:
-everything classified before it is in the #172 cache.
+run. And the reference sweep carries floors that measure call success, not
+corpus shape (#217 — the first cut counted references returned, so a corpus S2
+genuinely holds no references for, #186's young-or-niche shape, could never
+complete this stage and was blamed for an outage that never happened, with an
+abort message prescribing deletion of cache entries that were honest data).
+`fetch_references` now distinguishes an answer with references, an honest empty
+(HTTP 200 with none, or a 404 — S2 does not hold every arXiv paper, and "no
+citation data for this one" is an answer), and a transport failure (retries
+exhausted, any non-404 error), and **failures are never cached**: only answers
+reach `data/s2_cache`, so an outage cannot replay from disk, a re-run retries
+exactly the failed papers and hits cache for the rest, and the old
+delete-the-cache instruction is retired. Legacy `[]` entries written by the old
+code stand — they cannot be told from honest empties, and invalidating every
+honest entry to chase a suspicion would cost a full re-sweep per map; an
+operator who suspects one deletes that file. The transport floor aborts when a
+source with at least one paper got not one honest answer of any kind — every
+fetch failed, the incident-12 shape the floor was built for; a partial-failure
+run instead prints one summary count line and continues, reporting rather than
+thresholding. The differential arm aborts when every honest answer for one
+source is empty while another source returned references — an id scheme the
+call rejects wholesale — dormant today with one source, live when F7's
+`papers.source` column lands. A corpus whose every answer is an honest empty
+warns and continues to the honest edge-less map it produced before #2's floor
+existed, now with the reason stated. Under `--dry-run` the floors still
+evaluate but print their finding as a would-abort line inside the `[dry-run]`
+report and the run exits 0: the dry-run contract is "estimates cost without
+calling the LLM", and its exit code never depends on corpus data. Every abort
+leaves the previous edges exactly as the run found them, and costs no dollars
+to retry: everything classified before it is in the #172 cache.
 
 **Stage E: grounding and assembly** (`stage_e_ground.py <concept>`).
 First sweeps out any edge naming a concept-state `genealogies.nodes` no longer
