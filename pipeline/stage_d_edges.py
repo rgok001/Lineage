@@ -17,6 +17,14 @@ Design:
 - Every successful classification is CACHED ON DISK (issue #172), keyed by the
   semantic inputs of the question. A pair whose two papers, definitions, labels
   and citation contexts are unchanged is never bought twice.
+- The rebuild is ATOMIC (issue #2). Every candidate is classified into memory
+  first; the DELETE of the old edges and the INSERT of the new set share one
+  short transaction at the very end, entered only when the run has consumed its
+  whole candidate list. A spend-cap hit aborts with nothing swapped and marks a
+  mid-build row aborted_spend_cap; ten consecutive call failures abort with
+  nothing swapped; a swept source none of whose papers returned a single
+  reference aborts before anything is bought. The slow, failure-prone half —
+  S2 fetches and LLM calls — happens on no database connection at all.
 
 Usage:
   python pipeline/stage_d_edges.py "attention"
@@ -194,6 +202,26 @@ def fetch_references(arxiv_id: str) -> list[dict]:
     return refs
 
 
+def mark_aborted_spend_cap(gen_id: int) -> bool:
+    """Record a cap abort on the genealogy row, on a fresh connection.
+
+    Guarded to the mid-build state: only a 'running' row takes the mark, which
+    is the first thing ever to write this status (it has been a legal value
+    since migration 001). A published map this stage was run against by hand
+    keeps its status — its edges were not touched, so 'complete' is still the
+    truth about it, and migration 025's CHECK would refuse the write on a
+    current row anyway.
+    """
+    c = psycopg.connect(env("DATABASE_URL"), autocommit=True)
+    try:
+        cur = c.execute(
+            "UPDATE genealogies SET status='aborted_spend_cap', updated_at=now() "
+            "WHERE id=%s AND status='running'", (gen_id,))
+        return cur.rowcount == 1
+    finally:
+        c.close()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Stage D: classify genealogy edges.")
     ap.add_argument("concept")
@@ -237,16 +265,42 @@ def main() -> None:
     # agreement, and `nodes` is the one Stage C has just decided.
     corpus_ids = set(papers) & set(node_of)
     outside = len(papers) - len(corpus_ids)
+
+    # Every read this stage needs is now in memory, and nothing below touches
+    # the database again until the swap at the very end. The reference sweep can
+    # take ten minutes or more under rate limiting and the classification loop
+    # is longer still; holding a connection across a long external phase once
+    # left a transaction idle and Postgres terminated it. So: no connection at
+    # all through the slow, failure-prone half.
+    conn.close()
+
     print(f'Finding citation links among {len(corpus_ids)} defining papers '
           f"across {len(nodes)} concept-states…")
     if outside:
         print(f"  ({outside} paper(s) define this concept but are not in this map, "
               f"so they are not candidates. That is what --corpus on Stage C means.)")
 
-    # candidate edges: citing (newer, descendant) -> cited (older, ancestor), cross-node
+    # candidate edges: citing (newer, descendant) -> cited (older, ancestor), cross-node.
+    # The sweep also keeps the books the per-source floor below reads: which
+    # sources contributed papers, and whether any paper of a source returned a
+    # reference at all.
     candidates = []
+    papers_by_source: dict[str, int] = {}
+    sources_with_refs: set[str] = set()
     for citing in corpus_ids:
-        for ref in fetch_references(citing):
+        refs = fetch_references(citing)
+        # papers.source does not exist yet: every paper this stage can see was
+        # fetched from arXiv, so the label is a constant until F7's migration
+        # adds the column, at which point it is read per paper. The floor is
+        # built per-source NOW because designing it into an atomic rebuild is
+        # cheaper than retrofitting it (#2's F7 note), and because the failure
+        # it catches — an id scheme S2 rejects for every paper of one source —
+        # produces no candidates at all, which no floor over candidates can see.
+        src = "arxiv"
+        papers_by_source[src] = papers_by_source.get(src, 0) + 1
+        if refs:
+            sources_with_refs.add(src)
+        for ref in refs:
             ext = (ref.get("citedPaper") or {}).get("externalIds") or {}
             cited = ext.get("ArXiv")
             if cited not in corpus_ids or cited == citing:
@@ -261,6 +315,22 @@ def main() -> None:
                 "intents": ref.get("intents"),
             })
         time.sleep(S2_PAUSE_S)
+
+    # THE PER-SOURCE ZERO FLOOR. A source that contributed at least one paper
+    # and returned references for none of them is a broken reference call
+    # wearing a result's clothes, not that many papers' bad luck: the run would
+    # log a warning per paper, assemble a map where every such paper carries
+    # zero edges, and nothing would error. No ratio, nothing to recalibrate —
+    # one paper of a source returning one reference clears its source.
+    for src in sorted(papers_by_source):
+        if src not in sources_with_refs:
+            sys.exit(f"\nAborting: all {papers_by_source[src]} swept {src} paper(s) "
+                     f"returned no references at all. That is the reference call "
+                     f"failing for the whole source, not per-paper bad luck. The "
+                     f"map's edges have NOT been touched. Beware that failed "
+                     f"fetches are cached as empty reference lists (data/s2_cache); "
+                     f"if the cause was an outage, delete those entries before "
+                     f"re-running, or the cache will replay the outage forever.")
 
     print(f"  {len(candidates)} cross-node citation link(s) found\n")
     for e in candidates:
@@ -317,36 +387,27 @@ def main() -> None:
     print(f"\n{sum(h is not None for h in hits)} of {len(candidates)} already classified "
           f"and will cost nothing; {sum(h is None for h in hits)} to buy.")
 
-    # Reconnect before writing. Every read this stage needs is already in memory,
-    # and fetching references from Semantic Scholar can take ten minutes or more
-    # under rate limiting. Holding the original connection across that gap left a
-    # transaction idle and Postgres terminated it (idle-in-transaction timeout),
-    # which surfaced here at the first write. A long external phase should never
-    # straddle a database connection.
-    conn.close()
-    conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
-
-    # The old edges are NOT deleted yet. This used to clear them here, before a
-    # single classification had been attempted, on the reasonable assumption that
-    # the run would produce replacements. On 2026-07-31 the account ran out of
-    # credit, all 305 classifications returned 400, and the map was left with 27
-    # concept-states and no edges at all: the delete had already happened and
-    # there was nothing to put back.
+    # EVERYTHING IS CLASSIFIED INTO MEMORY FIRST; the database is not touched
+    # until the swap at the end. Two incidents shaped this. On 2026-07-31 the
+    # account ran out of credit, all 305 classifications returned 400, and the
+    # map was left with 27 concept-states and no edges at all: the DELETE had
+    # already run and there was nothing to put back. The interim fix deleted on
+    # first success, which narrowed that window and could not close it — a cap
+    # hit at edge 40 of 305 still left a 40-edge map that Stage E would publish
+    # (#2). Now the previous edges exist until the replacement set is complete.
+    # Destroy nothing until you can replace everything.
     #
-    # Deletion now waits for the first successful classification, so a run that
-    # cannot classify anything leaves the previous map exactly as it found it.
-    # Destroy nothing until you can replace something.
-    edges_cleared = False
+    # All-or-nothing costs money only if classifications are unpaid-for on
+    # abort, which is what the disk cache (#172) exists to prevent: an abort
+    # here costs wall clock and no dollars, because everything bought before it
+    # is cached and a re-run reuses it.
     spend = 0.0
-    written = 0
-    # A run where nothing at all classifies is a broken call, not broken
-    # data, and this stage has already DELETEd the map's edges by the time
-    # it finds out. Stopping early keeps the log short enough to read and
-    # says plainly that the edges need rebuilding.
-    failures = 0
+    to_write = []
+    skipped = failed = 0
+    consecutive_failures = 0
     reused = bought = 0
     print()
-    for e, key, hit in zip(candidates, keys, hits):
+    for done, (e, key, hit) in enumerate(zip(candidates, keys, hits), 1):
         src, dst = papers[e["src"]], papers[e["dst"]]
         ec = hit
         if ec is None:
@@ -367,65 +428,108 @@ def main() -> None:
                 # balance, a rejected schema) wearing the costume of 305 unlucky
                 # edges. Decision 14 says one bad edge must not cost a trace; it does
                 # not say the reason should be thrown away.
-                failures += 1
+                failed += 1
+                consecutive_failures += 1
                 print(f"  {e['src']} -> {e['dst']}: classification failed, skipped "
                       f"({type(exc).__name__}: {str(exc)[:200]})")
-                if failures == CONSECUTIVE_FAILURE_LIMIT and written == 0:
-                    sys.exit(f"\nAborting: {failures} classifications in a row failed and not one "
-                             f"succeeded. This is the call failing, not the edges. The map's "
-                             f"existing edges have NOT been touched; fix the cause and re-run.")
+                # CONSECUTIVE means consecutive now: the counter resets on any
+                # answered call. The old guard tripped only when `written == 0`,
+                # so one success out of 305 immunised the whole run against it
+                # (#2), and `failures` was cumulative despite the constant's
+                # name, so ten failures scattered across three hundred healthy
+                # candidates could trip a guard called CONSECUTIVE.
+                if consecutive_failures == CONSECUTIVE_FAILURE_LIMIT:
+                    sys.exit(f"\nAborting: {consecutive_failures} classifications in a row "
+                             f"failed. This is the call failing, not the edges. The map's "
+                             f"existing edges have NOT been touched, and everything "
+                             f"classified before the failures is cached, so a re-run "
+                             f"after the cause is fixed re-buys none of it.")
                 continue
+            consecutive_failures = 0
             spend += cost_usd(args.model, resp.usage.input_tokens, resp.usage.output_tokens)
             ec = resp.parsed_output
             if ec is None:
+                skipped += 1
                 print(f"  {e['src']} -> {e['dst']}: no classification")
-                continue
-            # Only ever after a parsed answer. A cache written from a failure
-            # would make the failure permanent and free, which is the one thing
-            # worse than paying for it again.
-            store_classification(key, ec, args.model)
-            bought += 1
+            else:
+                # Only ever after a parsed answer. A cache written from a failure
+                # would make the failure permanent and free, which is the one thing
+                # worse than paying for it again.
+                store_classification(key, ec, args.model)
+                bought += 1
         else:
             reused += 1
 
-        # Evidence quotes must ground against OUR extracted text (Stage E), so we
-        # store each paper's Stage-B definition quote — both already string-verified.
-        # The Semantic Scholar citation context is a classification signal only: it
-        # comes from S2's PDF extraction and would not match our LaTeX text — so we
-        # keep it as the edge's BASIS (what/how), not as a groundable quote. The
-        # rationale is the model's one-sentence reading of that basis. Neither may
-        # ever wear the verified stamp; the app renders both as unverified context.
-        target_quote = dst["quote"]
-        citation_context = "\n\n".join(e["contexts"]) or None
-        if not edges_cleared:
-            # First success: now it is safe to replace what was there.
-            conn.execute("DELETE FROM edges WHERE genealogy_id=%s", (gen_id,))
-            edges_cleared = True
-        conn.execute("""
-            INSERT INTO edges (genealogy_id, source_node, target_node, edge_type,
-                               source_paper_id, target_paper_id, source_quote,
-                               target_quote, confidence, verified, rationale,
-                               citation_context)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,false,%s,%s)
-        """, (gen_id, e["src_node"], e["dst_node"], ec.edge_type,
-              src["paper_id"], dst["paper_id"], src["quote"], target_quote, ec.confidence,
-              ec.rationale, citation_context))
-        conn.commit()
-        written += 1
-        # `spend` is the run's running total, so a cached edge says where the
-        # answer came from BEFORE the number, or the number reads as its price.
-        print(f"  {ec.edge_type.upper():<9} {e['src']} -> {e['dst']}  "
-              f"conf={ec.confidence:.2f}  "
-              f"({'from cache, run ' if hit is not None else ''}spend ${spend:.3f})")
-        print(f"            {ec.rationale}")
-        if spend > cap:
-            print(f"\n⚠ SPEND CAP HIT (${spend:.2f} > ${cap:g}) — stopping.")
-            break
+        if ec is not None:
+            # Evidence quotes must ground against OUR extracted text (Stage E), so we
+            # store each paper's Stage-B definition quote — both already string-verified.
+            # The Semantic Scholar citation context is a classification signal only: it
+            # comes from S2's PDF extraction and would not match our LaTeX text — so we
+            # keep it as the edge's BASIS (what/how), not as a groundable quote. The
+            # rationale is the model's one-sentence reading of that basis. Neither may
+            # ever wear the verified stamp; the app renders both as unverified context.
+            to_write.append((gen_id, e["src_node"], e["dst_node"], ec.edge_type,
+                             src["paper_id"], dst["paper_id"], src["quote"], dst["quote"],
+                             ec.confidence, ec.rationale,
+                             "\n\n".join(e["contexts"]) or None))
+            # `spend` is the run's running total, so a cached edge says where the
+            # answer came from BEFORE the number, or the number reads as its price.
+            print(f"  {ec.edge_type.upper():<9} {e['src']} -> {e['dst']}  "
+                  f"conf={ec.confidence:.2f}  "
+                  f"({'from cache, run ' if hit is not None else ''}spend ${spend:.3f})")
+            print(f"            {ec.rationale}")
 
+        if spend > cap:
+            # An abort, not a break (#2): a cap is a limit on a whole run, and a
+            # run it stopped did not produce a map. The classification just paid
+            # for is already cached, so the money is kept even though the run is
+            # not.
+            print(f"\n⚠ SPEND CAP HIT (${spend:.2f} > ${cap:g}) — aborting with nothing swapped.")
+            marked = mark_aborted_spend_cap(gen_id)
+            sys.exit(f"The cap was reached at candidate {done} of {len(candidates)}. The "
+                     f"map's edges are exactly as this run found them"
+                     + (", and the row is marked aborted_spend_cap."
+                        if marked else
+                        "; the row was not mid-build, so its status was left alone.")
+                     + " Everything classified before the cap is cached, so a re-run "
+                       "under a higher cap re-buys none of it.")
+
+    # THE SWAP, guarded by an accounting identity rather than a proportion: it
+    # happens only if the run consumed its whole candidate list. Nobody can say
+    # whether 60% of candidates classifying is a healthy run or a broken one —
+    # this project has recalibrated a threshold four times to no effect — but
+    # "every candidate was looked at" needs no number choosing, and every abort
+    # above leaves the identity unsatisfiable by exiting before this line.
+    # Beside it, the degenerate floor at zero, in the posture of Stage E's
+    # all-reads-failed refusal: at least one candidate and not one classified is
+    # a broken dependency, whatever mixture of failures and non-answers it wore.
+    if candidates and not to_write:
+        sys.exit(f"\nAborting: {len(candidates)} candidate(s) and not one classified "
+                 f"({failed} failed, {skipped} returned no classification). The map's "
+                 f"existing edges have NOT been touched.")
+    if len(to_write) + skipped + failed != len(candidates):
+        sys.exit(f"\nAborting: this run cannot account for its own candidates "
+                 f"({len(to_write)} classified + {skipped} unclassified + {failed} failed "
+                 f"!= {len(candidates)}). That is a bug in this stage, not in the data. "
+                 f"Nothing was swapped.")
+
+    conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
+    with conn.transaction():
+        conn.execute("DELETE FROM edges WHERE genealogy_id=%s", (gen_id,))
+        for row in to_write:
+            conn.execute("""
+                INSERT INTO edges (genealogy_id, source_node, target_node, edge_type,
+                                   source_paper_id, target_paper_id, source_quote,
+                                   target_quote, confidence, verified, rationale,
+                                   citation_context)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,false,%s,%s)
+            """, row)
     conn.close()
-    print(f"\nDone: {written} edges classified ({reused} reused from cache, "
-          f"{bought} newly bought). Spend ${spend:.4f}. "
-          f"Run Stage E to ground and assemble.")
+    left_out = (f"; {failed} failed and {skipped} unclassifiable candidate(s) are not "
+                f"in the set" if failed or skipped else "")
+    print(f"\nDone: {len(to_write)} edges classified ({reused} reused from cache, "
+          f"{bought} newly bought), swapped in as one set{left_out}. "
+          f"Spend ${spend:.4f}. Run Stage E to ground and assemble.")
 
 
 if __name__ == "__main__":

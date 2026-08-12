@@ -264,8 +264,12 @@ and `by_asserted`; decision 18), `spend_usd` accumulates cost, `status` is one o
 pending/running/complete/failed/aborted_spend_cap. **`status` stopped being
 vestigial with issue #168**: `complete` is what Stage E writes and is now the
 only value the app will read a map at, so it is the record of whether a map is
-published. Everything else about the column is still loose and #48 still owns
-tidying it. Migration 007 adds
+published. **`aborted_spend_cap` gained its first writer with issue #2**: Stage
+D's cap abort marks the row, guarded to `status = 'running'`, so only a
+mid-build map takes the mark — a by-hand run against a published map leaves
+`complete` standing, since its edges were not touched, and migration 025's
+CHECK would refuse the write on a current row anyway. Everything else about the
+column is still loose and #48 still owns tidying it. Migration 007 adds
 `UNIQUE (concept, prompt_version)`: Stage C now upserts on that key (stable id
 across re-runs, in place), where it used to DELETE then INSERT and mint a new
 id every run. That old pattern broke `/g/<id>` links on re-trace and orphaned a

@@ -791,7 +791,7 @@ about its own moment.
 **Stage C no longer clears the map's edges unconditionally** (decision 20). Per
 edge endpoint, it compares what each node id denoted before against what it
 denotes now, and removes only the edges whose concept-states have changed
-underneath them; the rest are left for Stage D to replace on its first success.
+underneath them; the rest are left for Stage D to replace when its swap commits.
 When nothing about the previous concept-states could be read, every edge clears
 and it says *that* rather than reporting a clustering change it cannot support.
 A re-run at the same threshold on an unchanged corpus **with cached embeddings**
@@ -840,6 +840,29 @@ membership changed and reused the 1 pair whose two clusters were untouched. Ten
 cache files poisoned five ways (unknown edge type, confidence 4.0, a boolean
 confidence, truncated JSON, wrong top-level type) produced 6 misses, no error,
 and every edge still inside the taxonomy.
+**The rebuild is atomic** (#2). Every candidate is classified into memory first,
+and the DELETE of the old edges and the INSERT of the whole new set share one
+short transaction at the very end — the slow, failure-prone half (S2 fetches,
+LLM calls) runs on no database connection at all, which is also what closed the
+idle-in-transaction kill that reconnecting used to dodge. The swap is guarded by
+an accounting identity, not a proportion: it happens only when classified +
+unclassifiable + failed equals the candidate count, i.e. the run consumed its
+whole list, with the degenerate zero floor beside it (at least one candidate and
+not one classified aborts, in Stage E's all-reads-failed posture). A spend-cap
+hit is an abort rather than a break: nothing is swapped, the run exits non-zero,
+and a `running` row — only a `running` row — is marked `aborted_spend_cap`, the
+first thing ever to write that status; a by-hand run against a published map
+leaves its status alone, since its edges were not touched. The
+consecutive-failure guard now counts consecutive failures (reset on any answered
+call) and aborts at ten regardless of how many candidates already classified —
+the old guard required `written == 0`, so one success out of 305 immunised the
+run. And the reference sweep carries a per-source zero floor: a source that
+contributed at least one paper and returned references for none of them aborts
+the stage naming the source, because that is a broken call wearing a result's
+clothes — today every paper is arXiv, so the label is a constant, and the arm
+becomes real when F7's `papers.source` column lands. Every abort leaves the
+previous edges exactly as the run found them, and costs no dollars to retry:
+everything classified before it is in the #172 cache.
 
 **Stage E: grounding and assembly** (`stage_e_ground.py <concept>`).
 First sweeps out any edge naming a concept-state `genealogies.nodes` no longer
