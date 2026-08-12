@@ -344,6 +344,54 @@ WHERE paper_id = %(paper_id)s AND concept = %(concept)s
   AND prompt_version = %(prompt_version)s
 """
 
+# A refresh may flip a paper from defining to not-defining, and that demotion
+# falls into a hole between two stages that are each behaving as designed
+# (issue #169, the cause of #149). REFRESH_DEF updates the row in place so
+# `genealogies.nodes[].definition_ids` keeps pointing at a live id — including
+# on a map that holds the paper as a member. The sanctioned follow-up,
+# `stage_c_cluster.py --embed-only`, exists precisely so nodes are NOT
+# rewritten, and its SELECT carries the same `defines_concept = true` filter,
+# so a demoted row is invisible to it and never gets its vector back. Nothing
+# removes the demoted paper from a map that already holds it: the map now fails
+# the publish invariant (clause 1) and nothing says so. This query is who says
+# so: which maps of this concept cite the flipped definition id, and how much
+# hangs off the node that cites it. It reports rather than aborts — a refresh
+# that demotes a live map's paper is not a failed refresh — but the report must
+# be impossible to miss in a worker log, which is what the DEMOTION lines and
+# the end-of-run banner are for.
+DEMOTION_MAPS = """
+SELECT g.id, g.status, g.is_current, n->>'node_id',
+       (SELECT count(*) FROM edges e
+        WHERE e.genealogy_id = g.id
+          AND (e.source_node = n->>'node_id' OR e.target_node = n->>'node_id'))
+FROM genealogies g
+CROSS JOIN LATERAL jsonb_array_elements(g.nodes) AS n
+WHERE g.concept = %(concept)s
+  AND jsonb_typeof(g.nodes) = 'array'
+  AND n->'definition_ids' @> to_jsonb(%(def_id)s::bigint)
+ORDER BY g.id
+"""
+
+
+def report_demotion(conn, concept: str, def_id: int, arxiv_id: str) -> int:
+    """Say which maps a true->false flip just broke. Returns how many."""
+    rows = conn.execute(DEMOTION_MAPS, {"concept": concept, "def_id": def_id}).fetchall()
+    if not rows:
+        print(f"    (was defining and now is not; no map cites definition {def_id}, "
+              f"so nothing needs repair)")
+        return 0
+    for gid, status, is_current, node_id, n_edges in rows:
+        standing = "current" if is_current else "not current"
+        print(f"    ⚠ DEMOTION: {arxiv_id} no longer defines \"{concept}\". "
+              f"Definition {def_id} is cited by node {node_id} of genealogy {gid} "
+              f"(status {status}, {standing}), which has {n_edges} edge(s). That map "
+              f"now fails the publish invariant. Run "
+              f"`python pipeline/check_map.py \"{concept}\"` and repair before "
+              f"re-grounding; a demoted row is invisible to --embed-only and "
+              f"nothing downstream restores it.")
+    return len(rows)
+
+
 # The mirror of SELECT_PAPERS: papers that DO have a row, so they can be redone.
 SELECT_PAPERS_REFRESH = f"""
 SELECT p.id, p.arxiv_id, p.title, p.extracted_text_path, p.extractor_version
@@ -793,8 +841,21 @@ def main() -> None:
     extractor_by_id = {aid: ever for _, aid, _, _, ever in rows}
     spend = 0.0
     kept = dropped = unverified = 0
+    maps_broken = 0
     for i, (pid, aid, title, user_prompt) in enumerate(prompts, 1):
         print(f"[{i}/{len(prompts)}] {aid}: {(title or '?')[:52]}")
+        # The row's verdict before this refresh rewrites it, read here because
+        # REFRESH_DEF is the only writer and returns nothing: a true->false flip
+        # is the demotion #169 exists to surface, and only the before-and-after
+        # pair can see it.
+        was_defining, prev_def_id = False, None
+        if args.refresh:
+            prev = conn.execute(
+                "SELECT id, defines_concept FROM definitions "
+                "WHERE paper_id=%s AND concept=%s AND prompt_version=%s",
+                (pid, args.concept, prompt_version)).fetchone()
+            if prev:
+                prev_def_id, was_defining = prev
         kwargs = dict(model=args.model, max_tokens=4000, system=SYSTEM,
                       messages=[{"role": "user", "content": user_prompt}],
                       output_format=Extraction)
@@ -846,6 +907,8 @@ def main() -> None:
         if not ex.defines_concept:
             dropped += 1
             print(f"    – does not define \"{args.concept}\" — no node (spend ${spend:.2f})")
+            if was_defining and prev_def_id is not None:
+                maps_broken += report_demotion(conn, args.concept, prev_def_id, aid)
         else:
             kept += 1
             if not verified:
@@ -858,6 +921,17 @@ def main() -> None:
                   f"{i}/{len(prompts)} papers. Extractions so far are cached.")
             break
 
+    if maps_broken:
+        # Not an abort: a refresh that demotes a live map's paper is not a
+        # failed refresh (#169). But it must be impossible to miss in a worker
+        # log, so it is the last thing before the summary and it is loud.
+        print("\n" + "!" * 72)
+        print(f"⚠ THIS REFRESH DEMOTED A PAPER OUT OF {maps_broken} LIVE MAP NODE(S) — "
+              f"see the DEMOTION line(s) above.")
+        print(f'  Those maps now fail the publish invariant. Run '
+              f'`python pipeline/check_map.py "{args.concept}"`')
+        print("  and repair before re-grounding (issue #169; #170 is the repair procedure).")
+        print("!" * 72)
     conn.close()
     print(f"\nDone: {kept} definitions ({unverified} with unverified quotes), "
           f"{dropped} papers dropped as not defining the concept.")

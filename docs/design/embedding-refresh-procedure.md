@@ -286,6 +286,17 @@ paper that flips from defining to not-defining leaves the clustering, changes
 is not an abort, but it is a prediction that section 4.5's gate will clear edges,
 and it should be noted in the #50 comment.
 
+**Read every `DEMOTION` line before running 4.3 (#169).** Since the fix for
+#169, the refresh itself reports each true→false flip whose definition id a map
+still cites: the line names the map, the node and how many edges hang off it,
+and an end-of-run banner repeats the count. A demoted row keeps its id (that is
+the point of `--refresh`), so the map still holds the paper while the row now
+says it does not define the term — the state #149 was — and section 4.3's
+`--embed-only` deliberately cannot restore its vector, because its SELECT
+carries `defines_concept = true`. A demotion is therefore a fork in this
+procedure: repair the map first (`check_map.py` to see the findings; #170 is
+the shape of the repair), and only then continue to 4.4's re-ground.
+
 ### 4.3 — Put the vectors back (free, no model)
 
 ```

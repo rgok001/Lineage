@@ -479,7 +479,14 @@ what decision 12 already requires: **delete the map first, then re-trace.**
 Unaffected: `--embed-only` (it returns before the upsert, so the repair after
 `stage_b_extract.py --refresh` still works), Stage C on a concept with no
 published map, Stage E's publish, the workbench, the threads job and the claims
-job. `restore_snapshot.py` restores the snapshot's own `status`, so restoring a
+job. One thing `--embed-only` deliberately cannot see, and the refresh now says
+out loud (#169): a paper the refresh flipped from defining to not-defining. The
+demoted row keeps its id, so any map citing it still holds the paper, but its
+embedding stays NULL — `--embed-only`'s SELECT carries `defines_concept = true` —
+and the map now fails the publish invariant. `--refresh` prints a DEMOTION line
+naming each such map and node and an end-of-run banner; when a refresh prints
+one, run `check_map.py "<concept>"` and repair (#170 is the procedure) before
+re-grounding. `restore_snapshot.py` restores the snapshot's own `status`, so restoring a
 mid-build snapshot **onto a current row** hits the same refusal; restore onto the
 `running` row the recovery path is written for, which is not current.
 
