@@ -825,11 +825,19 @@ which is what makes #2's atomic rebuild affordable, and it is the measurement
 #184's two-stage build rests on. Consequences worth knowing: a run whose
 candidates are all cached **needs no `ANTHROPIC_API_KEY`** (the client is built
 only when something has to be bought), and `--dry-run` reports how many
-candidates would come back free. Only a parsed answer is ever written — caching a
-failure would make the failure permanent and free — and a cache file that is
-unreadable, malformed, outside the six-type taxonomy or carrying a confidence
-outside 0 to 1 is a miss rather than an error, so no file on disk can put a value
-in `edges` that the column's own CHECK would refuse.
+candidates would come back free. Only a parsed answer whose confidence sits
+inside 0 to 1 is ever written — caching a failure or an unusable answer would
+make it permanent and free — and a cache file that is unreadable, malformed,
+outside the six-type taxonomy or carrying a confidence outside 0 to 1 is a miss
+rather than an error, so no file on disk can put a value in `edges` that the
+column's own CHECK would refuse. A *bought* answer outside those bounds gets the
+same treatment at the model boundary (#216): it is counted as unclassifiable,
+printed with the value that came back, and reaches neither the cache nor the
+swap — before that guard, one such answer crashed the swap with a raw constraint
+error after the whole run was paid, and its cached copy was refused as a miss on
+every future run, re-buying that candidate forever. The call still resets the
+consecutive-failure counter, because it answered; the answer is what is
+unusable.
 Measured on the same throwaway PostgreSQL harness as #189, extended to 8 papers
 in 4 clusters with 6 cross-cluster links: **C, D, C, D over an unchanged corpus
 classified 6 and then 0, $0.0270 then $0.0000, with the two edge sets identical**

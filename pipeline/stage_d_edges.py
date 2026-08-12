@@ -58,6 +58,10 @@ class EdgeClass(BaseModel):
     edge_type: Literal["extends", "contests", "narrows", "renames", "merges", "migrates"] = Field(
         description="How the newer (descendant) paper's treatment relates to the older one."
     )
+    # No ge/le bounds, on purpose (#216): pydantic would turn an out-of-range
+    # value into a parse failure, which the loop counts as a failed CALL and
+    # feeds the consecutive-failure guard. The call answered; it is the ANSWER
+    # that is unusable, and the loop counts that as "no classification" instead.
     confidence: float = Field(description="0–1 confidence in this classification.")
     rationale: str = Field(
         description="One sentence of at most 35 words justifying the type from the evidence."
@@ -165,7 +169,9 @@ def cached_classification(key: str) -> "EdgeClass | None":
 
 
 def store_classification(key: str, ec: "EdgeClass", model: str) -> None:
-    """Write a bought classification. Never called for a failed one."""
+    """Write a bought classification. Never called for a failed call or an
+    out-of-range answer — `cached_classification` would refuse either as a miss,
+    so storing one would re-buy its candidate on every future run (#216)."""
     f = _class_cache_file(key)
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -451,10 +457,29 @@ def main() -> None:
             if ec is None:
                 skipped += 1
                 print(f"  {e['src']} -> {e['dst']}: no classification")
+            elif not 0.0 <= ec.confidence <= 1.0:
+                # A parse that succeeded around a confidence outside 0..1 is an
+                # unusable ANSWER, not a failed call (#216). `edges.confidence`
+                # carries CHECK (>= 0 AND <= 1), so letting it into `to_write`
+                # crashes the swap with a raw constraint error after the whole
+                # run is paid; and `cached_classification` refuses out-of-range
+                # as a miss, so caching it would re-buy this candidate on every
+                # future run, forever. It is counted exactly like parsed_output
+                # None — skipped, never cached, never written — and the call
+                # still resets the consecutive counter above, because it
+                # answered. The comparison also catches NaN, which fails every
+                # bound. Confidence is the one hole: edge_type is Literal-typed
+                # (a bad one fails the parse), and no constraint bounds
+                # rationale.
+                skipped += 1
+                print(f"  {e['src']} -> {e['dst']}: no classification "
+                      f"(the model answered confidence {ec.confidence!r}, outside "
+                      f"0..1 — a value the edges table would refuse; not cached)")
+                ec = None
             else:
-                # Only ever after a parsed answer. A cache written from a failure
-                # would make the failure permanent and free, which is the one thing
-                # worse than paying for it again.
+                # Only ever after a parsed, in-range answer. A cache written from
+                # a failure or an unusable answer would make it permanent and
+                # free, which is the one thing worse than paying for it again.
                 store_classification(key, ec, args.model)
                 bought += 1
         else:
