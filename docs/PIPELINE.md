@@ -1421,6 +1421,22 @@ over pass one alone — and a thread naming one of those is exactly what clause 
 of the publish invariant refuses. Unscoped, the build would refuse its own
 publish over threads this stage had just written. The papers dropped are counted
 on the stage's own line, in Stage D's words.
+**The blob it writes is shared with Stage H, and the write has a floor** (#3).
+`genealogies.streams` also holds every paper's claims, so an unconditional
+overwrite here used to destroy them along with the previous accounts whenever it
+ran — a run where phase 1 succeeded and every phase-2 call failed stored threads
+with every paper bare and took about a Stage H run's spend to restore. Two
+protections now: the stage refuses to write when not one thread got an account
+(the degenerate zero floor, in the posture of Stage E's all-reads-failed
+refusal — a broken call, not a thin map; the stored threads and claims are left
+untouched), and each paper's stored claims are carried into the new blob before
+the write, with a line saying how many travelled and how many belonged to papers
+no longer in any thread. Claims may be carried across a membership reshuffle
+because a claim depends on the paper and on nothing else — the fact #202
+measured and recorded at the claims cache — and every carried stamp is
+re-grounded by Stage H the next time it runs. A thread whose account fails while
+others succeed still keeps its papers bare until a re-run, as before: the floor
+is at zero accounts, not a proportion nobody could defend.
 
 **Stage H: claim-level evidence** (`stage_h_claims.py <concept> [--thread SID]`).
 Asks each paper for 2-4 things it did for the term, each with the passage that

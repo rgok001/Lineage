@@ -14,6 +14,18 @@ account: for each paper, what it did and how it moved the thread on.
 The column and this file still say "streams" because that is the schema; the
 interface calls them threads.
 
+**The blob this stage writes is not only its own.** Stage H writes each paper's
+claims into the same `genealogies.streams` JSONB, so an unconditional overwrite
+here used to destroy every claim on the map along with the previous accounts
+(issue #3) — restoring them cost a Stage H run. Two protections now stand: the
+write is refused outright when not one thread got an account (a run where every
+phase-2 call failed is a broken call, not a thin map), and each paper's stored
+claims are carried forward into the new blob. Claims depend only on the paper,
+not on which thread it landed in — that fact is measured and recorded at the
+claims cache in stage_h_claims.py (#202) — so a reshuffled membership does not
+invalidate them, and Stage H re-grounds every carried stamp the next time it
+runs.
+
 **No quote is generated here.** An earlier version asked for a verbatim fragment
 per paper and stored it, and the model returned paraphrase instead, which the
 thread page then rendered under a verified stamp (AS-BUILT section 10, incident
@@ -74,11 +86,11 @@ def main() -> None:
     pricing_key(args.model)
 
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
-    gen = conn.execute("SELECT id, nodes FROM genealogies WHERE concept = %s AND prompt_version = %s",
+    gen = conn.execute("SELECT id, nodes, streams FROM genealogies WHERE concept = %s AND prompt_version = %s",
                        (concept, pv)).fetchone()
     if not gen:
         sys.exit(f'No map for "{concept}" at prompt {pv}. Run Stage C and E first.')
-    gen_id, nodes = gen
+    gen_id, nodes, prev_river = gen
 
     rows = conn.execute("""
         SELECT p.arxiv_id, p.year, p.title, d.definition, d.novelty_claims
@@ -216,12 +228,52 @@ def main() -> None:
         print(f"[2/2] thread {si + 1}/{len(detected)}: {str(st.get('name', ''))[:40]} "
               f"({len(papers)} papers)  spend ${spend:.4f}", flush=True)
 
+    # The write below replaces the whole blob, previous accounts and Stage H's
+    # claims alike. A run where NOT ONE thread got an account is the call
+    # failing, not the corpus being thin — phase 1 has just said the threads
+    # exist — and storing it would destroy prose and claims a reader can see
+    # today and put nothing in their place (issue #3). The floor is the
+    # degenerate zero, not a proportion: a single composed account is a run
+    # that can stand, and nobody can defend a number between one and all.
+    if not streams_out or not any(p["move"] or p["prose"]
+                                  for s in streams_out for p in s["papers"]):
+        sys.exit(f"\nAborting: {len(detected)} thread(s) detected and not one account "
+                 f"composed. This is the call failing, not the map. The stored threads "
+                 f"and claims have NOT been touched; fix the cause and re-run.")
+
     name2id = {s["name"]: s["id"] for s in streams_out}
     cross = []
     for x in d1.get("cross_currents", []):
         f, t = name2id.get(x.get("from")), name2id.get(x.get("to"))
         if f and t and f != t:
             cross.append({"from": f, "to": t, "year": x.get("year"), "label": x.get("label", "")})
+
+    # Carry each paper's stored claims into the new blob (issue #3). They are
+    # Stage H's work, they live in the same column, and this stage used to
+    # destroy them on every run. A claim depends on the paper and on nothing
+    # else — not on the map's shape or which thread the paper landed in
+    # (measured and recorded at the claims cache, #202) — so membership moving
+    # does not invalidate one. The stamps travel exactly as stored, no new
+    # verdict is minted here, and Stage H re-grounds every passage against the
+    # text on disk the next time it runs.
+    prev_claims = {}
+    if isinstance(prev_river, dict):
+        for s in prev_river.get("streams") or []:
+            if not isinstance(s, dict):
+                continue
+            for p in s.get("papers") or []:
+                if isinstance(p, dict) and p.get("arxiv") and p.get("claims"):
+                    prev_claims[p["arxiv"]] = p["claims"]
+    carried = set()
+    for s in streams_out:
+        for p in s["papers"]:
+            if p["arxiv"] in prev_claims:
+                p["claims"] = prev_claims[p["arxiv"]]
+                carried.add(p["arxiv"])
+    if prev_claims:
+        print(f"      claims carried forward for {len(carried)} paper(s); "
+              f"{len(prev_claims) - len(carried)} stored claim set(s) belong to "
+              f"papers no longer in any thread")
 
     river = {"through_line": d1.get("through_line", ""),
              "streams": streams_out, "cross_currents": cross}
