@@ -831,8 +831,16 @@ export async function listGenealogies() {
 /** A claim carries its own evidence: the passage from the paper that shows it,
  *  checked by the same comparison Stage E uses, or null when nothing in the
  *  paper's text supported it. Written by Stage H; absent on maps built before
- *  it, which fall back to the paragraph. */
-export type RiverClaim = { text: string; quote: string | null; verified: boolean };
+ *  it, which fall back to the paragraph. `checked_against` is the digest of the
+ *  exact bytes the grounding check read (#215), written by the check itself and
+ *  never copied from `papers.extracted_text_digest`; the thread page resolves
+ *  the two through `stampOf`, so a claim stamped before the digest existed —
+ *  every legacy claim — resolves stale by the same rule a NULL digest always
+ *  has, and the raw boolean alone can no longer put a green stamp on a quote. */
+export type RiverClaim = {
+  text: string; quote: string | null; verified: boolean;
+  checked_against?: string | null;
+};
 export type RiverPaper = {
   arxiv: string; year: number; title: string; move: string; prose: string;
   quote?: string; claims?: RiverClaim[];

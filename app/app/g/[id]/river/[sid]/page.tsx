@@ -132,13 +132,24 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
                   assertions and only as good as the reader's care. */}
               {claims.length > 0 ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: ".7rem" }}>
-                  {claims.map((cl, i) => (
-                    <div key={i} style={{ borderLeft: `2px solid var(--${cl.verified ? "verified" : "line"})`,
+                  {claims.map((cl, i) => {
+                    // The stored boolean alone used to render the green stamp,
+                    // which made a stamp for a paper this system holds no text
+                    // for immortal (#215). Now the claim resolves through the
+                    // same three-state rule as the definition quote below it:
+                    // the digest its check recorded against the paper's digest
+                    // as it is now. A claim with no recorded digest — every
+                    // claim stamped before #215, and every paper absent from
+                    // quoteRows — is stale by the rule stampOf already applies
+                    // to NULL, never verified.
+                    const clStamp = stampOf(cl.verified, cl.checked_against, ev?.extracted_text_digest);
+                    return (
+                    <div key={i} style={{ borderLeft: `2px solid var(--${clStamp === "verified" ? "verified" : "line"})`,
                       paddingLeft: ".7rem" }}>
                       <p style={{ margin: 0, fontSize: "1rem", lineHeight: 1.55, color: "var(--ink)" }}>
                         {cl.text}
                       </p>
-                      {cl.verified && cl.quote ? (
+                      {clStamp === "verified" && cl.quote ? (
                         <blockquote style={{ margin: ".35rem 0 0", fontFamily: "var(--font-display)",
                           fontStyle: "italic", fontSize: ".88rem", lineHeight: 1.5, color: "var(--ink-soft)" }}>
                           “{readableQuote(cl.quote)}”
@@ -148,14 +159,31 @@ export default async function DivePage({ params }: { params: Promise<{ id: strin
                             ✓ the paper’s own words
                           </span>
                         </blockquote>
+                      ) : clStamp === "stale" && cl.quote ? (
+                        /* The stale posture the definition quote already uses:
+                           quiet, ink-soft, and the settled stale sentence. The
+                           passage is shown because it is stored evidence of what
+                           the check once matched, but it wears no verdict. */
+                        <blockquote style={{ margin: ".35rem 0 0", fontFamily: "var(--font-display)",
+                          fontStyle: "italic", fontSize: ".88rem", lineHeight: 1.5, color: "var(--ink-soft)" }}>
+                          “{readableQuote(cl.quote)}”
+                          <span style={{ display: "block", marginTop: ".2rem", fontStyle: "normal",
+                            fontFamily: "var(--font-mono)", fontSize: ".6rem", color: STAMP_COLOR.stale,
+                            letterSpacing: ".04em" }}>
+                            ◌ not checked against the paper’s text as it now stands
+                          </span>
+                        </blockquote>
                       ) : (
                         <span style={{ display: "block", marginTop: ".2rem", fontFamily: "var(--font-mono)",
                           fontSize: ".6rem", color: "var(--ink-faint)" }}>
-                          the tool’s reading · no passage in the paper was matched to this
+                          {clStamp === "stale"
+                            ? "the tool’s reading · not checked against the paper’s text as it now stands"
+                            : "the tool’s reading · no passage in the paper was matched to this"}
                         </span>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : prose ? (
                 <p style={{ margin: 0, fontSize: "1rem", lineHeight: 1.65, color: "var(--ink)" }}>

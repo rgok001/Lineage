@@ -1465,7 +1465,10 @@ the write, with a line saying how many travelled and how many belonged to papers
 no longer in any thread. Claims may be carried across a membership reshuffle
 because a claim depends on the paper and on nothing else — the fact #202
 measured and recorded at the claims cache — and every carried stamp is
-re-grounded by Stage H the next time it runs. A thread whose account fails while
+re-grounded by Stage H the next time it runs *where the paper's text can be
+read*; a carried stamp whose paper has no readable text meets no check in
+either of Stage H's modes, which is why the stamp records what it was checked
+against and the render path resolves it (#215) rather than trusting the carry. A thread whose account fails while
 others succeed still keeps its papers bare until a re-run, as before: the floor
 is at zero accounts, not a proportion nobody could defend.
 
@@ -1525,15 +1528,31 @@ the next run buys it again rather than serving a failure for free.
 one matcher. A claim whose passage is only citation marks or whitespace used to
 check out, since the empty string is a substring of everything; it now does not,
 at generation and on `--recheck` alike. The direction is safe on this page
-specifically: the thread page renders a claim's quote only when `verified` is
-true, so such a claim loses its stamp and its quote and keeps its text, which is
-exactly what the stage already does with a passage that fails. Claim-level stamps
-are still not re-checkable from stored data — they are the third stamp population
-and migration 015 does not cover them (open question 2 in the design).
+specifically: the thread page renders a claim's quote only under a resolved
+verified or stale stamp, labelled as such, so such a claim loses its stamp and
+its quote and keeps its text, which is exactly what the stage already does with
+a passage that fails.
+**Every claim stamp names the bytes its check ran against** (#215, decision 30's
+rule extended to the third stamp population — this closes what was open question
+2 in the 015 design). Both grounding paths — generation's `ground()` and
+`--recheck` — read the text through `read_grounding_text` like every other
+grounding stage and write `checked_against`, the digest of the exact bytes read,
+beside every stamp, failed checks included. It is computed at the check and
+never copied from `papers.extracted_text_digest`; the two are written by
+different code at different moments, which is what lets the thread page's
+`stampOf` comparison return false. The page resolves each claim against the
+paper's current digest: equal digests render the stored verdict (verified, or
+inferred for a check that ran and failed), and a differing or absent digest —
+every claim stamped before #215, and every paper whose text this system cannot
+read — renders stale, never verified. A paper with no readable text is skipped
+by both modes exactly as before, its stored stamps untouched (a stamp is a
+by-product of a check, and no check ran), and the run prints the skipped
+papers' ids so an operator knows which claims will render stale. No migration:
+`genealogies.streams` is JSONB, and blobs without digests are simply stale.
 `--recheck` re-grounds the stored quotes without asking the model for new ones,
-and costs nothing. A stamp is computed once, at generation, against the text of
-that moment: re-extracting a corpus leaves every stamp on the map asserting a
-check that ran against a document no longer on disk. A claim that stops checking
+and costs nothing; re-extracting a corpus now leaves every claim stamp rendering
+stale until a Stage H pass re-checks it, rather than silently asserting a check
+that ran against a document no longer on disk. A claim that stops checking
 out keeps its text and loses its stamp and its quote, which is what generation
 would have done with it. Regenerating instead would cost $4-6 to rewrite prose
 that was never the problem.

@@ -21,7 +21,11 @@ evidence can be regenerated without disturbing a curated shape.
 
 The model call is CACHED ON DISK (issue #202), keyed by the semantic inputs of
 the question. The stamps are not: they are recomputed at load against the text on
-disk now, because a stamp must never outlive the check that made it.
+disk now, because a stamp must never outlive the check that made it. Each stamp
+records `checked_against`, the digest of the exact bytes its check read (#215),
+so the thread page can resolve it through the same three-state rule every other
+stamp already answers to — a stamp whose digest no longer matches the paper's,
+or that has none, renders stale rather than wearing a verdict no check backs.
 
 Usage:
   python pipeline/stage_h_claims.py "attention"
@@ -38,7 +42,7 @@ import psycopg
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import data_dir, env, quote_is_grounded, text_digest  # noqa: E402
+from common import data_dir, env, quote_is_grounded, read_grounding_text, text_digest  # noqa: E402
 from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
 # Sonnet, not Haiku, and this one was measured rather than assumed. On thread
@@ -186,7 +190,7 @@ def store_claims(key: str, claims: list[dict], concept: str, model: str,
         print(f"    (could not cache claims: {exc})", file=sys.stderr)
 
 
-def ground(text: str, raw: list[dict]) -> list[dict]:
+def ground(text: str, digest: str, raw: list[dict]) -> list[dict]:
     """Turn what the model returned into what gets stored, checking every passage.
 
     One grounding path for a freshly bought answer and a cached one, deliberately:
@@ -195,13 +199,24 @@ def ground(text: str, raw: list[dict]) -> list[dict]:
     stamp. Incident 8 is what happens when "the model was asked to copy" is taken
     on trust. A claim whose passage fails keeps its text and loses its stamp and
     its quote, which is what narrows the account honestly rather than in silence.
+
+    `checked_against` is the digest of the exact bytes this check ran against
+    (#215, decision 30's rule extended to the third stamp population). It is
+    computed by `read_grounding_text` at the moment the text is read, in the same
+    act as the check, and NEVER copied from `papers.extracted_text_digest` — the
+    two are written by different code at different moments, which is what lets
+    the app's `stampOf` comparison return false and render a stamp stale once
+    the extraction of record moves. Every stamp carries it, failed checks too:
+    "the check ran against these bytes and could not find it" is exactly what
+    inferred means, and it is only claimable while the bytes are named.
     """
     out = []
     for cl in raw:
         q = (cl.get("quote") or "").strip()
         ok = bool(q) and quote_is_grounded(text, q)
         out.append({"text": (cl.get("text") or "").strip(),
-                    "quote": q if ok else None, "verified": ok})
+                    "quote": q if ok else None, "verified": ok,
+                    "checked_against": digest})
     return out
 
 
@@ -245,19 +260,30 @@ def main() -> None:
     # it (its digest is half the key), the grounding check needs it either way,
     # and knowing before the loop starts how much of this run is already paid for
     # is what lets the client be built only when something has to be bought.
+    # The read goes through `read_grounding_text` like every other stage that
+    # grounds anything (#215): the digest it returns is the one the stamps below
+    # record as `checked_against`. A file that is missing or undecodable is
+    # "could not check", never "not found" (decision 21) — the paper is skipped
+    # and its stored stamps are left exactly as they are, because a stamp is a
+    # by-product of a check and no check ran here. The render path says the
+    # truth about such a stamp: with no digest to compare, it is stale.
     work = []
     for s in targets:
         for p in s["papers"]:
             path = paths.get(p["arxiv"])
-            text = ((dd / path).read_text(encoding="utf-8", errors="replace")
-                    if path and (dd / path).exists() else "")
-            work.append((p, text))
+            text = digest = ""
+            if path:
+                try:
+                    text, digest = read_grounding_text(path)
+                except (OSError, ValueError):
+                    pass
+            work.append((p, text, digest))
 
     client = None
     keys: list[str | None] = [None] * len(work)
     hits: list[tuple[list[dict], float] | None] = [None] * len(work)
     if not args.recheck:
-        for i, (p, text) in enumerate(work):
+        for i, (p, text, _digest) in enumerate(work):
             if not text:
                 continue
             keys[i] = claims_key(args.concept, args.prompt_version, args.model, p["arxiv"],
@@ -265,7 +291,7 @@ def main() -> None:
                                  user_prompt(args.concept, p.get("title", ""), p.get("year", ""),
                                              text[:TEXT_BUDGET]))
             hits[i] = cached_claims(keys[i], args.model)
-        readable = sum(1 for _, t in work if t)
+        readable = sum(1 for _, t, _d in work if t)
         free = sum(1 for h in hits if h is not None)
         print(f"{free} of {readable} paper(s) already have claims and will cost nothing; "
               f"{readable - free} to buy.")
@@ -279,10 +305,12 @@ def main() -> None:
             import anthropic
             client = anthropic.Anthropic()
 
-    for i, (p, text) in enumerate(work):
+    no_text: list[str] = []
+    for i, (p, text, digest) in enumerate(work):
         done += 1
         if not text:
             skipped += 1
+            no_text.append(p["arxiv"])
             continue
         if args.recheck:
             # Re-ground what is already stored, and KEEP the passage either way.
@@ -292,14 +320,18 @@ def main() -> None:
             # because OUR text changed, and destroying it makes that
             # unrecoverable without paying to regenerate. The stamp is what must
             # follow the check; the evidence of what was returned is not ours to
-            # throw away. The thread page renders a claim's quote only when
-            # verified is true, so an unverified passage never reaches a reader.
+            # throw away. The thread page renders a claim's quote only under a
+            # resolved verified or stale stamp, labelled as such — never as
+            # verified while unproven (#215). `checked_against` is rewritten
+            # here for the same reason the stamp is: this is the other spelling
+            # of the grounding, and a digest that only one path wrote would let
+            # the two drift.
             claims = []
             for cl in p.get("claims") or []:
                 q = (cl.get("quote") or "").strip()
                 ok = bool(q) and quote_is_grounded(text, q)
                 claims.append({"text": cl.get("text", ""), "quote": q or None,
-                               "verified": ok})
+                               "verified": ok, "checked_against": digest})
                 kept += 1
                 unverified += (not ok)
             was = sum(1 for cl in (p.get("claims") or []) if cl.get("verified"))
@@ -345,7 +377,7 @@ def main() -> None:
         # taken on trust, so every passage is checked against our own text — the
         # text as it is on disk NOW, whether the answer was bought a second ago or
         # a month ago — and only the ones that check out carry the stamp.
-        claims = ground(text, raw)
+        claims = ground(text, digest, raw)
         kept += len(claims)
         unverified += sum(1 for cl in claims if not cl["verified"])
         p["claims"] = claims
@@ -361,6 +393,12 @@ def main() -> None:
     pct = 100 * (kept - unverified) / kept if kept else 0
     print(f"\n{kept} claims across {done - skipped} papers | {kept - unverified} carry a checked "
           f"quote ({pct:.0f}%) | {skipped} papers skipped for want of text")
+    if no_text:
+        # Named, not just counted (#215): these papers' stored stamps met no
+        # check this run, so their claims render stale until a run can read
+        # their text. An operator deciding whether to re-fetch needs the ids.
+        print("no text to check, claims left as stored (they render stale): "
+              + ", ".join(no_text))
     if not args.recheck:
         # A cache whose hit rate nobody can read is a cache nobody can tell has
         # broken. The avoided figure is what those calls actually billed when they

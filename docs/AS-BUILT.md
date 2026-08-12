@@ -371,7 +371,13 @@ relationship, and a missing paper row yields a NULL digest, which is what the
 other two copies of the rule are handed and both call stale (issue #60 again).
 `listGenealogies` still counts `paper_count` and `edge_count` itself rather than
 taking them from the view, so that "the report and the card agree about the size
-of a map" stays a check that can fail instead of an identity.
+of a map" stays a check that can fail instead of an identity. Since #215 the
+third stamp population — Stage H's claim stamps in `genealogies.streams` — also
+resolves through `stampOf` on the thread page, against a `checked_against`
+digest the grounding check itself records (never copied from
+`papers.extracted_text_digest`); a claim with no digest, which is every claim
+stamped before #215, renders stale by the same NULL rule as the other two
+populations.
 
 **The three states are also said in one vocabulary, decided once** (issue #129,
 UX ruling implemented as given, 2026-08-08). #124 rewrote the verification claim
