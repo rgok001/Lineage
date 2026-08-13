@@ -456,10 +456,12 @@ nothing behind them. **`genealogies.spend_usd` reads `0.0000` on every map and i
 written by nothing** (issue #85); it is not a fallback and nothing in the view,
 the page or the command reads it.
 
-**Applying migration 025 (the version shape).** Nothing to do: it is additive,
-it backfills itself, and it needs no live-data step after it. It applies in the
-ordinary Render pre-deploy and no page changes. Three things an operator should
-know before the next build, though.
+**Applying migrations 025 and 026 (the version shape, and the swap that uses
+it).** Nothing to do for either: 025 is additive and backfills itself, 026 adds
+one CHECK that every row already satisfies because nothing had ever written
+`superseded_at`, and they apply in the ordinary Render pre-deploy with no page
+changing. What an operator should know before the next build, though, including
+one read-only check to run once after 026 deploys.
 
 **It refuses to apply if two published maps share a concept.** The backfill makes
 every `status = 'complete'` row current and the partial index allows one current
@@ -490,21 +492,48 @@ re-grounding. `restore_snapshot.py` restores the snapshot's own `status`, so res
 mid-build snapshot **onto a current row** hits the same refusal; restore onto the
 `running` row the recovery path is written for, which is not current.
 
-**Until #207 lands, a map published after this migration is not current.** Stage
-E sets `status = 'complete'` and touches nothing else, so a build that finishes
-in this window lands `is_current = false`. Nothing reads currency yet, so the map
-is fully visible on the site — but it would vanish the moment #208's
-currency-filtered reads deploy. If a build completes in this window, either
-promote it by hand from a terminal with database access:
+**Publishing a map now makes it the current one** (#207a, issue #226). Stage E's
+publish is two statements inside the transaction it already ran in: it demotes
+every *other* current version of the concept — `is_current = false`,
+`superseded_at = now()` — and then promotes the map it is publishing to
+`complete` and current. A build that finishes therefore appears on the concepts
+list, in every report's comparison set, and at `/g/<id>/current`, with no step
+for an operator. Re-publishing the same map changes nothing: the demotion
+excludes the row being published, and if it did not, migration 026 would fail the
+transaction rather than leave a live map recorded as replaced.
+
+**One check, once, after this deploy.** Between migration 025 and #207a nothing
+wrote `is_current` at all, so any map that completed in that window is `complete`
+with `is_current = false` and is invisible to those three readers. Nothing
+promotes it on its own — the swap only ever touches the row being published and
+the incumbent it replaces:
+
+```sh
+psql "$LINEAGE_READ_URL" -c "SELECT id, concept, superseded_at FROM genealogies
+                              WHERE status = 'complete' AND NOT is_current"
+```
+
+A row with `superseded_at` set is a superseded version and is correct as it
+stands. A row with it NULL published in the window; promote it by hand from a
+terminal with write access:
 
 ```sh
 psql "$DATABASE_URL" -c "UPDATE genealogies SET is_current = true
                           WHERE id = <id> AND status = 'complete'"
 ```
 
-or confirm #207's backfill has covered it. The partial index will refuse the
-promotion if the concept already has a current map, which is the right answer:
-that is two published maps for one concept and it is the case above.
+The partial index refuses the promotion if the concept already has a current map,
+which is the right answer: that is two published maps for one concept and it is
+the case above.
+
+**Rebuilds still crash at Stage C, and this warning comes off with #207b**
+(#214). #207a moved publication and nothing else, so a re-trace of a published
+map still dies at "cluster concept-states" on `genealogies_current_is_published`
+— after corpus selection, fetching, extraction and Stage B have run and been paid
+for. The refusal and the path around it are the section above: delete the map
+first, then re-trace, which is what decision 12 already requires. #207b is the
+commit that inserts a new version row instead of overwriting the live one, and it
+is the one that makes a rebuild survivable.
 
 **After the #215 deploy: re-ground the claims, once per live map.** There is no
 migration to apply — `genealogies.streams` is JSONB and #215 added no column —

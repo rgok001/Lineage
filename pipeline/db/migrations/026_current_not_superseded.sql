@@ -1,0 +1,57 @@
+-- 026: a current map cannot also be recorded as replaced. One constraint, and
+-- it is the residue migration 025 named rather than smuggled in.
+--
+-- Ticket #207a, the swap half of #207 (F4, #32). 025's header says of
+-- `is_current` and `superseded_at`: "Nothing here forbids `is_current = true`
+-- beside a non-NULL `superseded_at` — a live map recorded as replaced… If it is
+-- wanted it belongs in #207, beside the swap that writes the column. It is
+-- raised there." This is that commit, and this is that constraint: it ships in
+-- the same commit as `stage_e_ground.py`'s publish swap, which is the first code
+-- in this repository ever to write either column.
+--
+-- **Satisfied by every existing row.** `superseded_at` is NULL on every row on
+-- every database, because 025 added the column and nothing has written it since:
+-- the writer is in this commit. So the ALTER validates the whole table and finds
+-- nothing, which on a table of a few dozen rows is instant. It takes an ACCESS
+-- EXCLUSIVE lock for that moment, and Render's pre-deploy runs it before the
+-- worker starts (decision 31), so nothing is mid-publish while it holds.
+--
+-- **No new column, so `genealogies_current` is not recreated.** 025's warning —
+-- that `SELECT *` is expanded at CREATE time and then frozen, so a migration
+-- adding a column must drop and recreate that view — is the thing the next
+-- person will look for in this file, and the answer is that it does not bite
+-- here. A constraint is not a column and the view's column list does not move.
+--
+-- **The direction, which is not symmetric.** It constrains currency by the
+-- record and never the record by currency. A non-current row WITH a
+-- `superseded_at` is the normal case after this commit — it is every version the
+-- swap has demoted. A non-current row WITHOUT one is equally legal, and 025 says
+-- why: "a row that was never current was never replaced either", so a `running`,
+-- `failed` or `aborted_spend_cap` row keeps a NULL there for ever. The one state
+-- that is now impossible is the one that would make a reader and the page
+-- disagree about the same map: live, and stamped as having been replaced.
+--
+-- Written `NOT is_current OR superseded_at IS NULL`, the same shape and for the
+-- same reason as 025's `genealogies_current_is_published`: SQL has no implication
+-- operator and this is its definition. `is_current` is NOT NULL and `IS NULL`
+-- never returns NULL, so no three-valued logic enters and no row can evade this
+-- by leaving something unset — which matters, because a CHECK is satisfied by
+-- NULL rather than violated by it.
+--
+-- **What it actually catches, stated because a constraint nobody can make fail
+-- is decoration.** The publish swap demotes the incumbent and then promotes the
+-- new row, and its demotion carries `AND id <> %(gid)s`. Without that clause,
+-- re-publishing a row that is already current demotes it — stamping
+-- `superseded_at` — and then promotes it again, leaving `is_current = true`
+-- beside a non-NULL `superseded_at`: a live map that its own record says was
+-- replaced. This constraint is what makes that a failed transaction that changes
+-- nothing instead of a state no reader could interpret. It was verified by
+-- deleting the clause and watching the publish go red here (#207a, verification
+-- 2), which is how we know it is doing work rather than agreeing with the code.
+--
+-- **No threshold, no score, no grade.** Counted with comments and string
+-- literals removed, the numeric literals in this file are exactly {}: it adds no
+-- column, no default and no relation, so there is nothing here to number.
+ALTER TABLE genealogies
+    ADD CONSTRAINT genealogies_current_not_superseded
+    CHECK (NOT is_current OR superseded_at IS NULL);

@@ -526,7 +526,50 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
 
     refuse_unless_publishable(conn, gen_id)
 
-    conn.execute("UPDATE genealogies SET status='complete', updated_at=now() WHERE id=%s", (gen_id,))
+    # ── the swap: demote the incumbent, then promote this map ─────────────────
+    #
+    # Issue #226, the defect #207a exists to close. Migration 025 gave a map
+    # `is_current` and backfilled it true on the four published maps, and #208
+    # landed the readers — `listGenealogies` reads `genealogies_current`,
+    # `/g/<id>/current` resolves through it, a report draws its comparison set
+    # from it. But no code in this repository has ever WRITTEN the column. This
+    # line was `SET status='complete'` alone, so the next map to complete would
+    # have published `complete` with `is_current = false`: reachable at its own
+    # address, and invisible to the concepts list for ever. Nothing would have
+    # errored. It had not happened yet only because no map had completed since
+    # 025 deployed.
+    #
+    # **Demote before promote, and that order is not ours to choose.** The
+    # partial unique index `genealogies_one_current_per_concept` (025) permits
+    # one current row per concept, so promoting first raises before the demotion
+    # could run. The database enforces the order; this comment only records that
+    # we know why. Sequencing a destructive step before its replacement is what
+    # this house forbids, so: the demotion destroys nothing. The old row keeps
+    # its id, its nodes, its edges, its streams, its user_edits and its address
+    # (#208) — one flag moves and one timestamp is written. And both statements
+    # are inside the transaction this whole stage runs in, so if the promote
+    # fails the demote reverts and the old map is still the live one, which is
+    # the property that matters.
+    #
+    # **`AND id <> %(gid)s` is load-bearing.** Re-publishing a map that is
+    # already current would otherwise demote it, stamp `superseded_at`, then
+    # promote it back — leaving a live map its own record says was replaced,
+    # which is exactly what migration 026 refuses. Delete that clause and the
+    # publish fails on `genealogies_current_not_superseded` rather than quietly
+    # writing the contradiction; that is verified, not assumed.
+    #
+    # This is #207a and only #207a. A rebuild of an existing map still dies
+    # earlier, in Stage C, which upserts `status = 'running'` onto the live row
+    # and violates 025's `genealogies_current_is_published` (#214). #207b is the
+    # commit that inserts a new version row instead.
+    conn.execute("""
+        UPDATE genealogies SET is_current = false, superseded_at = now(), updated_at = now()
+        WHERE concept = %(concept)s AND is_current AND id <> %(gid)s
+    """, {"concept": args.concept, "gid": gen_id})
+    conn.execute("""
+        UPDATE genealogies SET status = 'complete', is_current = true, updated_at = now()
+        WHERE id = %(gid)s
+    """, {"gid": gen_id})
 
     return _assemble(args, gen_id, nodes, prompt_version, assembled_edges,
                      edges, verified_count, stale_count, published=True)

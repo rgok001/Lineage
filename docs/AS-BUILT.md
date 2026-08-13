@@ -175,7 +175,7 @@ destinations table added for them.
 
 ## 3. Data model
 
-Nine tables and twelve views, migrations `001` through `025`, applied by
+Nine tables and twelve views, migrations `001` through `026`, applied by
 `python pipeline/db/migrate.py` (tracked in `schema_migrations`). The counts are
 read off a database with every migration applied, not maintained by hand — they
 said "six tables and two views" for several migrations after they stopped being
@@ -281,10 +281,11 @@ in `lib/genealogy.ts` still carry the river vocabulary the interface has since
 dropped; the reader sees "threads". Null until the generation job has run for
 that map, and `/g/[id]` redirects to `/g/[id]/evidence` when it is null.
 
-**Migration 025 (`025_map_versions.sql`, issue #206) adds the version shape, and
-nothing reads it yet.** Three columns — `version INT NOT NULL DEFAULT 1`,
-`is_current BOOLEAN NOT NULL DEFAULT false`, `superseded_at TIMESTAMPTZ` — and
-three rules the database now holds that were previously conventions:
+**Migration 025 (`025_map_versions.sql`, issue #206) adds the version shape; its
+readers arrived with #208 and its first writer with #207a.** Three columns —
+`version INT NOT NULL DEFAULT 1`, `is_current BOOLEAN NOT NULL DEFAULT false`,
+`superseded_at TIMESTAMPTZ` — and four rules the database now holds that were
+previously conventions:
 
 - `genealogies_one_current_per_concept`, a unique index on `(concept) WHERE
   is_current`: at most one current map per concept, **per concept and not per
@@ -296,21 +297,46 @@ three rules the database now holds that were previously conventions:
   every superseded version.
 - `genealogies_concept_pv_version_key`, `UNIQUE (concept, prompt_version,
   version)`: a version number cannot be issued twice.
+- `genealogies_current_not_superseded`, `CHECK (NOT is_current OR superseded_at
+  IS NULL)` (migration `026_current_not_superseded.sql`, issue #226): a current
+  map cannot also be recorded as replaced. 025's header raised this as its one
+  named residue and left it to the commit that writes the column, which is
+  #207a. It is validated rather than `NOT VALID`, so a database already holding
+  such a row fails the migration instead of admitting the state.
 
 The backfill made the four published maps version 1 and current; everything else
-in the table is `is_current = false`. `superseded_at` is the record written by
-the swap that clears `is_current`, and is NULL everywhere today because no swap
-has happened — it is never inferred from `is_current`, because a row that was
-never current was never replaced either. **Nothing forbids `is_current = true`
-beside a non-NULL `superseded_at`**; that fourth constraint is raised on #207,
-beside the swap that would write the column.
+in the table is `is_current = false`. **`is_current` is written by exactly one
+thing: the publish swap at the end of `pipeline/stage_e_ground.py`** (#207a,
+issue #226). Until that landed nothing wrote the column at all, so a map that
+completed published `complete` with `is_current = false` — reachable at
+`/g/<id>`, absent from the concepts list, outside every report's comparison set
+and unresolvable through `/g/<id>/current`, with nothing erroring anywhere. No
+map completed between #208 landing the readers and #207a landing the writer, so
+no map was ever left in that state. The swap is two statements inside the
+transaction Stage E already runs in: demote every *other* current row of the
+concept (`is_current = false`, `superseded_at = now()`), then promote this one
+(`status = 'complete'`, `is_current = true`). Demote-before-promote is forced by
+the partial unique index rather than chosen, and the demotion destroys nothing —
+one flag moves and one timestamp is written, and the demoted row keeps its id,
+nodes, edges, streams, `user_edits` and its address.
+
+`superseded_at` is that swap's record, and it is never inferred from
+`is_current`, because a row that was never current was never replaced either: it
+stays NULL on every row that has never been demoted, including every `running`,
+`failed` and `aborted_spend_cap` row for ever.
+
+**A rebuild of a published map still dies at Stage C** (#214), because
+`UPSERT_GENEALOGY` writes `status = 'running'` onto the live row and 025's
+`genealogies_current_is_published` refuses it. #207a fixed publication, not
+rebuilds; #207b is the commit that inserts a new version row instead of
+resolving the old one.
 
 **007's `UNIQUE (concept, prompt_version)` is still in place**, though the F4
 design retires it. It cannot go until Stage C stops upserting on it: Postgres
 resolves an `ON CONFLICT` target's arbiter index when it *plans* the statement,
 so dropping the constraint makes `stage_c_cluster.py`'s insert raise
 `InvalidColumnReference` on every build, including the first build of a concept
-nobody has mapped. The drop is #207's, in the commit that rewrites Stage C.
+nobody has mapped. The drop is #207b's, in the commit that rewrites Stage C.
 
 **One behaviour did change, and it is the only one.** Re-clustering a *live* map
 in place — `stage_c_cluster.py <concept>` with no `--embed-only`, which sets
