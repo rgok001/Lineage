@@ -1366,9 +1366,15 @@ never a raw `is_current = true` — which demotes whatever else is live and clea
 `superseded_at` in the same transaction, **behind Stage E's own publish gate**
 (#233): the map the snapshot holds is asked the six clauses before it goes live,
 and a refusal rolls the entire restore back and leaves every row as it found it. A snapshot that recorded it false does
-not promote, a snapshot too old to have the field promotes a `complete` map (in
-that snapshot's world every published map was the live one, by 025's backfill),
-and `--no-publish` declines either way. The run prints which and why, **and its
+not promote; `--publish` overrides that and says so, which is #229's deliberate
+rollback; and `--no-publish` declines either way. **A snapshot too old to record
+the field is not guessed at** (#237): it used to promote any `complete` map, on
+the premise that every map in those snapshots was the live one, which was true
+when 025's backfill ran and is not true of a map restored before #230, of one
+published in the 025 window, or of anything from #207b on — measured, a fieldless
+snapshot of v1 restored while v2 was live made v1 current and demoted v2. Such a
+restore now refuses until it is told `--publish` or `--no-publish`, in `--dry-run`
+as well, because the question is about the snapshot rather than the database. The run prints which and why, **and its
 closing line reads the row rather than the flags** (#234): declining to publish
 is not the same fact as not being current, so a restore that publishes nothing
 onto a map that is already the live one says it is still live. It printed the

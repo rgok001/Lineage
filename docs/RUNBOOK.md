@@ -290,9 +290,14 @@ now perform Stage E's own demote-then-promote swap, print whether the map is the
 current one and what it superseded, and take `--no-publish` if you want the
 content back without touching what readers see. A snapshot taken since #230
 records `is_current` and is obeyed exactly, so restoring a superseded version
-does not steal currency from the live one; an older snapshot cannot say, and a
-`complete` map in one is treated as the live map, which is what every map in
-those snapshots was. It does **not** overwrite `user_edits`: the audit trail is
+does not steal currency from the live one unless you ask for it with `--publish`,
+which is the deliberate rollback. **A snapshot older than #230 cannot say, and
+since #237 it is not guessed at**: `restore_snapshot.py` refuses one until you
+give `--publish` or `--no-publish`, in `--dry-run` too. It used to treat a
+`complete` map in such a snapshot as the live one, which was true of every map in
+those snapshots when they were taken and is not true of a map restored before
+#230 or published in the 025 window — restoring one of a superseded version made
+it current and demoted the version readers were on. It does **not** overwrite `user_edits`: the audit trail is
 append-only, and
 the restore appends itself to it, so the map's history says it was restored rather
 than pretending nothing happened. And step 4 is not optional if the papers were

@@ -35,9 +35,14 @@ document that is gone. Run Stage E afterwards: it is free, it re-grounds every
 quote against the text that is actually there, and the verified count it reports
 will be the true one, even if it is lower.
 
+A snapshot taken since #230 records whether the map was the live one, and this
+obeys it. One taken before #230 cannot say, and rather than infer it this refuses
+until told: `--publish` or `--no-publish` (#237).
+
 Usage:
   python pipeline/restore_snapshot.py /data/snapshots/embedding_v2_...json --dry-run
   python pipeline/restore_snapshot.py /data/snapshots/embedding_v2_...json --confirm
+  python pipeline/restore_snapshot.py /data/snapshots/old_...json --confirm --no-publish
 """
 
 import argparse
@@ -64,25 +69,62 @@ def main() -> None:
     ap.add_argument("--confirm", action="store_true", help="actually write")
     ap.add_argument("--no-publish", action="store_true",
                     help="restore the content without making the map current again")
+    ap.add_argument("--publish", action="store_true",
+                    help="make the restored map the current one for its concept, "
+                         "demoting whatever is live. Required for a snapshot too old "
+                         "to record which map was live")
     args = ap.parse_args()
     if not args.dry_run and not args.confirm:
         sys.exit("Refusing to write without --confirm. Use --dry-run first.")
+    if args.publish and args.no_publish:
+        sys.exit("--publish and --no-publish say opposite things. Give one of them.")
 
     snap = json.loads(Path(args.snapshot).read_text(encoding="utf-8"))
     g = snap["genealogy"]
     gen_id, concept, pv = g["id"], g["concept"], g["prompt_version"]
 
     # Whether this map should be the current one after the restore (#230).
-    # A snapshot taken since #230 records `is_current` and is believed exactly.
-    # An older one cannot say, and for those the answer is "yes if it is
-    # published": every map that existed when those snapshots were taken was
-    # current, because 025's backfill made every `complete` row current and
-    # nothing had yet created a second version. Currency also requires
-    # publication — 025's `genealogies_current_is_published` — so a snapshot of a
-    # mid-build map never promotes anything.
+    # A snapshot taken since #230 records `is_current` and is believed exactly;
+    # `--publish` overrides it, which is the deliberate rollback #229 made
+    # legitimate, and says so when it does. Currency also requires publication —
+    # 025's `genealogies_current_is_published` — so a snapshot of a mid-build map
+    # never promotes anything, and asking it to is an error rather than a
+    # silently ignored flag.
+    #
+    # **A snapshot too old to have the field is not guessed at** (#237). This
+    # inferred "yes if it is published", on the premise that every map in those
+    # snapshots was the live one — true when 025's backfill ran and no concept
+    # had a second version, false for a map restored before #230 or published in
+    # the 025 window (both states the runbook names), and false for every concept
+    # from #207b on. Measured on the premise's own terms: a fieldless snapshot of
+    # v1 restored while v2 was live made v1 current and demoted v2. The inference
+    # was disclosed both before and after the write, and disclosure is not
+    # consent: the operator is the only one here who knows which map should be
+    # live, so the refusal below asks them.
     snap_current = g.get("is_current")
+    if args.publish and g["status"] != "complete":
+        sys.exit(f"--publish was given, but this snapshot's status is '{g['status']}'. "
+                 f"Only a\n'complete' map can be the current one (migration 025's "
+                 f"genealogies_current_is_published),\nso there is nothing to publish "
+                 f"here. Restore it, finish the build, then publish.")
+    if snap_current is None and g["status"] == "complete" and not (args.publish
+                                                                  or args.no_publish):
+        sys.exit(
+            f"\nRefusing to guess whether this map should be the live one.\n"
+            f"  This snapshot was taken before #230 and does not record `is_current`, so\n"
+            f"  it cannot say whether readers were seeing this map when it was taken. It\n"
+            f"  used to be treated as the live one, which was true of every map in those\n"
+            f"  snapshots when they were taken and is not true now: restoring a fieldless\n"
+            f"  snapshot of a superseded version makes it current and demotes the version\n"
+            f"  that is live.\n"
+            f"  Say which you mean:\n"
+            f"    --publish     make this the current map for \"{concept}\", superseding "
+            f"whatever is live\n"
+            f"    --no-publish  put the content back and leave the concepts list alone\n"
+            f"  Nothing was written, and this refusal is the same in --dry-run: the\n"
+            f"  question is about the snapshot, not about the database.")
     publish = (g["status"] == "complete"
-               and (snap_current is None or snap_current)
+               and (args.publish or bool(snap_current))
                and not args.no_publish)
 
     with psycopg.connect(env("DATABASE_URL")) as conn:
@@ -105,8 +147,11 @@ def main() -> None:
               + ("yes, and any other live version of this concept is superseded" if publish
                  else f"unchanged ({'yes' if now_current else 'no'})")
               + ("" if snap_current is not None else
-                 "  [this snapshot predates the column; a published map is treated as "
-                 "the live one]"))
+                 f"  [this snapshot predates the column and cannot say; "
+                 f"{'--publish' if args.publish else '--no-publish'} decides it]")
+              + ("" if not (args.publish and snap_current is False) else
+                 "  [--publish overrides the snapshot, which recorded this version as "
+                 "not the live one]"))
         if args.dry_run:
             print("\n[dry-run] nothing written.")
             return
