@@ -948,8 +948,11 @@ the per-source floor could fire, and the guard bounds a total outage at ten
 papers — verified at 40 papers, all failing: 50 attempts, not 200, nothing
 cached, nothing swapped. After an early stop the other sweep floors stand down,
 because every count they read is over a corpus that was cut short.
-**Every sweep abort reads the map's standing rather than asserting it** (#223).
-The aborts used to end "The map's edges have NOT been touched", which is true of
+**Every abort that can leave the map mid-build reads the map's standing rather
+than asserting it** — the four sweep aborts with #223, and with #228 the three
+inside the classification loop: the consecutive-classification-failure guard, the
+zero-classified floor and the spend cap. The aborts used to end "The map's edges
+have NOT been touched", which is true of
 the stage and can be false of the map: Stage C has already re-clustered it and
 cleared the edges whose concept-states moved, so a build that dies here leaves
 the map `running` and off the site while the sentence reassures the reader. The
@@ -963,6 +966,19 @@ puts it back, and where the restore procedure is (RUNBOOK section 8); a
 non-current row with a current sibling — the state #207b creates — prints that
 the live version is unaffected and this build's version has never been published.
 The read has its own try/except, because there is no handler behind an abort.
+The two families differ in one clause and nothing else (#228): a sweep abort
+stops before any classification is bought and says so, while the three inside the
+loop fire after the money is spent and say instead that everything classified is
+cached, so a re-run after the cause is fixed re-buys none of it. Both clauses
+hang off one constant, because the sentence they share drifted between copies
+once already. The standing is read once, on the abort only, and on the cap's path
+after the `aborted_spend_cap` write, so it describes the row as the abort leaves
+it. The consecutive-failure abort also names where in the candidate list it
+stopped and the last failure's class and message, sliced at 240 characters like
+the sweep's, because a wrapper's first hundred characters is not the cause. The
+one abort still left saying only what the stage did is the accounting identity
+("this run cannot account for its own candidates"), which reports a bug in this
+stage rather than a fault in the world; it asserts nothing about the map.
 
 **Stage E: grounding and assembly** (`stage_e_ground.py <concept>`).
 First sweeps out any edge naming a concept-state `genealogies.nodes` no longer

@@ -309,8 +309,17 @@ def mark_aborted_spend_cap(gen_id: int) -> bool:
 # verify_219's control refuses the word `delete` anywhere in an abort — a rule
 # worth keeping even where this file would mean a different deletion by it.
 STAGE_SWAPPED_NOTHING = ("What this stage did: it swapped no edges. The "
-                         "replacement of the edge set never ran, and no "
-                         "classification was bought.")
+                         "replacement of the edge set never ran")
+# The money clause is separate because the two families of abort differ in
+# exactly it and in nothing else (#228). A sweep abort stops before the
+# classification loop and has bought nothing; the three aborts inside that loop
+# fire after classifications are paid for, and telling their reader "no
+# classification was bought" would be a second false reassurance in the place
+# the first one was just removed from. What is true there is the cache: the
+# money is kept even though the run is not.
+NOTHING_BOUGHT = ", and no classification was bought."
+CLASSIFICATIONS_KEPT = (". Everything classified before it stopped is cached, so a "
+                        "re-run after the cause is fixed re-buys none of it.")
 
 
 def map_standing(gen_id: int) -> str:
@@ -362,6 +371,22 @@ def map_standing(gen_id: int) -> str:
     return (f"What is true of the map: its row reads status {status} at version "
             f"{version} and it is not published, so no reader can see it. It comes "
             f"back when a run of Stage E publishes it.")
+
+
+def abort_after_buying(sentence: str, gen_id: int, tail: str = "") -> None:
+    """Stop inside the classification loop, in the sweep aborts' three parts (#228).
+
+    Why it stopped, what this stage did, and what is true of the MAP — the last
+    one read from the row rather than asserted. These three aborts fire after
+    classifications are bought, and until #228 they ended on "the map's existing
+    edges have NOT been touched": the same claim #223 removed from the sweep
+    aborts, and false for the same reason, since Stage C set the row `running`
+    and cleared the moved edges before this stage started. `tail` is for what
+    only one abort can say (the cap's status write), and goes with the why.
+    """
+    sys.exit("\nAborting: " + sentence + tail + "\n\n"
+             + STAGE_SWAPPED_NOTHING + CLASSIFICATIONS_KEPT + "\n\n"
+             + map_standing(gen_id))
 
 
 def main() -> None:
@@ -525,7 +550,8 @@ def main() -> None:
         if args.dry_run:
             would_abort.append(sentence)
         else:
-            sys.exit("\nAborting: " + sentence + "\n\n" + STAGE_SWAPPED_NOTHING
+            sys.exit("\nAborting: " + sentence + "\n\n"
+                     + STAGE_SWAPPED_NOTHING + NOTHING_BOUGHT
                      + "\n\n" + map_standing(gen_id))
 
     if stopped_after is not None:
@@ -732,11 +758,11 @@ def main() -> None:
                 # name, so ten failures scattered across three hundred healthy
                 # candidates could trip a guard called CONSECUTIVE.
                 if consecutive_failures == CONSECUTIVE_FAILURE_LIMIT:
-                    sys.exit(f"\nAborting: {consecutive_failures} classifications in a row "
-                             f"failed. This is the call failing, not the edges. The map's "
-                             f"existing edges have NOT been touched, and everything "
-                             f"classified before the failures is cached, so a re-run "
-                             f"after the cause is fixed re-buys none of it.")
+                    abort_after_buying(
+                        f"{consecutive_failures} classifications in a row failed at "
+                        f"candidate {done} of {len(candidates)}. This is the call "
+                        f"failing, not the edges. The last failure was "
+                        f"{type(exc).__name__}: {str(exc)[:240]}.", gen_id)
                 continue
             consecutive_failures = 0
             spend += cost_usd(args.model, resp.usage.input_tokens, resp.usage.output_tokens)
@@ -798,13 +824,17 @@ def main() -> None:
             # not.
             print(f"\n⚠ SPEND CAP HIT (${spend:.2f} > ${cap:g}) — aborting with nothing swapped.")
             marked = mark_aborted_spend_cap(gen_id)
-            sys.exit(f"The cap was reached at candidate {done} of {len(candidates)}. The "
-                     f"map's edges are exactly as this run found them"
-                     + (", and the row is marked aborted_spend_cap."
-                        if marked else
-                        "; the row was not mid-build, so its status was left alone.")
-                     + " Everything classified before the cap is cached, so a re-run "
-                       "under a higher cap re-buys none of it.")
+            # The status write happens BEFORE the standing read, so the sentence
+            # the operator reads describes the row as this abort leaves it.
+            abort_after_buying(
+                # Four decimals, as the end-of-run summary prints: at the cap's
+                # own scale two decimals render a real spend as $0.00.
+                f"the spend cap of ${cap:g} was reached at candidate {done} of "
+                f"{len(candidates)}, with ${spend:.4f} spent",
+                gen_id,
+                tail=(", and the row is marked aborted_spend_cap."
+                      if marked else
+                      "; the row was not mid-build, so its status was left alone."))
 
     # THE SWAP, guarded by an accounting identity rather than a proportion: it
     # happens only if the run consumed its whole candidate list. Nobody can say
@@ -816,9 +846,9 @@ def main() -> None:
     # all-reads-failed refusal: at least one candidate and not one classified is
     # a broken dependency, whatever mixture of failures and non-answers it wore.
     if candidates and not to_write:
-        sys.exit(f"\nAborting: {len(candidates)} candidate(s) and not one classified "
-                 f"({failed} failed, {skipped} returned no classification). The map's "
-                 f"existing edges have NOT been touched.")
+        abort_after_buying(
+            f"{len(candidates)} candidate(s) and not one classified ({failed} failed, "
+            f"{skipped} returned no classification).", gen_id)
     if len(to_write) + skipped + failed != len(candidates):
         sys.exit(f"\nAborting: this run cannot account for its own candidates "
                  f"({len(to_write)} classified + {skipped} unclassified + {failed} failed "
