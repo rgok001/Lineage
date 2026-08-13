@@ -784,6 +784,66 @@ def version_note(conn, concept: str, prompt_version: str) -> str:
                                if live else "None of them is the live map."))
 
 
+# ── minting a version number ────────────────────────────────────────────────
+#
+# Issue #241 (H7). Two scripts insert a new version of a concept's map — Stage C
+# for a build, `restore_genealogy.py` for a recovery or a rollback — and both used
+# to write their own copy of `coalesce(max(version), 0) + 1`. Measured on a
+# throwaway Postgres by the Tester: two Stage Cs running at once against one
+# concept minted the same number. At the same prompt version the loser died on an
+# unhandled `UniqueViolation` after Stage B's money; at different prompt versions
+# both rows were called version 3 and nothing raised, because 025's key carries
+# the prompt version and cannot see across it.
+#
+# The expression and the lock live here so that the two minters cannot drift
+# apart: a second copy of "what number comes next" is a second answer to it, and
+# the one that is wrong is invisible until a number is issued twice.
+#
+# **The greatest of the live rows AND the ledger.** `genealogy_deletions`
+# (migration 028) remembers the numbers of maps that have been deleted, so a
+# deleted version's number is never handed out again — a re-minted number would
+# overwrite that version's export, which is the de-facto backup (incident 4).
+# `greatest` over two `coalesce`s rather than a UNION so that an empty ledger, an
+# empty table and both together all read 0 and the first version is 1.
+NEXT_VERSION = """(SELECT greatest(
+        coalesce((SELECT max(version) FROM genealogies
+                   WHERE concept = %(concept)s), 0),
+        coalesce((SELECT max(version) FROM genealogy_deletions
+                   WHERE concept = %(concept)s), 0)) + 1)"""
+
+# The lock's name, hashed by the database rather than by us: `hashtext` is what
+# turns a concept into the bigint `pg_advisory_xact_lock` takes, and doing it in
+# SQL means the key in this string is the key an operator can compute by hand from
+# `pg_locks` while a build is running. The prefix keeps it out of the way of any
+# other advisory lock this project ever takes.
+LOCK_VERSION_MINT = ("SELECT pg_advisory_xact_lock("
+                     "hashtext('lineage:genealogy-version:' || %(concept)s))")
+
+
+def lock_version_mint(conn, concept: str) -> None:
+    """Hold the version-minting lock for this concept until the caller commits.
+
+    **It must be called inside an explicit transaction, and it checks that it
+    was.** `pg_advisory_xact_lock` is released when the transaction ends, and on
+    an autocommit connection a bare `SELECT` is its own transaction — so the lock
+    would be taken and dropped before the INSERT that needs it, leaving a caller
+    holding nothing while every line of it says otherwise. That is the failure
+    this whole helper exists to prevent, so it is a raise and not a comment.
+
+    A session-level lock would survive autocommit and is the wrong trade: it has
+    to be released by hand, and a stage that exits between taking and releasing
+    one blocks every later build of that concept until the connection dies.
+    """
+    conn.execute(LOCK_VERSION_MINT, {"concept": concept})
+    status = getattr(conn.info.transaction_status, "name", "")
+    if status != "INTRANS":
+        raise RuntimeError(
+            f"lock_version_mint was called outside a transaction (connection is "
+            f"{status or 'in an unknown state'}), so the version lock it just took "
+            f"has already been released. Take it inside `with conn.transaction():` "
+            f"or on a connection that is not autocommit; nothing was minted.")
+
+
 # ── reading genealogies.nodes ───────────────────────────────────────────────
 #
 # `nodes` is JSONB written by Stage C and rewritten by the workbench, the two

@@ -609,6 +609,30 @@ version readers were on, which keeps its id, its edges, its threads, its
 curatorial audit trail and its address at `/g/<id>`. Roll back by restoring that
 version's export (`restore_genealogy.py data/genealogy_<concept>_<pv>_v<N>.json`),
 which comes back as a further version and takes currency back.
+**Applying migration 028 (the version key and the deletion ledger, #241).**
+Nothing to do, and one read-only check worth running once. It adds a unique index
+on `(concept, version) WHERE version > 1`, the append-only `genealogy_deletions`
+table and a grant; no column moves, so no page and no report changes. The index is
+satisfiable by construction — every row that predates it is version 1 by 025's
+backfill, and every row above 1 was minted by Stage C or `restore_genealogy.py` —
+and this is the last moment the database asserts that for us:
+
+```sh
+psql "$LINEAGE_READ_URL" -c "SELECT concept, version, count(*) FROM genealogies
+                              WHERE version > 1 GROUP BY 1, 2 HAVING count(*) > 1"
+```
+
+Expect no rows. If any come back, the migration will fail on the index and roll
+back — resolve which of the two maps keeps the number before re-running, because a
+migration that picked one would decide it unwatched.
+
+Two consequences to know. **A worker or a by-hand Stage C against a database still
+at 027 now refuses**, naming the missing table and `python pipeline/db/migrate.py`,
+because the mint reads the ledger; that is a local-only state, since Render's
+pre-deploy applies migrations before the worker starts. And **a deleted map's
+version number is gone for good**: the next build mints past it, so version
+numbers can have gaps and a gap is a deletion rather than a fault.
+
 **One thing to do before rebuilding a live map**: #213 is still owed.
 `map_report`'s definition-side CTEs key on `(concept, prompt_version)`, so the
 moment a concept has two versions both reports name the same papers read,

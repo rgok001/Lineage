@@ -25,7 +25,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import actor, current_row, env  # noqa: E402
+from common import NEXT_VERSION, actor, current_row, env, lock_version_mint  # noqa: E402
 # The publication rule lives in the stage that owns it, and a restore performs
 # the same swap rather than its own version of it (#230) — behind the same gate,
 # because the pair is the rule and half of it is not (#233).
@@ -56,11 +56,20 @@ def main() -> None:
         # what moves readers onto it. Nothing is deleted to make room, so there
         # is nothing left to refuse.
         #
-        # The version is minted per CONCEPT across prompt versions, the same
-        # expression Stage C uses and for the same reason. Letting the column's
-        # DEFAULT of 1 stand would collide with the existing v1 on
-        # `genealogies_concept_pv_version_key` (025) — a raw constraint error at
-        # the end of a recovery, which is the worst moment to meet one.
+        # The version is minted per CONCEPT across prompt versions, and it is
+        # literally the same expression Stage C uses: `common.NEXT_VERSION`, taken
+        # under `lock_version_mint` (#241). It was a second copy of
+        # `coalesce(max(version), 0) + 1` here, which is how two minters drift —
+        # this one was not in #241's finding because nobody ran a restore beside a
+        # build, and it would have re-issued a deleted version's number the day the
+        # ledger shipped, since only the copy in Stage C would have read it.
+        # Letting the column's DEFAULT of 1 stand would collide with the existing
+        # v1 on `genealogies_concept_pv_version_key` (025) — a raw constraint error
+        # at the end of a recovery, which is the worst moment to meet one.
+        #
+        # The lock is held to the `conn.commit()` below: this connection is not
+        # autocommit, so the INSERT, the edges, the gate and the swap are all one
+        # transaction, and a build minting at the same moment waits for it.
         #
         # The restoration is itself a curatorial event — record it. The actor
         # goes in `by_asserted`: this used to write {"by": "cli"} into the same
@@ -69,15 +78,16 @@ def main() -> None:
         audit = [{"op": "restore", "detail": {"from": Path(args.json_path).name},
                   "at": datetime.now(timezone.utc).isoformat(),
                   "by_asserted": actor()}]
+        lock_version_mint(conn, concept)
         gid, version = conn.execute(
-            """INSERT INTO genealogies (concept, prompt_version, status, nodes,
-                                        user_edits, version, is_current)
-               VALUES (%s, %s, 'complete', %s, %s,
-                       (SELECT coalesce(max(version), 0) + 1 FROM genealogies
-                         WHERE concept = %s),
-                       false)
-               RETURNING id, version""",
-            (concept, pv, Jsonb(nodes), Jsonb(audit), concept)).fetchone()
+            f"""INSERT INTO genealogies (concept, prompt_version, status, nodes,
+                                         user_edits, version, is_current)
+                VALUES (%(concept)s, %(pv)s, 'complete', %(nodes)s, %(audit)s,
+                        {NEXT_VERSION},
+                        false)
+                RETURNING id, version""",
+            {"concept": concept, "pv": pv, "nodes": Jsonb(nodes),
+             "audit": Jsonb(audit)}).fetchone()
 
         paper_ids = dict(conn.execute(
             "SELECT arxiv_id, id FROM papers WHERE arxiv_id = ANY(%s)",

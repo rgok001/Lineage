@@ -39,7 +39,8 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (  # noqa: E402
-    build_row, data_dir, env, node_denotation, text_digest, version_note)
+    NEXT_VERSION, build_row, data_dir, env, lock_version_mint, node_denotation,
+    text_digest, version_note)
 from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
 # Embeddings come from the Voyage hosted API (see common.voyage_embed), which
@@ -261,17 +262,26 @@ def label_cluster_llm(client, concept, member_defs) -> str | None:
 # prompt_version), matching 025's `genealogies_one_current_per_concept`: one
 # concept has one live map and its versions are numbered in one sequence, so a
 # map rebuilt at a new prompt version does not restart at v1 beside a v3 that is
-# still on the site. `genealogies_concept_pv_version_key` (025) is what makes a
-# lost race a refusal rather than two rows both calling themselves version 2.
+# still on the site.
+#
+# **The number comes from `common.NEXT_VERSION` and is decided under a lock**
+# (#241). This file used to compute `coalesce(max(version), 0) + 1` itself and say
+# that 025's `genealogies_concept_pv_version_key` "makes a lost race a refusal
+# rather than two rows both calling themselves version 2". Measured, neither half
+# held: two concurrent Stage Cs at one prompt version left the loser dying on an
+# unhandled `UniqueViolation` after Stage B's money, and at two prompt versions
+# both minted version 3 with nothing raised at all, because that key carries the
+# prompt version and this sequence does not. `lock_version_mint` below is what
+# makes the two runs take N and N+1; migration 028's partial index is the backstop
+# for a writer that skipped it.
 #
 # `is_current` is written false and stays false until Stage E publishes: the row
 # exists from here on, and a map is not a map until it is published (#168).
-INSERT_GENEALOGY = """
+INSERT_GENEALOGY = f"""
 INSERT INTO genealogies (concept, prompt_version, status, nodes, version,
                          is_current, updated_at)
 VALUES (%(concept)s, %(prompt_version)s, 'running', %(nodes)s,
-        (SELECT coalesce(max(version), 0) + 1 FROM genealogies
-          WHERE concept = %(concept)s),
+        {NEXT_VERSION},
         false, now())
 RETURNING id, version
 """
@@ -525,10 +535,37 @@ def main() -> None:
             # keeps every id stable by never writing to it again, which is what
             # makes `/g/<id>` and `trace_requests.genealogy_id` name a map rather
             # than a concept's latest attempt (#207b, #208).
-            gen_id, version = conn.execute(INSERT_GENEALOGY, {
-                "concept": args.concept, "prompt_version": prompt_version,
-                "nodes": psycopg.types.json.Json(nodes),
-            }).fetchone()
+            #
+            # **Read the greatest number and write the next one under a lock**
+            # (#241). Both halves of that happen inside this transaction, which is
+            # the only arrangement that works: the max is read by the INSERT's own
+            # subquery, so a second build reading it a millisecond later sees the
+            # same value until this one commits. The lock is per concept, so two
+            # builds of two different terms never wait for each other, and it is
+            # taken here rather than at the top of the transaction because a
+            # resumed row mints nothing and has nothing to serialise.
+            lock_version_mint(conn, args.concept)
+            try:
+                gen_id, version = conn.execute(INSERT_GENEALOGY, {
+                    "concept": args.concept, "prompt_version": prompt_version,
+                    "nodes": psycopg.types.json.Json(nodes),
+                }).fetchone()
+            except psycopg.errors.UndefinedTable as exc:
+                # The ledger is migration 028 and the mint reads it (#241). A
+                # database without it is one nobody migrated, and the same shape
+                # of refusal as Stage E's missing publish invariant: failing
+                # closed is right, failing closed with a raw traceback in the
+                # middle of a paid build is not. The transaction rolls back on
+                # the SystemExit, so no version was minted and no row was written.
+                sys.exit(
+                    f"\nRefusing to mint a version of this map: {exc}\n"
+                    "  The ledger of deleted version numbers is migration 028, and "
+                    "the mint reads it\n"
+                    "  so that a deleted version's number is never issued twice. "
+                    "Apply the migrations\n"
+                    "  (python pipeline/db/migrate.py) and run this stage again. "
+                    "Nothing was written and\n"
+                    "  every version of this map is exactly as it was.")
             prior_nodes = None
 
         # **Which of the two cases this now serves: a RESUMED row, never a fresh

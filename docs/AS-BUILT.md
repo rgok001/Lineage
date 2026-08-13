@@ -257,7 +257,7 @@ and for somebody to one day measure where matches land.
 **edges** (001, 010, 015): see below; the eight `source_`/`target_`-prefixed
 stamp columns are the same four facts twice, one per quote.
 
-**genealogies** (001, 007, 012, 025, 027): the map itself. `nodes` is JSONB
+**genealogies** (001, 007, 012, 025, 027, 028): the map itself. `nodes` is JSONB
 (concept-states with members and year ranges), `user_edits` is the append-only
 curatorial audit trail (each entry `{op, detail, at}` plus at most one of `by`
 and `by_asserted`; decision 18), `spend_usd` accumulates cost, `status` is one of
@@ -368,6 +368,49 @@ impossible. Measured both ways on a throwaway Postgres (2026-08-13): the old
 Stage C at 001-026 rebuilding a published map dies on
 `genealogies_current_is_published`, which is #214; the old Stage C at 001-027
 dies on `InvalidColumnReference` before writing a row.
+
+**Migration 028 (`028_version_identity.sql`, issue #241) makes the version number
+one map's, and makes a used number permanent.** Two objects and a trigger:
+
+- `genealogies_concept_version_key`, a unique index on `(concept, version) WHERE
+  version > 1`. `(concept, version)` is the key the system means — 025 numbers a
+  concept's versions in one sequence across prompt versions — and 025's
+  `genealogies_concept_pv_version_key` cannot see a collision across prompt
+  versions at all. **It is partial, and the hole is stated rather than glossed**:
+  025's backfill made every row that then existed version 1 by column default, so
+  a total index would not create on this database, and renumbering rows readers
+  have addressed since #208 is the worse trade. Version 1 is therefore
+  unconstrained across prompt versions; the advisory lock in the mint is what
+  covers it, and this index is the backstop for a writer that skipped the lock.
+  Measured: a hand-inserted second `(concept, 2)` is refused, a second
+  `(concept, 1)` is accepted.
+- `genealogy_deletions`, an append-only ledger of the numbers deleted maps had —
+  `genealogy_id` (not a foreign key; the row is gone), concept, prompt version,
+  version, status, `was_current`, `deleted_by`, `deleted_at`. The mint reads the
+  greatest of the live rows and this table, so **a deleted version's number is
+  never issued again**: a re-minted number would overwrite that version's export,
+  which is the de-facto backup (incident 4). A counter column would be a cache of
+  history that re-issues silently when it drifts; a ledger cannot drift because it
+  is not derived from anything. Append-only is enforced by the trigger
+  `genealogy_deletions_append_only` — UPDATE and DELETE raise — because the
+  guarantee is exactly as strong as the promise that no row leaves the table. The
+  app's delete writes the tombstone from #243; nothing else writes it.
+- `lineage_ro` gets SELECT on the ledger, guarded on `pg_roles` like 016's, 025's
+  and the rest.
+
+**The mint itself is `common.NEXT_VERSION` under `common.lock_version_mint`**, and
+both minters — Stage C and `restore_genealogy.py` — use those and no copy of their
+own. The lock is
+`pg_advisory_xact_lock(hashtext('lineage:genealogy-version:' || concept))`, taken
+inside the transaction that inserts; the helper raises if it is called where the
+transaction would end before the INSERT, since an autocommit `SELECT` releases the
+lock immediately and would leave a caller holding nothing. What #207b's claim that
+025's key "makes a lost race a refusal rather than two rows both calling
+themselves version 2" was worth, measured at `0483a66` on a throwaway Postgres:
+same prompt version, the loser died on an unhandled `UniqueViolation` after Stage
+B's spend; different prompt versions, both rows were minted as version 2 with
+nothing raised. With the lock, both orderings give 1 and 2, no exception, no
+non-zero exit.
 
 **A rebuild of a published map is now a new version, and nothing a reader can
 see is written during it** (#207b, closing #214). Stage C inserts version

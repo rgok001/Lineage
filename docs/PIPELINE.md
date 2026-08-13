@@ -791,9 +791,28 @@ to distrust and by how much.
 **Stage C: clustering** (`stage_c_cluster.py <concept> [--corpus JSON]
 [--genealogy-id ID] [--result-json PATH]`).
 **It INSERTS a new version of the map** (#207b, closing #214). `INSERT_GENEALOGY`
-mints `version = max(version) + 1` for the concept — across prompt versions, so
-one concept's versions are one sequence — with `status = 'running'` and
-`is_current` false, and returns the id. It replaced `UPSERT_GENEALOGY`, an
+mints the concept's next version — across prompt versions, so one concept's
+versions are one sequence — with `status = 'running'` and `is_current` false, and
+returns the id.
+**The number comes from `common.NEXT_VERSION` and is decided under an advisory
+lock** (#241). The expression is the greatest of `max(version)` over the
+concept's live rows and over `genealogy_deletions`, plus one, so a deleted
+version's number is never handed out again and cannot overwrite that version's
+export. `common.lock_version_mint` takes
+`pg_advisory_xact_lock(hashtext('lineage:genealogy-version:' || concept))` inside
+the same transaction as the INSERT, which is what makes two concurrent builds
+take N and N+1; it raises rather than returning if it is ever called outside a
+transaction, because an advisory transaction lock on an autocommit connection is
+released before the statement that needed it. Measured on a throwaway Postgres,
+both ways: at `0483a66` two Stage Cs racing at one prompt version left the loser
+on an unhandled `UniqueViolation` after Stage B's money, and at two prompt
+versions **both minted version 2** with nothing raised; with the lock, both
+orderings give versions 1 and 2, no exception and no non-zero exit. Migration 028
+is the backstop — `UNIQUE (concept, version) WHERE version > 1` — and a database
+without it makes this stage refuse by name instead of raising `UndefinedTable`
+mid-build. `restore_genealogy.py` mints through the same expression and the same
+lock; it held its own copy until #241, which is how the ledger would have been
+read by one minter and ignored by the other. It replaced `UPSERT_GENEALOGY`, an
 `INSERT ... ON CONFLICT (concept, prompt_version) DO UPDATE` that wrote over the
 concept's one row: after migration 025 that set the LIVE map's status back to
 `running` and died on `genealogies_current_is_published` at step 6 of 24, with
@@ -1499,9 +1518,12 @@ re-grounds every quote against the text that is actually there.
 `restore_genealogy.py`: the inverse of Stage E's export; re-inserts a
 genealogies row and its edges from a JSON export and records the restoration
 in the audit trail. Written during incident 4 and kept as the recovery path.
-**Since #207b it restores as a NEW version**, minting `max(version) + 1` for the
-concept exactly as Stage C does, which makes it the rollback path: restore an
-older export and the publish swap demotes whatever was live. It used to refuse
+**Since #207b it restores as a NEW version**, minting through `common.NEXT_VERSION`
+under `common.lock_version_mint` — literally the same expression and lock Stage C
+uses since #241, not a second copy of them — which makes it the rollback path:
+restore an older export and the publish swap demotes whatever was live. Its whole
+run, the mint included, is one transaction on a connection that is not autocommit,
+so a build minting at the same moment waits for the commit. It used to refuse
 outright when the concept had a row at all — "delete it first if you mean to
 replace it", which is decision 12's destroy-before-replace on the only copy, in
 the recovery script — and there is now nothing to refuse, because nothing is
