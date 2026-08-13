@@ -315,15 +315,29 @@ map completed between #208 landing the readers and #207a landing the writer, so
 no map was ever left in that state. The swap is two statements inside the
 transaction Stage E already runs in: demote every *other* current row of the
 concept (`is_current = false`, `superseded_at = now()`), then promote this one
-(`status = 'complete'`, `is_current = true`). Demote-before-promote is forced by
-the partial unique index rather than chosen, and the demotion destroys nothing —
-one flag moves and one timestamp is written, and the demoted row keeps its id,
-nodes, edges, streams, `user_edits` and its address.
+(`status = 'complete'`, `is_current = true`, `superseded_at = NULL`).
+Demote-before-promote is forced by the partial unique index rather than chosen,
+and the demotion destroys nothing — one flag moves and one timestamp is written,
+and the demoted row keeps its id, nodes, edges, streams, `user_edits` and its
+address.
+
+**The promote clears `superseded_at`, so a version can be published again**
+(issue #229). Publishing a row that an earlier swap had demoted — a rollback to
+the previous version, or re-grounding an older map with `PROMPT_VERSION` naming
+it — would otherwise write `is_current = true` beside the old timestamp, which
+is the state 026 forbids: measured, that failed the whole grounding run on the
+CHECK after it had been paid for, and on a database still at 025 it succeeded
+silently and left the live map recorded as replaced. Latent while a concept has
+one publishable row, routine from #207b. `AND id <> %(gid)s` on the demote is
+what keeps re-publishing the *current* map a no-op; since the promote clears the
+column the two statements now cancel even without it, so the falsifier for the
+invariant is deleting both, not either.
 
 `superseded_at` is that swap's record, and it is never inferred from
 `is_current`, because a row that was never current was never replaced either: it
 stays NULL on every row that has never been demoted, including every `running`,
-`failed` and `aborted_spend_cap` row for ever.
+`failed` and `aborted_spend_cap` row for ever, and it returns to NULL on a row
+that is published again.
 
 **A rebuild of a published map still dies at Stage C** (#214), because
 `UPSERT_GENEALOGY` writes `status = 'running'` onto the live row and 025's

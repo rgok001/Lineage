@@ -496,11 +496,18 @@ mid-build snapshot **onto a current row** hits the same refusal; restore onto th
 publish is two statements inside the transaction it already ran in: it demotes
 every *other* current version of the concept — `is_current = false`,
 `superseded_at = now()` — and then promotes the map it is publishing to
-`complete` and current. A build that finishes therefore appears on the concepts
-list, in every report's comparison set, and at `/g/<id>/current`, with no step
-for an operator. Re-publishing the same map changes nothing: the demotion
-excludes the row being published, and if it did not, migration 026 would fail the
-transaction rather than leave a live map recorded as replaced.
+`complete` and current, clearing `superseded_at` on it. A build that finishes
+therefore appears on the concepts list, in every report's comparison set, and at
+`/g/<id>/current`, with no step for an operator. Re-publishing the same map
+changes nothing: the demotion excludes the row being published.
+
+**Publishing a version that was superseded rolls the site back to it** (#229).
+Running Stage E with `PROMPT_VERSION` naming an older, already-demoted map
+demotes the live one and makes the older map current again, clearing the
+timestamp that said it had been replaced — one command, no by-hand SQL, and the
+concepts list follows. Before #229 the promote left `superseded_at` in place and
+that run died on `genealogies_current_not_superseded` at the very end, after the
+whole grounding run had been paid for.
 
 **One check, once, after this deploy.** Between migration 025 and #207a nothing
 wrote `is_current` at all, so any map that completed in that window is `complete`

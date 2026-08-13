@@ -551,12 +551,29 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
     # fails the demote reverts and the old map is still the live one, which is
     # the property that matters.
     #
-    # **`AND id <> %(gid)s` is load-bearing.** Re-publishing a map that is
-    # already current would otherwise demote it, stamp `superseded_at`, then
-    # promote it back — leaving a live map its own record says was replaced,
-    # which is exactly what migration 026 refuses. Delete that clause and the
-    # publish fails on `genealogies_current_not_superseded` rather than quietly
-    # writing the contradiction; that is verified, not assumed.
+    # **`AND id <> %(gid)s` keeps a re-publish from touching its own row.**
+    # Without it, re-publishing a map that is already current demotes it, stamps
+    # `superseded_at`, and promotes it back in the same transaction. Until #229
+    # that ended as a live map its own record said was replaced, and deleting the
+    # clause failed the publish on `genealogies_current_not_superseded`. Now that
+    # the promote clears the column the two statements cancel, and deleting the
+    # clause leaves the same final row — measured, both before and after. The
+    # clause stays because a no-op should touch no rows, and because the demote
+    # is the statement that would otherwise fire on the concept's live map on
+    # every re-publish. The invariant's falsifier moved with the fix: delete the
+    # clause AND the promote's `superseded_at = NULL` and the CHECK fires again.
+    #
+    # **The promote clears `superseded_at`, and that is not tidiness** (issue
+    # #229). A row demoted by an earlier publish carries the timestamp for ever;
+    # publishing it again — a rollback to the previous version, or re-grounding
+    # an older map with `PROMPT_VERSION` pointing at it — would otherwise write
+    # `is_current = true` beside a non-NULL `superseded_at`, which is the
+    # contradiction 026 forbids. Without the clear it dies on that CHECK as a
+    # psycopg traceback at the end of a fully paid grounding run; on a database
+    # at 025 the same sequence succeeded silently and stamped the NEWER map
+    # superseded. `superseded_at` answers "when was this replaced", so a row
+    # that is live again has not been replaced and the column must say so.
+    # Latent while a concept has one publishable row, routine from #207b on.
     #
     # This is #207a and only #207a. A rebuild of an existing map still dies
     # earlier, in Stage C, which upserts `status = 'running'` onto the live row
@@ -567,7 +584,8 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
         WHERE concept = %(concept)s AND is_current AND id <> %(gid)s
     """, {"concept": args.concept, "gid": gen_id})
     conn.execute("""
-        UPDATE genealogies SET status = 'complete', is_current = true, updated_at = now()
+        UPDATE genealogies SET status = 'complete', is_current = true,
+               superseded_at = NULL, updated_at = now()
         WHERE id = %(gid)s
     """, {"gid": gen_id})
 
