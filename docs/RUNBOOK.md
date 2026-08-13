@@ -36,7 +36,7 @@ resolves here.
 | `DATA_DIR` | root `.env`, Render (`/data`) | absolute paths honoured |
 | `OPENALEX_MAILTO` | root `.env`, Render | polite-pool contact |
 | `LINEAGE_NO_DB` | set per shell, never committed | any non-blank value and every Python entry point refuses to hand out `DATABASE_URL` (decision 22). Set it in any shell running pipeline code to inspect it rather than to operate on real data. Does not reach the Node side |
-| `LINEAGE_READ_URL` | set per shell, never committed | the read-only `lineage_ro` role, SELECT and nothing else. Read by `recheck_stamp.py`, `map_report.py` and `check_map.py`, and by nothing else. Deliberately not named `DATABASE_URL` so no existing code path can route through it by accident |
+| `LINEAGE_READ_URL` | set per shell, never committed | the read-only `lineage_ro` role, SELECT and nothing else. Read by `recheck_stamp.py`, `map_report.py` and `check_map.py`, and by nothing else. Each of those, given a concept, answers about that concept's LIVE map and prints which map it read; `--genealogy-id` names another version (#242). Deliberately not named `DATABASE_URL` so no existing code path can route through it by accident |
 | `AUTH_SECRET`, `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, `OWNER_GITHUB_LOGIN` | `app/.env.local`, Vercel | Auth.js reads exactly these names |
 
 **Local development.** App: `cd app && npm run dev` (port 3000). Worker:
@@ -260,7 +260,9 @@ python pipeline/restore_snapshot.py /data/snapshots/<file>.json --confirm --no-p
 python pipeline/stage_e_ground.py "<concept>" --genealogy-id <id> --no-publish
 
 # 5. confirm the map satisfies the rules that built it — BEFORE anyone sees it.
-python pipeline/check_map.py "<concept>"
+#    Name the row you restored into: a bare concept asks about the LIVE map
+#    (#242), which is not the one you are about to publish.
+python pipeline/check_map.py "<concept>" --genealogy-id <id>
 
 # 6. publish it: this re-grounds and, if the six clauses hold, makes it current.
 python pipeline/stage_e_ground.py "<concept>" --genealogy-id <id>
@@ -368,7 +370,9 @@ Immediately after the migration and before anything else, on the Render shell:
 python pipeline/recheck_stamp.py --concept "attention" --edges
 ```
 
-Expect **every** stamp reported stale, reason "no digest recorded". A single
+`--edges` re-checks the LIVE map's edge stamps and says so in its header (#242);
+the definition stamps above it are per concept, shared by every version of the
+map, and the command says that too. Expect **every** stamp reported stale, reason "no digest recorded". A single
 stamp reporting verified means something wrote a digest it could not know.
 
 **The order of the two steps below is load-bearing, and running them backwards is
@@ -503,7 +507,12 @@ python pipeline/recheck_stamp.py --concept "attention" --edges
 
 Read the report's "relationships not re-checked" against `recheck_stamp.py`'s
 `stale` count; if they agree and both are the whole map, the re-ground has not
-run. Record the numbers before and after, because the re-ground is the step that
+run. **Both numbers are now about the same map** (#242): the report is per
+genealogy and `--edges` used to count every version's edge stamps as the
+concept's, so on a concept with two versions the comparison was between two
+populations. Its header names the map it read, and the report names its own —
+check they agree before reading anything into the two counts. The definition
+figures either side are per concept by nature and are not a per-map count. Record the numbers before and after, because the re-ground is the step that
 visibly moves counts on a published map.
 
 Two figures on the report will read "not recorded" on both live maps whatever you
@@ -545,7 +554,8 @@ demoted row keeps its id, so any map citing it still holds the paper, but its
 embedding stays NULL — `--embed-only`'s SELECT carries `defines_concept = true` —
 and the map now fails the publish invariant. `--refresh` prints a DEMOTION line
 naming each such map and node and an end-of-run banner; when a refresh prints
-one, run `check_map.py "<concept>"` and repair (#170 is the procedure) before
+one, run `check_map.py "<concept>"` — which answers about the live map, and
+`--genealogy-id` for any other version (#242) — and repair (#170 is the procedure) before
 re-grounding — and before restoring, because since #233 a restore that would
 publish that map asks the publish gate and refuses with the same findings, having
 written nothing. `restore_snapshot.py` restores the snapshot's own `status`, so restoring a
@@ -658,20 +668,29 @@ a stamp becomes re-checkable is by being re-checked. The live maps are
 extracted text and the #202 claims cache live on that disk:
 
 ```
-python pipeline/stage_h_claims.py "attention"
-python pipeline/stage_h_claims.py "embedding"
+python pipeline/stage_h_claims.py "attention" --recheck
+python pipeline/stage_h_claims.py "embedding" --recheck
 ```
 
-This costs ~$0: the cache hands back the same claims that were bought when the
-map was built, and only the grounding runs again. The stage says so before it
-buys anything, in a line printed ahead of the first paper — `N of M paper(s)
-already have claims and will cost nothing; K to buy` — and on both maps `K`
-should read 0. If it does not, something the cache key is made of has moved
-since those claims were bought: the paper's extracted text, `PROMPT_VERSION`,
-the stage's own prompt, or `--model`, which defaults to a literal in the stage
-and not to `LLM_MODEL`. `--recheck` re-grounds the passages already stored and
-writes the same `checked_against` for nothing, and is the answer whenever you do
-not want to buy. Success is the per-paper lines reading `v/n claims carry a
+**`--recheck` is the procedure, and since #242 the bare command refuses here.**
+Without a flag this stage resolves the row a build owns, and nothing ever clears
+`running`, so on a concept carrying the residue of a failed build it aimed the
+most expensive stage in the pipeline at a row nobody can see — measured, "0 of 1
+paper(s) already have claims and will cost nothing; 1 to buy", on the shell where
+the API key is set. It now refuses, names the live map and prints these two ways
+through: `--recheck` for the live map, free, and `--genealogy-id` for a named
+version. `--recheck` re-grounds the passages already stored and buys nothing,
+which is exactly what this live-data step needs.
+
+This costs $0: `--recheck` re-grounds the passages already stored, writes the
+same `checked_against` and asks the model nothing, so the cost line is not a
+prediction. The forecast an operator would otherwise read — `N of M paper(s)
+already have claims and will cost nothing; K to buy`, printed ahead of the first
+paper — belongs to the buying path and is not printed under `--recheck`; if you
+do run the buying path on a named version, `K` above 0 means something the cache
+key is made of has moved: the paper's extracted text, `PROMPT_VERSION`, the
+stage's own prompt, or `--model`, which defaults to a literal in the stage and
+not to `LLM_MODEL`. Success is the per-paper lines reading `v/n claims carry a
 checked quote`, a closing `spend $0.0000`, and a summary whose only skips are the
 papers named as having no text to check — their claims stay stale, correctly, and
 the run prints their arXiv ids. Then open a thread page: the claims that carried

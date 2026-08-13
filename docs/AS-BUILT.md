@@ -967,6 +967,27 @@ question, and `pipeline/check_map.py`, Stage E's publish gate and (when #174
 lands) the report page all read them, so none of them can hold a different
 opinion about the same map.
 
+**Which map, though, is a question the views do not answer** (#242). They emit one
+row per genealogy and neither names `version` or `is_current`, so `check_map.py`
+took every version of a concept and conjoined their verdicts: measured, a clean
+live map beside the `running` residue of a failed build gave two map blocks and
+exit 1, in the command the restore procedure runs before letting anyone see a
+recovered map. Since #242 a concept names the LIVE map, `--genealogy-id` names a
+version, and both print which map they read; the two columns come from
+`genealogies` joined on the view's own `genealogy_id`, because a view is redefined
+by DROP and CREATE and this needed no migration. The same rule now holds across
+the read-only instruments: `recheck_stamp.py --edges` scopes to one genealogy
+(it counted every version's edge stamps as the concept's — measured, 4 where the
+live map has 2), while its definition stamps stay per concept and say so, because
+a definition row belongs to (concept, prompt version) and every version of the map
+shares it. Closed by falsifier rather than by list: adding an unpublished sibling
+row moves no output of `check_map.py` or `recheck_stamp.py`. It does move
+`map_report.py`, in three fields and one figure — `versions`, `versions_recorded`,
+`ref_label` and the comparison set's `n` — while every figure about the map itself
+stands; the first two are what that field is for, and the last two mean its
+"other maps in this system" counts a map no reader can see, which is a residue
+recorded on the board rather than changed here.
+
 Six clauses, each an existence test or an equality, **no threshold anywhere**:
 (1) every entry of a concept-state's `definition_ids` names a definition Stage C
 would admit today — it exists, it belongs to this map's `(concept,

@@ -1007,6 +1007,52 @@ The why behind the load-bearing choices, in one place:
     Decision 41's accepted regression (a re-cluster of a live map dying on a
     CHECK) is retired with it: there is nothing to re-cluster in place.
 
+44. **A version number is minted under a lock and never re-issued; superseding
+    the live map, and buying for a row nobody named, are refused** (2026-08-13,
+    issues #241 and #242, implementing the Architect's repair ruling posted on
+    #241). Four commits, one rule, and the rule is about what an act destroys
+    rather than about how confident a predicate is.
+    **`status <> 'complete'` cannot mean "a build in flight".** Nothing in this
+    system clears `running`: a build SIGKILLed, SIGTERMed at a deploy, or dying
+    in its finish phase leaves that row for ever, and migration 027's own header
+    calls it the normal residue of a failed build. So `build_row` finds a corpse
+    as readily as a build, and the documented bare `stage_e_ground.py
+    "<concept>"` published one over a curated live map — measured, exit 0, every
+    curatorial edit gone from what readers see. A predicate no sweeper maintains
+    may keep the acts that write nothing a reader sees, and may not keep the act
+    that replaces what a reader is seeing. Stage E's publish and Stage H's buying
+    now refuse a predicate-resolved row while the concept has a current map;
+    `--genealogy-id` names a version and `--current` (Stage E) or `--recheck`
+    (Stage H) names the live map. **The refusals nominate nothing**: they print
+    the unpublished versions with status and age, and the commands with a
+    placeholder id, because printing the newest candidate's id in a runnable
+    command is the adoption they exist to prevent.
+    **The version key moved to `(concept, version)`, with a hole stated rather
+    than papered over.** 025's `UNIQUE (concept, prompt_version, version)` was
+    claimed to make a lost race "a refusal rather than two rows both calling
+    themselves version 2"; measured, at one prompt version the loser died on an
+    unhandled `UniqueViolation` after Stage B's money, and at two prompt versions
+    both rows were minted as version 2 with nothing raised. Migration 028 adds
+    `UNIQUE (concept, version) WHERE version > 1`. It is partial because 025's
+    backfill made every row that then existed version 1 and renumbering rows
+    readers have addressed since #208 is the worse trade — so version 1 is
+    unconstrained across prompt versions, the advisory lock in the mint covers
+    it, and the index is the backstop for a writer that skipped the lock. The
+    alternative, a total index, could not be created on the database we have.
+    **A ledger, not a counter.** 028's append-only `genealogy_deletions` records
+    the numbers deleted maps had, and the mint takes the greatest of the live rows
+    and it, so a deleted version's number is never issued again over that
+    version's export — the de-facto backup (incident 4). A `next_version` column
+    would be a cache of history that re-issues silently when it drifts, and the
+    row it would collide with is exactly the one that is gone.
+    **What this retires**: #207b's claim that `build_row` is "deterministic
+    without a lock, because a build's own row carries the highest version". It
+    holds only until the next Stage C runs for that concept, so the worker now
+    binds `--genealogy-id` from the clustering onwards rather than from the end of
+    pass one, and the read-only instruments (`check_map.py`, `recheck_stamp.py`)
+    answer about the live map instead of conjoining every version's verdict.
+
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record

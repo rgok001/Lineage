@@ -784,6 +784,46 @@ def version_note(conn, concept: str, prompt_version: str) -> str:
                                if live else "None of them is the live map."))
 
 
+# ── the versions a command could have meant ─────────────────────────────────
+#
+# Issue #241, and #242 for the second caller. Two stages refuse to act on a row
+# they resolved by predicate while the concept has a live map — Stage E's publish
+# and Stage H's buying — and both refusals owe the operator the same thing: what
+# there is to choose from, with no candidate nominated. The query and the table
+# live here so the two cannot drift into printing different evidence for the same
+# decision.
+#
+# Age from `updated_at`, which Stage C writes on the insert and every later stage
+# touches: "how long has this been sitting here" is what tells a build in flight
+# from the residue of one that died, and it is the question the operator can
+# answer and the stage cannot.
+SELECT_UNPUBLISHED = """
+SELECT version, id, status,
+       date_trunc('second', now() - updated_at)::text
+FROM genealogies
+WHERE concept = %(concept)s AND prompt_version = %(pv)s AND status <> 'complete'
+ORDER BY version DESC
+"""
+
+
+def unpublished_versions(conn, concept: str, prompt_version: str) -> list:
+    return conn.execute(SELECT_UNPUBLISHED,
+                        {"concept": concept, "pv": prompt_version}).fetchall()
+
+
+def unpublished_table(rows: list) -> list[str]:
+    """The rows a refusal lists, as lines. Never a nominated candidate.
+
+    The obvious kindness — the newest version's id, in a copy-pasteable command —
+    is the adoption these refusals exist to prevent, which is why this returns a
+    table and not a suggestion.
+    """
+    out = ["    version  genealogy  status              last written"]
+    for version, gid, status, age in rows:
+        out.append(f"    {version:>7}  {gid:>9}  {status:<18}  {age} ago")
+    return out
+
+
 # ── minting a version number ────────────────────────────────────────────────
 #
 # Issue #241 (H7). Two scripts insert a new version of a concept's map — Stage C

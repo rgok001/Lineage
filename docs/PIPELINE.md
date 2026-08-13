@@ -1578,8 +1578,8 @@ the concepts list. It names the version it superseded, if any, and takes
 `--no-publish` for a restore that must not disturb what readers see — which, as
 in Stage E, does not ask the gate, because publishing is what the gate gates.
 `recheck_stamp.py`
-(`recheck_stamp.py --concept NAME [--arxiv ID ...] [--edges] [--verbose]`): the
-independent re-checker, and the point of migration 015. The stamp columns are
+(`recheck_stamp.py --concept NAME [--arxiv ID ...] [--edges] [--genealogy-id ID]
+[--verbose]`): the independent re-checker, and the point of migration 015. The stamp columns are
 only worth having if something can consume them, and this is what proves a tick
 is evidence rather than a claim. **It reads `LINEAGE_READ_URL` and never
 `DATABASE_URL`, and issues no statement but `SELECT`**, so it structurally cannot
@@ -1765,8 +1765,8 @@ read-only role's connection string to run at all, so its reader is the Operator
 and never a visitor.
 
 `check_map.py`
-(`check_map.py <concept> [--prompt-version PV] [--all] [--json]`): whether a map
-still satisfies the rules of the stages that built it (issue #168, the missing
+(`check_map.py <concept> [--prompt-version PV] [--genealogy-id ID] [--all]
+[--json]`): whether a map still satisfies the rules of the stages that built it (issue #168, the missing
 piece named in #149 and the publish half of #2). The six clauses are migration
 `021_map_invariant.sql`'s two views and this command computes none of them, so it
 and Stage E's publish gate cannot hold a different opinion about the same map.
@@ -1775,16 +1775,32 @@ and Stage E's publish gate cannot hold a different opinion about the same map.
 `recheck_stamp.py` and `map_report.py` are: an Operator has to be able to point
 it at production. It commits on the way out of the `with` block, carrying nothing,
 for the reason given above.
-**The exit status is the verdict**: 0 when every map asked about satisfies all
-six clauses, 1 when any does not, taken from the view's own boolean rather than
-from anything worked out here, so the answer cannot come from the value the tool
-was supposed to be independent of. Every finding names the concept-state, the
+**A concept names the LIVE map, and the answer says which map it read** (#242).
+It resolved every version of the concept and conjoined their verdicts, which
+since #207b is a question nobody asks it: measured, a clean live map beside the
+`running` residue of a failed build printed two map blocks and exited 1, in the
+command the restore procedure runs at step 5 to confirm a just-restored map
+before anyone sees it. `--genealogy-id` names a version and is checked against
+the concept and prompt version it was given, so a mistyped id is refused rather
+than answered; a concept whose versions are all unpublished is told so, with the
+versions listed. **The exit status is the verdict**: 0 when every map asked about
+satisfies all six clauses, 1 when any does not, taken from the view's own boolean
+rather than from anything worked out here, so the answer cannot come from the
+value the tool was supposed to be independent of. It is a conjunction only under
+`--all`, where that is what the flag means. Every finding names the concept-state, the
 relationship or the thread it is about and says in words what is wrong with it,
 because its reader is whoever has to repair it; the six clause sentences come
 from the view, so they are written down in the migration and nowhere else.
 `--all --json` is **always** a JSON array — of one element against a database
 holding one map, and `[]` against one holding none, which is the degenerate case
-the shape promise is only as strong as (issue #93). There is no threshold, grade
+the shape promise is only as strong as (issue #93). A named concept's JSON is an
+object carrying `version` and `is_current`, so it says which map it is about, and
+its `chosen[0]` is now provably one row rather than the first of however many
+versions the view returned (#242).
+The two columns come from `genealogies` joined on the view's own `genealogy_id`:
+migration 021 predates the version shape and names neither, and a view is
+redefined by DROP and CREATE, so reading them from the table beside it is the
+change that costs no migration. There is no threshold, grade
 or score in it and there must never be one: a map either satisfies every clause
 or it names what it violates.
 
@@ -1850,7 +1866,21 @@ against and the render path resolves it (#215) rather than trusting the carry. A
 others succeed still keeps its papers bare until a re-run, as before: the floor
 is at zero accounts, not a proportion nobody could defend.
 
-**Stage H: claim-level evidence** (`stage_h_claims.py <concept> [--thread SID]`).
+**Stage H: claim-level evidence** (`stage_h_claims.py <concept> [--thread SID]
+[--recheck] [--genealogy-id ID]`).
+**A row resolved by rule may not be bought for while the concept has a live map**
+(#242, the same rule and shape as Stage E's #241 refusal). Buying belongs to the
+build in flight, but nothing ever clears `running`, so `build_row` finds the
+residue of a failed build just as readily — and this is the most expensive stage
+in the pipeline, roughly doubling what a map costs. Measured on a database
+carrying a corpse, the RUNBOOK's own #215 command reported "0 of 1 paper(s)
+already have claims and will cost nothing; 1 to buy", aimed at a row nobody can
+see, and stopped only because the sandbox has no API key — the shell the
+procedure names has one. It now refuses before anything is read or bought, prints
+`version_note` and the unpublished versions with their age, and names the two ways
+through without nominating a candidate: `--recheck` for the live map, free, and
+`--genealogy-id` for a named version. A concept with no live map is not refused,
+which is the ordinary build.
 Asks each paper for 2-4 things it did for the term, each with the passage that
 shows it, then checks every passage against our own extracted text with
 `quote_is_grounded`. A claim whose passage fails keeps the claim and loses the

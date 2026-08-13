@@ -58,6 +58,15 @@ WHERE d.concept = %(concept)s AND d.prompt_version = %(pv)s
 {arxiv_filter}ORDER BY p.arxiv_id
 """
 
+# **One map, named by id** (issue #242). This was `WHERE g.concept = ... AND
+# g.prompt_version = ...`, which since #207b is every VERSION of the concept:
+# measured, a live map holding one edge reported "Re-checking 4 edge stamp(s) (2
+# edges, two quotes each)" because the residue of a failed build held the other.
+# The RUNBOOK then has the operator read that number against the report's
+# "relationships not re-checked", which is per genealogy — two populations, one
+# comparison. The definitions query above stays per concept, and that is not an
+# oversight: a definition row belongs to (concept, prompt version) and is shared
+# by every version of the map, so there is no version to scope it to.
 EDGES = """
 SELECT sp.arxiv_id, tp.arxiv_id, e.id, e.verified,
        e.source_quote, e.source_quote_start, e.source_quote_end,
@@ -67,11 +76,27 @@ SELECT sp.arxiv_id, tp.arxiv_id, e.id, e.verified,
        e.target_text_digest, e.target_extractor_version,
        tp.extracted_text_path, tp.extracted_text_digest
 FROM edges e
-JOIN genealogies g ON g.id = e.genealogy_id
 JOIN papers sp ON sp.id = e.source_paper_id
 JOIN papers tp ON tp.id = e.target_paper_id
-WHERE g.concept = %(concept)s AND g.prompt_version = %(pv)s
+WHERE e.genealogy_id = %(gid)s
 {arxiv_filter}ORDER BY e.id
+"""
+
+# Which map `--edges` is about, and what to say when the concept has no live one.
+# Read here rather than through `common.current_row` because this tool holds the
+# read-only DSN and answers a slightly wider question: it wants the version number
+# and the status for the line it prints about what it read.
+LIVE_MAP = """
+SELECT id, version, status, is_current FROM genealogies
+WHERE concept = %(concept)s AND prompt_version = %(pv)s AND is_current
+"""
+MAP_BY_ID = """
+SELECT id, version, status, is_current, concept, prompt_version FROM genealogies
+WHERE id = %(gid)s
+"""
+CONCEPT_VERSIONS = """
+SELECT version, id, status FROM genealogies
+WHERE concept = %(concept)s AND prompt_version = %(pv)s ORDER BY version
 """
 
 
@@ -304,6 +329,43 @@ def check_one(label: str, quote: str | None, verified: object,
     return not findings
 
 
+def resolve_map(conn, concept: str, pv: str, genealogy_id: int | None) -> tuple:
+    """(id, version, status, is_current) for the map `--edges` is about (#242).
+
+    The live map by default, because a tool named with a concept is asked about
+    the map readers see; a named id when the operator means a particular version,
+    checked against the concept and prompt version they said, so a mistyped id is
+    a refusal rather than an answer about somebody else's map.
+
+    Refusing rather than falling back to "every version" is the point of the
+    ticket: the old query counted every version's stamps as the concept's, and a
+    number nobody can attribute to a map is worse than a refusal that says which
+    versions exist.
+    """
+    if genealogy_id is not None:
+        row = conn.execute(MAP_BY_ID, {"gid": genealogy_id}).fetchone()
+        if row is None:
+            sys.exit(f"No genealogy with id {genealogy_id}. Nothing was read beyond "
+                     f"this lookup; this tool writes nothing in any case.")
+        if (row[4], row[5]) != (concept, pv):
+            sys.exit(f'Genealogy {genealogy_id} is "{row[4]}" at prompt {row[5]}, not '
+                     f'"{concept}" at prompt {pv}. Refusing to report another map\'s '
+                     f"stamps under this concept's name.")
+        return row[:4]
+    row = conn.execute(LIVE_MAP, {"concept": concept, "pv": pv}).fetchone()
+    if row is None:
+        have = conn.execute(CONCEPT_VERSIONS, {"concept": concept, "pv": pv}).fetchall()
+        listed = "; ".join(f"v{v} ({s}, genealogy {gid})" for v, gid, s in have)
+        sys.exit(f'No live map for "{concept}" at prompt {pv}, so --edges has no map '
+                 f"to re-check.\n"
+                 + (f"  This concept has {listed}.\n  Name one with --genealogy-id.\n"
+                    if have else "  This concept has no map at all at this prompt "
+                                 "version.\n")
+                 + "  The definition stamps above were re-checked and nothing was "
+                   "written.")
+    return row
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Re-check verification stamps against the papers on this disk "
@@ -314,14 +376,18 @@ def main() -> None:
     ap.add_argument("--arxiv", metavar="ID", nargs="+",
                     help="restrict to these arxiv ids")
     ap.add_argument("--edges", action="store_true",
-                    help="re-check the edge stamps too (two per edge)")
+                    help="re-check the edge stamps too (two per edge), on the "
+                         "concept's LIVE map unless --genealogy-id names a version")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="re-check this exact version's edge stamps instead of the "
+                         "live map's")
     ap.add_argument("--verbose", action="store_true",
                     help="print a line for every stamp, not only the findings")
     args = ap.parse_args()
 
     pv = args.prompt_version or env("PROMPT_VERSION", "v1")
     dsn = env(READ_URL)
-    params = {"concept": args.concept, "pv": pv}
+    params = {"concept": args.concept, "pv": pv, "gid": args.genealogy_id}
     def_filter = edge_filter = ""
     if args.arxiv:
         params["ids"] = list(args.arxiv)
@@ -335,16 +401,28 @@ def main() -> None:
     with psycopg.connect(dsn) as conn:
         defs = conn.execute(DEFS.format(arxiv_filter=def_filter), params).fetchall()
         print(f'Re-checking {len(defs)} definition stamp(s) for "{args.concept}" '
-              f"at prompt {pv}, against {data_dir()}\n")
+              f"at prompt {pv}, against {data_dir()}")
+        # Said every run, not only under --edges: a definition stamp belongs to
+        # the concept and is shared by every version of its map, so this count is
+        # not a count about one map and must not be read as one (#242).
+        print("  Definition stamps belong to the concept at this prompt version, so "
+              "they are shared by\n  every version of its map; this count is per "
+              "concept and not per map.\n")
         for (arxiv, did, quote, verified, start, end, sdig, sext,
              path, pdig, _pext) in defs:
             clean &= check_one(f"{arxiv} def {did}", quote, verified, start, end,
                                sdig, sext, path, pdig, cache, tally, args.verbose)
 
         if args.edges:
+            gid, version, status, is_live = resolve_map(conn, args.concept, pv,
+                                                        args.genealogy_id)
+            params["gid"] = gid
             edges = conn.execute(EDGES.format(arxiv_filter=edge_filter), params).fetchall()
             print(f"\nRe-checking {2 * len(edges)} edge stamp(s) "
-                  f"({len(edges)} edges, two quotes each)\n")
+                  f"({len(edges)} edges, two quotes each) on v{version} of "
+                  f'"{args.concept}" '
+                  f"(genealogy {gid}, {status}, "
+                  f"{'the live map' if is_live else 'NOT the live map'})\n")
             for row in edges:
                 (s_arxiv, t_arxiv, eid, verified,
                  s_quote, s_start, s_end, s_dig, s_ext, s_path, s_pdig,

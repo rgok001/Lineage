@@ -44,7 +44,7 @@ from pydantic import BaseModel, Field
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (  # noqa: E402
     build_row, current_row, data_dir, env, quote_is_grounded, read_grounding_text,
-    text_digest, version_note)
+    text_digest, unpublished_table, unpublished_versions, version_note)
 from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
 # Sonnet, not Haiku, and this one was measured rather than assumed. On thread
@@ -253,6 +253,50 @@ def main() -> None:
     # RUNBOOK section 8 for #215), and resolving the build's row there would
     # refuse the one map the procedure is about.
     resolve = current_row if args.recheck else build_row
+    # **A row resolved by rule may not be bought for while the concept has a live
+    # map** (#242, the same rule and the same shape as Stage E's #241 refusal).
+    # `build_row` reads `status <> 'complete' ORDER BY version DESC`, and nothing
+    # ever clears `running`, so the row it finds is a build in flight or the
+    # residue of one that died and this stage cannot tell them apart. That matters
+    # more here than almost anywhere: this is the most expensive stage in the
+    # pipeline, roughly doubling what a map costs, and the RUNBOOK's own #215
+    # procedure prints `python pipeline/stage_h_claims.py "attention"` for an
+    # operator to type on the Render shell, where the API key is set. Measured, on
+    # a database with a corpse: "0 of 1 paper(s) already have claims and will cost
+    # nothing; 1 to buy", aimed at a row nobody can see. `--recheck` (the live map,
+    # free) and `--genealogy-id` (a named version) are the two ways through, and
+    # they are the two the refusal prints.
+    if not args.recheck and args.genealogy_id is None:
+        live = current_row(conn, args.concept, args.prompt_version, "id, version")
+        if live:
+            lines = [
+                "",
+                f'Refusing to buy accounts for a version of "{args.concept}" this run '
+                f"resolved by rule: the concept's live map is",
+                f"  v{live[1]} (genealogy {live[0]}), and a row that is not `complete` "
+                f"is a build in flight OR the residue of one",
+                "  that died — nothing ever clears `running`, and from here those are "
+                "the same row. This is the most",
+                "  expensive stage in the pipeline; nothing was read, nothing was "
+                "bought and nothing was written.",
+                f"  {version_note(conn, args.concept, args.prompt_version)}",
+                "",
+                "  Versions this concept has that are not published:",
+                "",
+            ]
+            lines += unpublished_table(
+                unpublished_versions(conn, args.concept, args.prompt_version))
+            lines += [
+                "",
+                "  Say which one you mean:",
+                f'    python pipeline/stage_h_claims.py "{args.concept}" '
+                f"--genealogy-id <genealogy>",
+                "        buys the accounts for that version.",
+                f'    python pipeline/stage_h_claims.py "{args.concept}" --recheck',
+                "        re-grounds the claim quotes already stored on the LIVE map, "
+                "for nothing.",
+            ]
+            sys.exit("\n".join(lines))
     row = resolve(conn, args.concept, args.prompt_version, "id, streams",
                   genealogy_id=args.genealogy_id)
     if not row or not row[1]:

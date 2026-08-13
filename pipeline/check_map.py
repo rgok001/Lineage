@@ -20,18 +20,32 @@ and every finding names the concept-state, the relationship or the thread it is
 about, because the reader of this command is whoever has to repair it. There is
 no threshold, no grade and no percentage here, and there must never be one.
 
+**A concept names the LIVE map** (issue #242). It used to name every version of
+that concept and conjoin their verdicts, which since #207b is a different
+question from the one anybody asks it: measured, a live map with 0 findings
+beside the `running` residue of a failed build with 2 gave two map blocks and
+exit 1. This command is step 5 of the restore procedure -- "confirm the map
+satisfies the rules, BEFORE anyone sees it" -- so that told a recovery its
+just-restored map was unpublishable when it was the corpse that was.
+`--genealogy-id` asks about one named version, `--all` asks about every map in
+the database, and every answer says which map it read.
+
 **The exit status is the verdict**: 0 when every map asked about satisfies the
-invariant, 1 when any of them does not. That makes it usable as a gate in a
-procedure; the gate that matters is inside Stage E, where it can roll a publish
-back, and this is the same question asked from outside.
+invariant, 1 when any of them does not. A named concept resolves to exactly one
+map, so the conjunction is only `--all`'s, where it is what the flag means. That
+makes it usable as a gate in a procedure; the gate that matters is inside Stage E,
+where it can roll a publish back, and this is the same question asked from
+outside.
 
 `--all --json` is **always** a JSON array -- of one element against a database
 holding one map, and empty against a database holding none (issue #93, and the
-degenerate case that lesson names). A named concept is always a JSON object.
+degenerate case that lesson names). A named concept is always a JSON object, and
+carries `version` and `is_current` so the object says which map it is about.
 
 Usage:
   python pipeline/check_map.py "attention"
   python pipeline/check_map.py "attention" --prompt-version v2
+  python pipeline/check_map.py "attention" --genealogy-id 42
   python pipeline/check_map.py --all
   python pipeline/check_map.py --all --json
 """
@@ -65,12 +79,19 @@ CLAUSE_COLUMNS = [
     (6, "thread_papers_the_map_does_not_hold"),
 ]
 
+# `version` and `is_current` come from `genealogies` rather than from the view:
+# migration 021 predates the version shape and `map_invariant` names neither, and
+# a view is redefined by DROP and CREATE (see the header above), so reading the
+# two columns from the table beside it is the change that costs no migration. The
+# join is on the view's own `genealogy_id`, so it adds no row and drops none.
 MAPS = f"""
-SELECT genealogy_id, concept, prompt_version, status,
-       {', '.join(c for _n, c in CLAUSE_COLUMNS)},
-       findings_total, satisfies_publish_invariant
-FROM map_invariant
-ORDER BY concept, prompt_version
+SELECT m.genealogy_id, m.concept, m.prompt_version, m.status,
+       g.version, g.is_current,
+       {', '.join('m.' + c for _n, c in CLAUSE_COLUMNS)},
+       m.findings_total, m.satisfies_publish_invariant
+FROM map_invariant m
+JOIN genealogies g ON g.id = m.genealogy_id
+ORDER BY m.concept, m.prompt_version, g.version
 """
 
 # The clause names come from the view, so the six sentences live in the
@@ -86,9 +107,14 @@ ORDER BY genealogy_id, clause, subject_kind, subject
 
 def render(row: dict, findings: list[dict]) -> list[str]:
     mine = [f for f in findings if f["genealogy_id"] == row["genealogy_id"]]
+    # Which map this is, on the first line, because a concept now has several and
+    # the answer for one of them is not the answer for another (#242). "the live
+    # map" rather than a flag name: the reader of this line is deciding whether
+    # the thing readers see is publishable.
+    which = "the live map" if row["is_current"] else "not the live map"
     out = [f'Does "{row["concept"]}" still satisfy the rules that built it?  '
            f'(prompt {row["prompt_version"]}, map {row["genealogy_id"]}, '
-           f'{row["status"]})', ""]
+           f'v{row["version"]}, {which}, {row["status"]})', ""]
     out.append("Six clauses, each an existence test or an equality, computed from this map's")
     out.append("own rows just now. Nothing is stored, so a change to the map changes this")
     out.append("answer immediately, and the honest answer to \"when was this last checked\"")
@@ -133,9 +159,13 @@ def main() -> None:
         description="Whether a map still satisfies the six clauses of the publish "
                     "invariant (read-only; SELECT and nothing else, and it stores "
                     "nothing). Exits 1 if any map asked about violates a clause.")
-    ap.add_argument("concept", nargs="?", help="the concept to check")
+    ap.add_argument("concept", nargs="?",
+                    help="the concept to check: its LIVE map, unless "
+                         "--genealogy-id names a version")
     ap.add_argument("--prompt-version", default=None,
                     help="defaults to PROMPT_VERSION from the environment")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="check this exact version instead of the concept's live map")
     ap.add_argument("--all", action="store_true", help="check every map in the database")
     ap.add_argument("--json", action="store_true",
                     help="JSON on stdout and to no file: an object for a named "
@@ -144,6 +174,8 @@ def main() -> None:
     args = ap.parse_args()
     if not args.concept and not args.all:
         ap.error("name a concept, or pass --all")
+    if args.genealogy_id is not None and args.all:
+        ap.error("--genealogy-id names one map and --all means every map. Pass one.")
 
     with psycopg.connect(env(READ_URL)) as conn:
         cur = conn.execute(MAPS)
@@ -155,11 +187,37 @@ def main() -> None:
 
     if args.all:
         chosen = rows
+    elif args.genealogy_id is not None:
+        # Named, and checked against the concept and prompt version it was asked
+        # about, the way `_fetch_by_id` does it for the writing stages: an id that
+        # belongs to another map is a mistyped id, and answering for it silently
+        # is how a repair gets made against the wrong version.
+        chosen = [r for r in rows if r["genealogy_id"] == args.genealogy_id]
+        pv = args.prompt_version or env("PROMPT_VERSION", "v1")
+        if not chosen:
+            sys.exit(f"No map with genealogy id {args.genealogy_id}. Nothing was read "
+                     f"beyond this lookup.")
+        got = chosen[0]
+        if (got["concept"], got["prompt_version"]) != (args.concept, pv):
+            sys.exit(f'Genealogy {args.genealogy_id} is "{got["concept"]}" at prompt '
+                     f'{got["prompt_version"]}, not "{args.concept}" at prompt {pv}. '
+                     f"Refusing to answer about another map's row.")
     else:
         pv = args.prompt_version or env("PROMPT_VERSION", "v1")
-        chosen = [r for r in rows
-                  if r["concept"] == args.concept and r["prompt_version"] == pv]
+        mine = [r for r in rows
+                if r["concept"] == args.concept and r["prompt_version"] == pv]
+        # **The live map, not every version** (#242). The exit status is a verdict
+        # somebody acts on, and conjoining it over an abandoned build's row
+        # answers about a map no reader can reach.
+        chosen = [r for r in mine if r["is_current"]]
         if not chosen:
+            if mine:
+                have = "; ".join(f'v{r["version"]} ({r["status"]}, map '
+                                 f'{r["genealogy_id"]})' for r in mine)
+                sys.exit(f'No LIVE map for "{args.concept}" at prompt {pv}: none of its '
+                         f"version(s) is published.\n"
+                         f"  This concept has {have}.\n"
+                         f"  Name one with --genealogy-id, or pass --all.")
             have = ", ".join(f'{r["concept"]} ({r["prompt_version"]})' for r in rows) \
                    or "no maps at all"
             sys.exit(f'No map for "{args.concept}" at prompt {pv}. '
@@ -173,6 +231,11 @@ def main() -> None:
         if args.all:
             print(json.dumps([as_json(r, findings) for r in chosen], indent=2, default=str))
         else:
+            # `chosen[0]` is now provably one row: the live map is single-valued
+            # by 025's partial unique index, and an id is an id. It used to be the
+            # first of every version of the concept in whatever order the view
+            # returned them — 007's third guarantee surviving inside the
+            # instrument that judges publishability (#242).
             print(json.dumps(as_json(chosen[0], findings), indent=2, default=str))
     elif not chosen:
         print("No maps in this database, so there is nothing to check.")

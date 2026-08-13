@@ -158,9 +158,13 @@ python pipeline/stage_g_threads.py "attention"
 python pipeline/stage_g_threads.py "attention" --threads 6   # target count; default scales with corpus
 
 # Stage H: a checked quote under each claim in a thread's account (needs Stage G)
-python pipeline/stage_h_claims.py "attention"
+python pipeline/stage_h_claims.py "attention"                # buys for the version a
+                                                             # build owns; refused when
+                                                             # the concept has a live map
 python pipeline/stage_h_claims.py "attention" --thread s0    # one thread, to try it first
-python pipeline/stage_h_claims.py "attention" --recheck      # re-ground stored quotes, no model, free
+python pipeline/stage_h_claims.py "attention" --recheck      # re-ground stored quotes on
+                                                             # the live map, no model, free
+python pipeline/stage_h_claims.py "attention" --genealogy-id 42  # buy for a named version
 
 # F, G and H all spend: none of them has a --dry-run, and --model overrides each
 # stage's own default (Haiku for F and G, Sonnet for H) rather than LLM_MODEL.
@@ -200,7 +204,8 @@ threads name no paper the map does not hold. They live in one SQL view
 publish a map that fails one. No model, no network, no cost, no writes.
 
 ```sh
-python pipeline/check_map.py "attention"       # one map
+python pipeline/check_map.py "attention"       # the concept's LIVE map
+python pipeline/check_map.py "attention" --genealogy-id 42   # one named version
 python pipeline/check_map.py --all             # every map
 python pipeline/check_map.py --all --json      # always an array, empty included
 ```

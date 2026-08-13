@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (_fold, build_row, current_row, edge_stamp_state,  # noqa: E402
                     grounded_span, read_grounding_text, REPO_ROOT, STAMP_INFERRED,
                     STAMP_STALE, STAMP_VERIFIED, data_dir, env, node_ids,
-                    version_note)
+                    unpublished_table, unpublished_versions, version_note)
 
 
 # An edge whose source_node or target_node is not in genealogies.nodes has no
@@ -180,25 +180,17 @@ def refuse_unless_publishable(conn, gen_id: int) -> None:
         "  map is exactly as it was before this run.",
         "",
         "  The same findings, read-only and from anywhere:",
-        "    python pipeline/check_map.py <concept>",
+        # The id, because since #242 that command answers about the LIVE map when
+        # it is given a concept — and the map that just failed is very often not
+        # the live one. A refusal that sends the reader to a command answering
+        # about a different row is the defect `writes-guards-and-refusals`
+        # records, and it was true of this line for one release.
+        f"    python pipeline/check_map.py <concept> --genealogy-id {gen_id}",
     ]
     sys.exit("\n".join(lines))
 
 
 # ── superseding a live map is asked for, never inferred (issue #241) ───────
-#
-# The rows this stage could publish if it went looking, for a refusal that will
-# not nominate one. Age from `updated_at`, which Stage C writes on the insert and
-# every later stage touches: "how long has this been sitting there" is the
-# question that tells a build from a corpse, and it is the one an operator can
-# answer and this stage cannot.
-SELECT_UNPUBLISHED = """
-SELECT version, id, status,
-       date_trunc('second', now() - updated_at)::text
-FROM genealogies
-WHERE concept = %(concept)s AND prompt_version = %(pv)s AND status <> 'complete'
-ORDER BY version DESC
-"""
 
 
 def refuse_bare_supersede(conn, concept: str, prompt_version: str,
@@ -232,8 +224,6 @@ def refuse_bare_supersede(conn, concept: str, prompt_version: str,
     names the live map with `--current`.
     """
     live_id, live_version = live[0], live[1]
-    rows = conn.execute(SELECT_UNPUBLISHED,
-                        {"concept": concept, "pv": prompt_version}).fetchall()
     lines = [
         "",
         f'Refusing to publish over the live map of "{concept}": this run resolved a '
@@ -245,10 +235,8 @@ def refuse_bare_supersede(conn, concept: str, prompt_version: str,
         "",
         "  Versions this concept has that are not published:",
         "",
-        "    version  genealogy  status              last written",
     ]
-    for version, gid, status, age in rows:
-        lines.append(f"    {version:>7}  {gid:>9}  {status:<18}  {age} ago")
+    lines += unpublished_table(unpublished_versions(conn, concept, prompt_version))
     lines += [
         "",
         "  Say which one you mean:",
