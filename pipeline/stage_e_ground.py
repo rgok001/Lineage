@@ -526,19 +526,40 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
 
     refuse_unless_publishable(conn, gen_id)
 
-    # ── the swap: demote the incumbent, then promote this map ─────────────────
-    #
-    # Issue #226, the defect #207a exists to close. Migration 025 gave a map
-    # `is_current` and backfilled it true on the four published maps, and #208
-    # landed the readers — `listGenealogies` reads `genealogies_current`,
-    # `/g/<id>/current` resolves through it, a report draws its comparison set
-    # from it. But no code in this repository has ever WRITTEN the column. This
-    # line was `SET status='complete'` alone, so the next map to complete would
-    # have published `complete` with `is_current = false`: reachable at its own
-    # address, and invisible to the concepts list for ever. Nothing would have
-    # errored. It had not happened yet only because no map had completed since
-    # 025 deployed.
-    #
+    # The swap itself is `publish_swap` below, because since #230 the two restore
+    # scripts perform it too and a second copy of it is a second publication
+    # rule. This stage still owns it: the caller supplies the transaction, and
+    # everything about WHEN a map may be published stays here, in the invariant
+    # this line follows.
+    publish_swap(conn, args.concept, gen_id)
+
+    return _assemble(args, gen_id, nodes, prompt_version, assembled_edges,
+                     edges, verified_count, stale_count, published=True)
+
+
+def publish_swap(conn, concept: str, gen_id: int) -> list[int]:
+    """Make `gen_id` the current map for `concept`. Returns the ids it demoted.
+
+    The caller supplies the connection and the transaction: this is two
+    statements that must land together, and it never commits on its own.
+
+    Issue #226, the defect #207a exists to close. Migration 025 gave a map
+    `is_current` and backfilled it true on the four published maps, and #208
+    landed the readers — `listGenealogies` reads `genealogies_current`,
+    `/g/<id>/current` resolves through it, a report draws its comparison set
+    from it. But no code in this repository had ever WRITTEN the column. Stage E
+    published with `SET status='complete'` alone, so the next map to complete
+    would have published `complete` with `is_current = false`: reachable at its
+    own address, and invisible to the concepts list for ever. Nothing would have
+    errored. It had not happened yet only because no map had completed since
+    025 deployed.
+
+    Since #230 the two restore scripts call this too. A recovery that put a map
+    back and left it invisible is a recovery that has not finished, and the way
+    to make a map current is this swap and never a raw `is_current = true`:
+    that write is the one migration 026 refuses on a row that was demoted once,
+    and it is not the operator's job to remember which.
+    """
     # **Demote before promote, and that order is not ours to choose.** The
     # partial unique index `genealogies_one_current_per_concept` (025) permits
     # one current row per concept, so promoting first raises before the demotion
@@ -579,18 +600,17 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
     # earlier, in Stage C, which upserts `status = 'running'` onto the live row
     # and violates 025's `genealogies_current_is_published` (#214). #207b is the
     # commit that inserts a new version row instead.
-    conn.execute("""
+    demoted = conn.execute("""
         UPDATE genealogies SET is_current = false, superseded_at = now(), updated_at = now()
         WHERE concept = %(concept)s AND is_current AND id <> %(gid)s
-    """, {"concept": args.concept, "gid": gen_id})
+        RETURNING id
+    """, {"concept": concept, "gid": gen_id}).fetchall()
     conn.execute("""
         UPDATE genealogies SET status = 'complete', is_current = true,
                superseded_at = NULL, updated_at = now()
         WHERE id = %(gid)s
     """, {"gid": gen_id})
-
-    return _assemble(args, gen_id, nodes, prompt_version, assembled_edges,
-                     edges, verified_count, stale_count, published=True)
+    return [r[0] for r in demoted]
 
 
 def _assemble(args, gen_id: int, nodes, prompt_version: str, assembled_edges: list,

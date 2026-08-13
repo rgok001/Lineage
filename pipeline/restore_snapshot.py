@@ -51,6 +51,9 @@ from psycopg.types.json import Jsonb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import actor, env  # noqa: E402
+# The publication rule lives in the stage that owns it, and a restore performs
+# the same swap rather than its own version of it (#230).
+from stage_e_ground import publish_swap  # noqa: E402
 
 
 def main() -> None:
@@ -58,6 +61,8 @@ def main() -> None:
     ap.add_argument("snapshot", help="path to the snapshot JSON")
     ap.add_argument("--dry-run", action="store_true", help="report what would change; write nothing")
     ap.add_argument("--confirm", action="store_true", help="actually write")
+    ap.add_argument("--no-publish", action="store_true",
+                    help="restore the content without making the map current again")
     args = ap.parse_args()
     if not args.dry_run and not args.confirm:
         sys.exit("Refusing to write without --confirm. Use --dry-run first.")
@@ -66,13 +71,27 @@ def main() -> None:
     g = snap["genealogy"]
     gen_id, concept, pv = g["id"], g["concept"], g["prompt_version"]
 
+    # Whether this map should be the current one after the restore (#230).
+    # A snapshot taken since #230 records `is_current` and is believed exactly.
+    # An older one cannot say, and for those the answer is "yes if it is
+    # published": every map that existed when those snapshots were taken was
+    # current, because 025's backfill made every `complete` row current and
+    # nothing had yet created a second version. Currency also requires
+    # publication — 025's `genealogies_current_is_published` — so a snapshot of a
+    # mid-build map never promotes anything.
+    snap_current = g.get("is_current")
+    publish = (g["status"] == "complete"
+               and (snap_current is None or snap_current)
+               and not args.no_publish)
+
     with psycopg.connect(env("DATABASE_URL")) as conn:
-        live = conn.execute("SELECT id, status, nodes FROM genealogies WHERE id = %s",
-                            (gen_id,)).fetchone()
+        live = conn.execute(
+            "SELECT id, status, nodes, is_current FROM genealogies WHERE id = %s",
+            (gen_id,)).fetchone()
         if not live:
             sys.exit(f"Genealogy {gen_id} no longer exists. This script restores content "
                      f"into an existing row; use restore_genealogy.py to recreate one.")
-        now_status, now_nodes = live[1], len(live[2])
+        now_status, now_nodes, now_current = live[1], len(live[2]), live[3]
         now_edges = conn.execute("SELECT count(*) FROM edges WHERE genealogy_id = %s",
                                  (gen_id,)).fetchone()[0]
 
@@ -81,6 +100,12 @@ def main() -> None:
         print(f"  edges:          {now_edges} now -> {len(snap['edges'])} from the snapshot")
         print(f"  definitions:    {len(snap['definitions'])} rows to rewrite in place")
         print(f"  status:         {now_status} now -> {g['status']} from the snapshot")
+        print(f"  on the site:    {'yes' if now_current else 'no'} now -> "
+              + ("yes, and any other live version of this concept is superseded" if publish
+                 else f"unchanged ({'yes' if now_current else 'no'})")
+              + ("" if snap_current is not None else
+                 "  [this snapshot predates the column; a published map is treated as "
+                 "the live one]"))
         if args.dry_run:
             print("\n[dry-run] nothing written.")
             return
@@ -142,6 +167,12 @@ def main() -> None:
                   d.get("quote_start"), d.get("quote_end"), d.get("quote_text_digest"),
                   d.get("quote_extractor_version"), d["id"]))
 
+        # Published last, as Stage E does: the map becomes the live one only once
+        # everything it is made of is back (#230). Before this, a map restored to
+        # `complete` stayed `is_current = false` — off the concepts list and a
+        # 404 at /g/<id>/current — while this script printed that it was visible.
+        demoted = publish_swap(conn, concept, gen_id) if publish else []
+
         # The restore is itself an event in the map's history, not an erasure of
         # one. user_edits is append-only and is the one thing not overwritten —
         # appended with `||` in the database rather than read, extended and
@@ -160,6 +191,18 @@ def main() -> None:
     print(f"  {len(snap['definitions'])} definitions rewritten, {len(g['nodes'])} concept-states")
     print(f"  status is {g['status']}" + ("" if g["status"] == "complete" else
           " — the site serves only 'complete', so this map is not visible to a reader"))
+    if publish:
+        print("  it is the current map for this concept again: on the concepts list, in "
+              "every\n  report's comparison set, and at /g/<id>/current"
+              + (f" (superseding genealogy {', '.join(str(d) for d in demoted)})"
+                 if demoted else ""))
+    elif g["status"] == "complete":
+        # Said out loud rather than left to be discovered on the site.
+        why = ("--no-publish was given" if args.no_publish
+               else "the snapshot recorded this version as not the live one")
+        print(f"  it is NOT the current map for this concept, because {why}. A reader "
+              f"reaches it\n  at /g/{gen_id} and does not see it on the concepts list. "
+              f"Re-running Stage E on the\n  concept publishes it.")
     print("\n  The quotes are back, and their verdicts are the ones the snapshot held.")
     if pre_015:
         print(f"  {pre_015} of the restored edges came from a snapshot taken before "

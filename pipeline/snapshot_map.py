@@ -79,9 +79,14 @@ def main() -> None:
         sys.exit(f"Could not connect to take the snapshot: {type(exc).__name__}: {exc}")
 
     with conn_ctx as conn:
+        # `is_current` travels with `status`, for the reason `status` does
+        # (#173, and #230 for this column): a snapshot that records what the map
+        # held and not whether anyone could see it cannot restore the map. It is
+        # written even when false, so a restore can tell "this version was not
+        # the live one" from "this snapshot predates the column".
         gen = conn.execute("""
             SELECT id, concept, prompt_version, status, spend_usd, nodes, user_edits,
-                   streams, created_at, updated_at
+                   streams, created_at, updated_at, is_current
             FROM genealogies WHERE concept = %s AND prompt_version = %s
         """, (args.concept, args.prompt_version)).fetchone()
         if not gen:
@@ -97,7 +102,7 @@ def main() -> None:
                           "prompt_version": args.prompt_version})
             return
         cols = ("id", "concept", "prompt_version", "status", "spend_usd", "nodes",
-                "user_edits", "streams", "created_at", "updated_at")
+                "user_edits", "streams", "created_at", "updated_at", "is_current")
         genealogy = dict(zip(cols, gen))
         gen_id = genealogy["id"]
 

@@ -260,17 +260,40 @@ python pipeline/stage_e_ground.py "<concept>"
 python pipeline/check_map.py "<concept>"
 ```
 
-Four things about it that are not obvious from the commands. It restores **into
+Five things about it that are not obvious from the commands. It restores **into
 an existing row** by id; if the row itself is gone, `restore_genealogy.py` from an
 export is the only path and it recreates a row with a new id. It restores the
-snapshot's `status`, so a map that was `complete` comes back visible on the site
-and a map that was already mid-build comes back mid-build, and the run prints
-which. It does **not** overwrite `user_edits`: the audit trail is append-only, and
+snapshot's `status`, so a map that was `complete` comes back published and a map
+that was already mid-build comes back mid-build, and the run prints which.
+**Since #230 it also restores currency, which is what makes a restored map
+visible** — the `status` alone does not: a `complete` map that is not `is_current`
+is reachable at `/g/<id>` and absent from the concepts list, from every report's
+comparison set and from `/g/<id>/current`, which is exactly the state these
+scripts used to leave behind while printing that the map was back. Both scripts
+now perform Stage E's own demote-then-promote swap, print whether the map is the
+current one and what it superseded, and take `--no-publish` if you want the
+content back without touching what readers see. A snapshot taken since #230
+records `is_current` and is obeyed exactly, so restoring a superseded version
+does not steal currency from the live one; an older snapshot cannot say, and a
+`complete` map in one is treated as the live map, which is what every map in
+those snapshots was. It does **not** overwrite `user_edits`: the audit trail is
+append-only, and
 the restore appends itself to it, so the map's history says it was restored rather
 than pretending nothing happened. And step 4 is not optional if the papers were
 re-extracted since the snapshot — the verdicts coming back describe text that may
 no longer be on disk, and Stage E is what makes the verified count true again,
 even if it comes back lower.
+
+**If a map is published but not visible, re-run Stage E on it.** That is the
+repair for `complete` with `is_current = false` from any cause — a restore run
+before #230, a map that published in the migration-025 window, a build repaired
+by hand. It is free, it re-grounds every quote against the text that is on disk,
+and its publish is the same swap, so it clears `superseded_at` and demotes
+whatever else was live in one transaction. Measured: `('complete', false)`
+becomes `('complete', true)` and the map appears on `genealogies_current`.
+Prefer it to the by-hand `UPDATE` below, which cannot promote a row that was
+superseded once — migration 026 refuses that, correctly, and re-running the stage
+is the path that does not need an operator to know it.
 
 Verified end to end on fixtures rather than on a live map (#173): snapshot a
 curated map, destroy it with Stage C's own `UPSERT_GENEALOGY` plus Stage D's edge
@@ -528,6 +551,14 @@ terminal with write access:
 psql "$DATABASE_URL" -c "UPDATE genealogies SET is_current = true
                           WHERE id = <id> AND status = 'complete'"
 ```
+
+**Re-running Stage E on the concept does the same thing and knows more** (#230),
+so prefer it unless the map cannot be re-grounded: it goes through the publish
+swap, which demotes whatever else is live and clears `superseded_at`, and this
+`UPDATE` does neither. On a row that was superseded once the `UPDATE` fails on
+`genealogies_current_not_superseded` — correctly, and with nothing here telling
+an operator how to clear that column. The answer is that they do not: publishing
+is what clears it.
 
 The partial index refuses the promotion if the concept already has a current map,
 which is the right answer: that is two published maps for one concept and it is

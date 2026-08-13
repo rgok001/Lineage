@@ -306,8 +306,12 @@ previously conventions:
 
 The backfill made the four published maps version 1 and current; everything else
 in the table is `is_current = false`. **`is_current` is written by exactly one
-thing: the publish swap at the end of `pipeline/stage_e_ground.py`** (#207a,
-issue #226). Until that landed nothing wrote the column at all, so a map that
+piece of code: `publish_swap` in `pipeline/stage_e_ground.py`** (#207a, issue
+#226). It has three callers since #230 — the end of Stage E, and both restore
+scripts — and no other write to the column exists: a restore that set the flag
+itself would be a second publication rule, and a raw `is_current = true` is the
+write migration 026 refuses on a row that has been demoted once.
+Until #207a landed nothing wrote the column at all, so a map that
 completed published `complete` with `is_current = false` — reachable at
 `/g/<id>`, absent from the concepts list, outside every report's comparison set
 and unresolvable through `/g/<id>/current`, with nothing erroring anywhere. No
@@ -1183,7 +1187,8 @@ heartbeat, which also sweeps). Full walkthrough knowledge condensed:
   `streams`, `user_edits` or the definitions (incident 4 was recovered from it with
   the audit trail lost). `restore_snapshot.py` is the way back and since #173 it
   restores `status` too, without which a restored map stays invisible under #168's
-  publish filter. Procedure in `docs/RUNBOOK.md`; retention is a documented sentence
+  publish filter — and since #230 its currency, without which a `complete` map is
+  still off the concepts list. Procedure in `docs/RUNBOOK.md`; retention is a documented sentence
   and not a mechanism, at under a megabyte per build.
 - **Progress.** Stages already print `[i/N]` counters and `spend $X` lines;
   two regexes lift these into `trace_requests.progress` JSONB, flushed at most

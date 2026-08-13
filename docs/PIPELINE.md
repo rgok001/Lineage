@@ -1319,7 +1319,11 @@ lost 2 entries outright. Braces are escaped rather than passed through, so the
 arXiv `{BERT}` capitalisation trick no longer takes effect; the field is already
 double-braced for that purpose.
 `snapshot_map.py`: the whole of one map to a timestamped JSON, before anything
-rewrites it. Stage E's export holds `nodes` and
+rewrites it — including, since #230, `is_current`, for the reason it already
+carried `status`: a snapshot that says what the map held but not whether anyone
+could see it cannot put it back. It is written even when false, so a restore can
+tell "this version was not the live one" from "this snapshot predates the
+column". Stage E's export holds `nodes` and
 `edges`; it does not hold `streams` (threads and their claims), `user_edits` (the
 curatorial audit trail), or the definitions the edges quote, which a repair
 overwrites in place. Incident 4 was recovered from that export with its audit
@@ -1347,7 +1351,15 @@ with #173: Stage C sets it to `running` at the moment it overwrites a map and
 since #168 the app serves only `complete`, so a restore that left it standing
 would hand back a map nobody can open. Whatever the snapshot recorded is what
 comes back, and the run prints it, adding that the map is invisible to a reader
-where the restored value is not `complete`. `user_edits` is the one thing
+where the restored value is not `complete`. **And its currency, since #230**:
+`status = 'complete'` is not enough to be visible, so a restored map that the
+snapshot recorded as current is published through Stage E's own `publish_swap` —
+never a raw `is_current = true` — which demotes whatever else is live and clears
+`superseded_at` in the same transaction. A snapshot that recorded it false does
+not promote, a snapshot too old to have the field promotes a `complete` map (in
+that snapshot's world every published map was the live one, by 025's backfill),
+and `--no-publish` declines either way. The run prints which and why.
+`user_edits` is the one thing
 not overwritten; the restore appends itself to it with `||` in the database,
 because a restore is an event in a map's history rather than a way to un-happen
 one, and because read-modify-write on that array loses a concurrent web edit. It cannot restore the
@@ -1357,6 +1369,12 @@ re-grounds every quote against the text that is actually there.
 `restore_genealogy.py`: the inverse of Stage E's export; re-inserts a
 genealogies row and its edges from a JSON export and records the restoration
 in the audit trail. Written during incident 4 and kept as the recovery path.
+Since #230 the new row is published through the same `publish_swap`, because it
+was inserting `status = 'complete'` and letting `is_current` default false: the
+recovered map was reachable at `/g/<id>` and absent from the concepts list, from
+every report's comparison set and from `/g/<id>/current`, which is the state a
+recovery exists to leave. It names the version it superseded, if any, and takes
+`--no-publish` for a restore that must not disturb what readers see.
 `recheck_stamp.py`
 (`recheck_stamp.py --concept NAME [--arxiv ID ...] [--edges] [--verbose]`): the
 independent re-checker, and the point of migration 015. The stamp columns are

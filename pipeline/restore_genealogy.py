@@ -22,11 +22,18 @@ from psycopg.types.json import Jsonb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import actor, env  # noqa: E402
+# The publication rule lives in the stage that owns it, and a restore performs
+# the same swap rather than its own version of it (#230).
+from stage_e_ground import publish_swap  # noqa: E402
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Restore a genealogy from an exported JSON.")
     ap.add_argument("json_path", help="a genealogy_<concept>_<pv>.json written by stage E")
+    ap.add_argument("--no-publish", action="store_true",
+                    help="restore the map without making it the current one for its "
+                         "concept (it will be reachable at /g/<id> and absent from the "
+                         "concepts list)")
     args = ap.parse_args()
 
     doc = json.loads(Path(args.json_path).read_text(encoding="utf-8"))
@@ -71,9 +78,33 @@ def main() -> None:
                 (gid, e["source_node"], e["target_node"], e["edge_type"], sp, tp,
                  e["source_quote"], e["target_quote"], e["confidence"], e["verified"]))
 
+        # A restore that leaves the map invisible has not restored it (#230).
+        # The INSERT above writes `status = 'complete'` and lets `is_current`
+        # default false, which is `('complete', false, NULL)`: reachable at
+        # /g/<id>, absent from `genealogies_current`, so absent from the concepts
+        # list and from every report's comparison set, and a 404 at
+        # /g/<id>/current. That is the state this script recovers FROM, and it
+        # was producing it. The promotion is Stage E's own swap and never a raw
+        # `is_current = true`, because a raw write is what migration 026 refuses
+        # on a row that has been demoted once, and because the concept may
+        # already have a live map that has to be demoted first.
+        demoted = []
+        if not args.no_publish:
+            demoted = publish_swap(conn, concept, gid)
+
         conn.commit()
         print(f'Restored "{concept}" ({pv}) as genealogy {gid}: '
               f"{len(nodes)} nodes, {len(edges)} edges.")
+        if args.no_publish:
+            print("  --no-publish: it is NOT the current map for this concept, so it is "
+                  f"reachable at /g/{gid} and absent from the concepts list.")
+        elif demoted:
+            print(f"  It is now the current map for \"{concept}\". The version that was "
+                  f"live (genealogy {', '.join(str(d) for d in demoted)}) is marked "
+                  f"superseded and keeps its id, its edges and its address.")
+        else:
+            print(f"  It is now the current map for \"{concept}\": on the concepts list, "
+                  f"in every report's comparison set, and at /g/{gid}/current.")
 
 
 if __name__ == "__main__":
