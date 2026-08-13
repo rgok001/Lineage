@@ -6,7 +6,7 @@ import os
 import socket
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import requests
@@ -282,6 +282,14 @@ TRANSPORT_ERRORS = (
     requests.exceptions.ChunkedEncodingError,
 )
 
+# Enough failures in a row to prove it is the call failing and not the item.
+# Lives here rather than in the stage that first needed it (`stage_d_edges`)
+# because #231 gave the arXiv fetch loop the same bound for the same reason, and
+# a constant restated in a second file is a constant with two values as soon as
+# one of them moves. Both readers import it under this name, so a harness that
+# patches the module attribute it sees still works.
+CONSECUTIVE_FAILURE_LIMIT = 10
+
 
 def _backoff(note: str, wait: float, attempt: int, max_retries: int) -> None:
     """Say what failed and wait for the next attempt — and do neither after the
@@ -344,7 +352,8 @@ def get_json(url: str, params: dict | None = None, max_retries: int = 5) -> dict
                        f"last failure {last_failure}") from last_exc
 
 
-def get_bytes(url: str, max_retries: int = 5) -> tuple[bytes, str] | None:
+def get_bytes(url: str, max_retries: int = 5,
+              pace: Callable[[], None] | None = None) -> tuple[bytes, str] | None:
     """Binary GET with backoff. Returns (content, content_type), or None when the
     resource simply isn't available to us.
 
@@ -358,11 +367,24 @@ def get_bytes(url: str, max_retries: int = 5) -> tuple[bytes, str] | None:
     long time to be one reset socket away from a dead run. A transport failure is
     never "unavailable" — None means the server answered and said no, so a socket
     that never got an answer must not be able to spell it.
+
+    `pace` is called immediately before EVERY attempt, retries included, and is
+    how a caller's rate limit survives the retry (#231). `fetch_papers` wraps this
+    helper in CLAUDE.md's hard rule of one arXiv request per three seconds, and
+    the rule was being kept around the whole call rather than around each request:
+    the first retry re-hit arXiv 2.0 seconds after the failed one, measured, since
+    the backoff schedule starts below the limit. The throttle stays in the one
+    file that owns it — a second copy here would be a second rate limiter to keep
+    in agreement, and this helper is not arXiv's — and this argument is where it
+    gets to run. The effective wait before an attempt is therefore
+    max(backoff, whatever the caller's pacing still requires).
     """
     delay = 2.0
     last_exc: BaseException | None = None
     last_failure = "no attempt was made"
     for attempt in range(max_retries):
+        if pace is not None:
+            pace()
         try:
             resp = session().get(url, timeout=120)
         except TRANSPORT_ERRORS as exc:

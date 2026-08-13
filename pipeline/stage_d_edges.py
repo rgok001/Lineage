@@ -56,11 +56,13 @@ import psycopg
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import env, get_json, data_dir, text_digest  # noqa: E402
+from common import (  # noqa: E402
+    CONSECUTIVE_FAILURE_LIMIT, env, get_json, data_dir, text_digest)
 from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
-# Enough failures to prove it is the call and not the edge.
-CONSECUTIVE_FAILURE_LIMIT = 10
+# CONSECUTIVE_FAILURE_LIMIT ("enough failures to prove it is the call and not the
+# edge") moved to common.py with #231, which gave the arXiv fetch loop the same
+# bound. It is imported rather than restated so the two loops cannot disagree.
 
 S2 = "https://api.semanticscholar.org/graph/v1"
 S2_PAUSE_S = 1.1  # polite spacing on the shared unauthenticated pool

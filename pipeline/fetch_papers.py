@@ -5,7 +5,10 @@ download the arXiv source — LaTeX preferred, PDF fallback — store the raw fi
 under DATA_DIR/raw/, and upsert a row into the papers table.
 
 HARD RULE (CLAUDE.md): arXiv gets at most one request every 3 seconds, a proper
-User-Agent (set in common.session), and exponential backoff on 429/5xx.
+User-Agent (set in common.session), and exponential backoff on 429/5xx. "One
+request" means one HTTP request and not one call of a helper that may retry
+inside itself (#231), so the throttle is passed into `get_bytes` and runs before
+every attempt.
 
 Downloading and text extraction are separate stages: this script only fetches +
 records. It skips papers already fetched unless --force, so re-runs are cheap.
@@ -26,7 +29,8 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import REPO_ROOT, data_dir, env, get_bytes  # noqa: E402
+from common import (  # noqa: E402
+    CONSECUTIVE_FAILURE_LIMIT, REPO_ROOT, data_dir, env, get_bytes)
 
 ARXIV_EPRINT = "https://arxiv.org/e-print/{id}"  # LaTeX source (usually a .tar.gz)
 ARXIV_PDF = "https://arxiv.org/pdf/{id}"          # fallback when no source posted
@@ -35,16 +39,30 @@ RATE_LIMIT_S = 3.0  # hard rule: 1 arXiv request / 3 s
 _last_request = 0.0
 
 
-def throttled_get(url: str) -> tuple[bytes, str] | None:
-    """get_bytes, but never faster than one arXiv request per RATE_LIMIT_S."""
+def pace_arxiv() -> None:
+    """Block until RATE_LIMIT_S has passed since the last arXiv request, and
+    stamp this one as it goes out.
+
+    This is the whole of the hard rule, in one place, and `get_bytes` calls it
+    before every attempt it makes (#231). It used to wrap the call instead: the
+    wait happened once per `get_bytes`, so when #223 gave that helper five
+    attempts, the retries went out inside the window the rule reserves — the
+    first retry re-hit arXiv 2.0 seconds after the failed request, measured with
+    a real clock, because the backoff schedule starts at 2s and the throttle
+    could not see it. The stamp is taken before the request rather than after it
+    for the same reason: the rule is about how often we ASK, and a slow response
+    is not permission to ask again sooner.
+    """
     global _last_request
     wait = RATE_LIMIT_S - (time.monotonic() - _last_request)
     if wait > 0:
         time.sleep(wait)
-    try:
-        return get_bytes(url)
-    finally:
-        _last_request = time.monotonic()
+    _last_request = time.monotonic()
+
+
+def throttled_get(url: str) -> tuple[bytes, str] | None:
+    """get_bytes, but never faster than one arXiv request per RATE_LIMIT_S."""
+    return get_bytes(url, pace=pace_arxiv)
 
 
 ARXIV_NEW_RE = re.compile(r"^(\d{2})(\d{2})\.\d{4,5}$")          # 1706.03762
@@ -154,6 +172,18 @@ def main() -> None:
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
 
     fetched = skipped = failed = 0
+    # #231's bound on an outage, the same one and the same reason as the
+    # reference sweep's. A total arXiv outage used to cost 150 papers x 10
+    # requests: measured at 17877b8, 750 requests and about 82 minutes of
+    # waiting, ending "0 fetched, 150 failed" and exiting 0, against a
+    # definition of done of fifteen minutes for a whole trace. The counter
+    # counts consecutive TRANSPORT failures and nothing else: a paper arXiv
+    # answers about — 403, 404, or a body that is neither LaTeX nor PDF — is an
+    # answer and resets it, exactly as an honest 404 resets the sweep's, because
+    # a corpus of withheld sources must never look like an outage. A skipped
+    # paper makes no request, so it neither counts nor resets.
+    consecutive_failures = 0
+    last_failure = None
     for i, p in enumerate(papers, 1):
         aid = p["arxiv_id"]
         stem = aid.replace("/", "_")  # old IDs like cond-mat/9910332 have a slash
@@ -170,13 +200,37 @@ def main() -> None:
         try:
             result = fetch_source(aid)
         except Exception as e:
-            print(f"    ✗ fetch failed ({type(e).__name__}: {str(e)[:120]}), skipping")
+            # 240, not 120: `get_bytes` raises "Gave up after 5 attempts: <url> —
+            # last failure <class>: <message>", and a 120-character slice cuts
+            # off inside the URL, so every outage printed the wrapper and hid the
+            # cause (the same measurement that resized Stage D's slice).
+            note = f"{type(e).__name__}: {str(e)[:240]}"
+            print(f"    ✗ fetch failed ({note}), skipping")
             failed += 1
+            consecutive_failures += 1
+            last_failure = f"{aid} ({note})"
+            if consecutive_failures == CONSECUTIVE_FAILURE_LIMIT:
+                conn.close()
+                sys.exit(
+                    f"\nAborting: {consecutive_failures} arXiv fetches in a row failed, so "
+                    f"the run stopped at paper {i} of {len(papers)} instead of spending the "
+                    f"rest of the corpus proving the same thing. That is the download "
+                    f"failing, not the papers: a paper arXiv answers about — withheld "
+                    f"source, no such id — resets the counter, so only the call can produce "
+                    f"{CONSECUTIVE_FAILURE_LIMIT} in a row. The last failure was "
+                    f"{last_failure}.\n\n"
+                    f"What this run did: {fetched} paper(s) were downloaded and recorded "
+                    f"before it stopped and are on disk, {skipped} were already there, and "
+                    f"nothing has been deleted or overwritten. A re-run after the cause is "
+                    f"fixed skips everything already downloaded and starts at the papers "
+                    f"this one did not reach.")
             continue
         if result is None:
             print(f"    ✗ no source or PDF available")
             failed += 1
+            consecutive_failures = 0
             continue
+        consecutive_failures = 0
 
         content, source_format, ext = result
         out = raw_root / f"{stem}.{ext}"

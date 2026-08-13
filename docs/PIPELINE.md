@@ -380,6 +380,27 @@ LaTeX source preferred, PDF fallback, 1 request per 3 seconds against arXiv.
 `get_bytes` backs off on 429/5xx and, since #223, on the transport class below
 HTTP as well (see the retry contract under Stage D): a reset socket in the middle
 of a 150-paper fetch used to end that paper's attempt on the first try.
+**The throttle runs before every attempt, not around the call** (#231). It was
+`throttled_get` waiting once and then calling `get_bytes`, which since #223 makes
+up to five requests inside that one wait: measured with a real clock, the first
+retry re-hit arXiv 2.0s after the failed request, because the backoff schedule
+starts at 2s and the throttle could not see it. CLAUDE.md's hard rule is one
+arXiv *request* per three seconds, so the rule moved to where the request is
+made — `fetch_papers.pace_arxiv` is passed into `get_bytes` and called before
+each attempt, which makes the wait `max(backoff, what the rule still requires)`.
+There is still exactly one throttle and one place that owns it; the helper is not
+arXiv's and holds no rate limit of its own. Same measurement after: 3.0s.
+**And the fetch loop has the sweep's consecutive-failure bound** (#231, the same
+`CONSECUTIVE_FAILURE_LIMIT`, which moved to `common.py` so the two loops cannot
+disagree). A total arXiv outage over 150 papers cost 750 requests and about 82
+minutes at 17877b8, ending "0 fetched, 150 failed" and exiting 0, against a
+definition of done of ~15 minutes for a whole trace; it now stops at the tenth
+consecutive failure, in about 5.7 minutes, naming the paper it stopped at, the
+last failure's class and message, what is already on disk and that a re-run
+resumes. Only transport failures count: a paper arXiv answers about — a withheld
+source, an id it does not have, a body that is neither LaTeX nor PDF — resets the
+counter, so a corpus of 404s runs to the end and exits 0, and a skipped paper
+makes no request so it neither counts nor resets.
 Gotcha: some arXiv "LaTeX" source is really a PDF inside an `\includepdf`
 stub; the extractor detects and unwraps this. Citation and cross-reference
 macros are normalised before parsing: pylatexenc knows `\cite` but not natbib,
