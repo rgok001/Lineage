@@ -18,9 +18,15 @@ a map that became `complete` at the end of pass one would be served to readers
 and then re-clustered underneath them. That is the live-surgery risk (#149, #169,
 #171) the staging exists to avoid.
 
+**Superseding a live map is an explicit act** (#241). With no flag this stage
+resolves the row a build owns, and it will not publish that row over an incumbent:
+`--genealogy-id <id>` names the version to publish, `--current` names the live map
+itself. See `refuse_bare_supersede` for what that costs and why.
+
 Usage:
   python pipeline/stage_e_ground.py "attention"
   python pipeline/stage_e_ground.py "attention" --no-publish
+  python pipeline/stage_e_ground.py "attention" --current      # re-ground the live map
 """
 
 import argparse
@@ -179,6 +185,88 @@ def refuse_unless_publishable(conn, gen_id: int) -> None:
     sys.exit("\n".join(lines))
 
 
+# ── superseding a live map is asked for, never inferred (issue #241) ───────
+#
+# The rows this stage could publish if it went looking, for a refusal that will
+# not nominate one. Age from `updated_at`, which Stage C writes on the insert and
+# every later stage touches: "how long has this been sitting there" is the
+# question that tells a build from a corpse, and it is the one an operator can
+# answer and this stage cannot.
+SELECT_UNPUBLISHED = """
+SELECT version, id, status,
+       date_trunc('second', now() - updated_at)::text
+FROM genealogies
+WHERE concept = %(concept)s AND prompt_version = %(pv)s AND status <> 'complete'
+ORDER BY version DESC
+"""
+
+
+def refuse_bare_supersede(conn, concept: str, prompt_version: str,
+                          live: tuple) -> None:
+    """Refuse to publish a predicate-resolved row over a concept's live map.
+
+    Issue #241 (H1), the blocker that held #207b off master. `build_row` reads
+    `status <> 'complete' ORDER BY version DESC`, and #207b's comment called that
+    "a build in flight" — but **nothing ever clears `running`**. A build that is
+    SIGKILLed, SIGTERMed at a deploy, or dies in its finish phase leaves that row
+    behind for ever; migration 027's own header calls it "the normal residue of a
+    failed build". So `python pipeline/stage_e_ground.py "<concept>"`, the command
+    as documented and typed for months, resolved the corpse, grounded it, passed
+    all six clauses and published it: the curated live map demoted, every
+    curatorial edit gone from what readers see (product rule 3), exit 0, and a
+    success line. Measured on a throwaway Postgres.
+
+    **The rule is about what the act destroys, not about how sure we are.** A
+    predicate no sweeper maintains may keep the acts that write nothing a reader
+    sees — grounding, assembling, `--no-publish` — and may not keep the act that
+    replaces what a reader is seeing. So the refusal is narrow: it fires only when
+    the row was resolved by predicate AND this run would publish AND the concept
+    already has a current map. A concept's first publish is not refused, because
+    there is no incumbent and nothing is destroyed; the worker never meets this,
+    because it binds `--genealogy-id` from the clustering onwards (#241-H6).
+
+    **It nominates nothing.** The obvious kindness here — printing the command
+    with the newest unpublished version's id already in it — is the adoption this
+    refusal exists to prevent, handed over in copy-pasteable form. The versions
+    are listed with their status and their age and the operator picks one, or
+    names the live map with `--current`.
+    """
+    live_id, live_version = live[0], live[1]
+    rows = conn.execute(SELECT_UNPUBLISHED,
+                        {"concept": concept, "pv": prompt_version}).fetchall()
+    lines = [
+        "",
+        f'Refusing to publish over the live map of "{concept}": this run resolved a '
+        f"version by rule rather than by name, and",
+        f"  publishing it would take readers off v{live_version} (genealogy "
+        f"{live_id}) and everything curated on it.",
+        "  Nothing was read and nothing was written.",
+        f"  {version_note(conn, concept, prompt_version)}",
+        "",
+        "  Versions this concept has that are not published:",
+        "",
+        "    version  genealogy  status              last written",
+    ]
+    for version, gid, status, age in rows:
+        lines.append(f"    {version:>7}  {gid:>9}  {status:<18}  {age} ago")
+    lines += [
+        "",
+        "  Say which one you mean:",
+        f'    python pipeline/stage_e_ground.py "{concept}" --genealogy-id <genealogy>',
+        "        grounds and publishes that version, superseding the live map.",
+        f'    python pipeline/stage_e_ground.py "{concept}" --current',
+        "        grounds and re-publishes the live map itself — the re-ground after "
+        "curating",
+        "        or after a definition refresh.",
+        "",
+        "  Why this stage will not choose: a row that is not `complete` is a build in "
+        "flight OR the",
+        "  residue of one that died, nothing ever clears `running`, and from here "
+        "those are the same row.",
+    ]
+    sys.exit("\n".join(lines))
+
+
 def sweep_orphan_edges(conn, gen_id: int, nodes) -> None:
     """Remove edges that point at concept-states this map no longer has.
 
@@ -246,36 +334,92 @@ def main() -> None:
                     help="ground and publish this exact version instead of the one "
                          "the build in flight owns (a re-ground of an older version, "
                          "or a rollback)")
+    ap.add_argument("--current", action="store_true",
+                    help="ground and re-publish the LIVE map of this concept: the "
+                         "re-ground after curating it or after a definition "
+                         "refresh. Single-valued by migration 025's partial index")
     args = ap.parse_args()
+    if args.current and args.genealogy_id is not None:
+        ap.error("--current and --genealogy-id both name a row, and they can name "
+                 "different ones. Pass one.")
 
     prompt_version = env("PROMPT_VERSION", "v1")
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
-    # The version this build owns, and never the live map: this stage is what
-    # MAKES a version the live map, so resolving by `is_current` would re-ground
-    # and re-publish the map that is already up while the new one waits (#207b).
-    # `--genealogy-id` is how an operator re-grounds an older version on purpose,
-    # which is also the rollback path — the publish swap demotes whatever is
-    # current and promotes the row named here.
-    gen = build_row(conn, args.concept, prompt_version, "id, nodes, version",
-                    genealogy_id=args.genealogy_id)
+    # The version this build owns, and never the live map by default: this stage
+    # is what MAKES a version the live map, so resolving by `is_current` would
+    # re-ground and re-publish the map that is already up while the new one waits
+    # (#207b). `--genealogy-id` is how an operator re-grounds an older version on
+    # purpose, which is also the rollback path — the publish swap demotes whatever
+    # is current and promotes the row named here — and `--current` is how they say
+    # "the live one" without looking its id up first (#241).
+    columns = "id, nodes, version, is_current"
+    if args.current:
+        gen = current_row(conn, args.concept, prompt_version, columns)
+        if not gen:
+            sys.exit(f'\nNo live map for "{args.concept}" at prompt {prompt_version}, '
+                     f"so --current names nothing.\n"
+                     f"  {version_note(conn, args.concept, prompt_version)}\n"
+                     "  Nothing was read and nothing was written.")
+    else:
+        gen = build_row(conn, args.concept, prompt_version, columns,
+                        genealogy_id=args.genealogy_id)
     if not gen:
         # The refusal carries the command, because the commonest way to meet it
         # is the documented repair path — curate in the workbench, or refresh a
         # definition, then re-ground — and that map is published, so this stage
         # will not find it by itself and must not go looking for it (#207b). The
-        # id is read from the row rather than described: `--genealogy-id` is not
-        # something an operator can be expected to look up mid-repair.
+        # command is `--current` since #241, which is the same act with nothing to
+        # look up: `--genealogy-id` was the flag here because there was no other
+        # way to say "the live one".
         live = current_row(conn, args.concept, prompt_version, "id, version")
         sys.exit(f'\nNo unpublished version of "{args.concept}" at prompt '
                  f"{prompt_version} to ground, so no build is in flight.\n"
                  f"  {version_note(conn, args.concept, prompt_version)}\n"
-                 + (f"  To re-ground and re-publish the live map (v{live[1]}) — after "
-                    f"curating it, or after a\n  definition refresh — name it:\n"
-                    f'    python pipeline/stage_e_ground.py "{args.concept}" '
-                    f"--genealogy-id {live[0]}\n"
+                 + (f"  To re-ground and re-publish the live map (v{live[1]}, genealogy "
+                    f"{live[0]}) — after curating\n  it, or after a definition refresh "
+                    f"— name it:\n"
+                    f'    python pipeline/stage_e_ground.py "{args.concept}" --current\n'
                     if live else "")
                  + "  To build a new version instead, run Stage C first.")
-    gen_id, nodes, version = gen
+    gen_id, nodes, version, is_current = gen
+
+    # ── which acts a row resolved by rule may have (issue #241) ───────────────
+    #
+    # Both refusals are here, at resolution, above every read and every write, and
+    # they are the two directions of one rule: an act that changes what a reader
+    # sees is named or it does not happen.
+    #
+    # Publishing over an incumbent by predicate is #241-H1, and
+    # `refuse_bare_supersede` carries its account.
+    #
+    # `--no-publish` on the LIVE map is the other direction, and it is the state
+    # #233 exists to prevent. This stage's `--no-publish` branch skips the publish
+    # invariant entirely, on the argument that publishing is what the gate gates
+    # (#192) — but it still sweeps orphan edges, re-syncs every edge quote from its
+    # definition and rewrites all eight stamp columns. On the current row that is
+    # the live map's evidence rewritten with the six clauses never asked, which is
+    # exactly what `--current --no-publish` would be a documented way to do.
+    if args.no_publish and is_current:
+        sys.exit(
+            f'\nRefusing to re-ground the live map of "{args.concept}" without '
+            f"publishing it: v{version} (genealogy {gen_id}) is what readers see.\n"
+            "  --no-publish sweeps orphan edges, re-copies every edge quote from its "
+            "definition and\n"
+            "  rewrites every stamp, and it does not ask the publish invariant — so on "
+            "this row it would\n"
+            "  change what a reader sees while skipping the check that says the map may "
+            "be seen (#233).\n"
+            "  Nothing was read and nothing was written.\n"
+            f'    python pipeline/stage_e_ground.py "{args.concept}" --current\n'
+            "        does the same grounding and asks the six clauses before "
+            "re-publishing.\n"
+            "  To assemble a version nobody can see yet, name an unpublished one with "
+            "--genealogy-id.")
+    predicate_resolved = not args.current and args.genealogy_id is None
+    if predicate_resolved and not args.no_publish:
+        live = current_row(conn, args.concept, prompt_version, "id, version")
+        if live:
+            refuse_bare_supersede(conn, args.concept, prompt_version, live)
 
     # ── one transaction, because a refusal has to be able to undo everything ──
     #

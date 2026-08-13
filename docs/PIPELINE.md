@@ -1144,18 +1144,44 @@ one abort still left saying only what the stage did is the accounting identity
 stage rather than a fault in the world; it asserts nothing about the map.
 
 **Stage E: grounding and assembly** (`stage_e_ground.py <concept>
-[--no-publish] [--genealogy-id ID]`).
+[--no-publish] [--genealogy-id ID] [--current]`).
 **It grounds the version this build owns, and publishing is what makes that
 version the live map** (#207b). It resolves through `build_row` and never
-through `is_current`: resolving the live map here would re-ground and re-publish
-the map that is already up while the new one waited. `--genealogy-id` re-grounds
-a named version instead, which is also the rollback — the publish swap demotes
-whatever is current and promotes the row named. With no build in flight it
-refuses, names the live version and **prints the command to re-ground it**, id
-included, because the commonest way to meet that refusal is the documented repair
-path (curate, or refresh a definition, then re-ground) and that map is published.
-Verified by running the command the refusal offers: it re-grounds and
-re-publishes the live map, moving no flag and stamping no supersession.
+through `is_current` by default: resolving the live map here would re-ground and
+re-publish the map that is already up while the new one waited. `--genealogy-id`
+re-grounds a named version instead, which is also the rollback — the publish swap
+demotes whatever is current and promotes the row named. With no build in flight it
+refuses, names the live version and **prints the command to re-ground it**.
+
+**Superseding the live map is refused unless the row was named** (#241-H1, the
+blocker that held #207b off master). `build_row` reads `status <> 'complete'
+ORDER BY version DESC`, which #207b called "a build in flight" — but nothing ever
+clears `running`, and migration 027's own header calls an abandoned row "the
+normal residue of a failed build". Measured: with a curated live v1 and an
+assembled `running` v2, the documented bare command
+`python pipeline/stage_e_ground.py "<concept>"` grounded v2, passed all six
+clauses, published it, demoted v1 and exited 0 — every curatorial edit gone from
+what readers see, unannounced. The refusal now fires at row resolution, before
+anything is read or written, and only where all three hold: the row was resolved
+by predicate, the run would publish, and the concept already has a current map. A
+first publish is untouched, and the worker never meets it because it binds
+`--genealogy-id` from the clustering onwards. **The refusal nominates nothing** —
+it prints `version_note`, a table of the unpublished versions with their status
+and age, and the two commands with a placeholder id — because printing the newest
+candidate's id in a runnable command is the adoption it exists to prevent.
+`--current` is the other half: it resolves through `current_row` (single-valued by
+025's partial index) so that the curate-then-re-ground procedure is one typable
+command again, and it is what the no-build-in-flight refusal now offers.
+**`--no-publish` is refused when the resolved row is the current one**: that
+branch skips the publish invariant on purpose (#192) while still sweeping orphan
+edges, re-copying every edge quote and rewriting every stamp, so on the live map
+it would be a documented way to change what readers see with the six clauses never
+asked — the state #233 exists to prevent. Verified on a throwaway Postgres:
+scenario A refuses with a clean full-table diff, deleting the current-row check
+publishes the corpse (the falsifier), a bound run publishes normally, a first
+build publishes, `--current` re-publishes the live map demoting nothing, both
+shapes of `--no-publish` on a current row refuse without writing, and
+`--current --genealogy-id` is an argparse error.
 First sweeps out any edge naming a concept-state `genealogies.nodes` no longer
 contains (decision 20), before the quote re-sync and before anything is judged,
 so nothing is repaired, stamped or assembled for an edge that is about to go and

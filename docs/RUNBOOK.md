@@ -407,13 +407,13 @@ step 1 and re-run step 2; nothing is damaged, but nothing is published either.
    python pipeline/snapshot_map.py "attention"
    python pipeline/stage_b_extract.py "attention" --reground --dry-run
    python pipeline/stage_b_extract.py "attention" --reground
-   python pipeline/stage_e_ground.py "attention" --genealogy-id <the live map's id>
+   python pipeline/stage_e_ground.py "attention" --current
    ```
 
-   The `--genealogy-id` is #207b: Stage E grounds the version a build owns, and a
-   hand-run repair is not a build, so the live map is named. Running it without
-   the flag refuses without touching anything and prints the command with the
-   right id already in it.
+   The `--current` is #207b and #241: Stage E grounds the version a build owns,
+   and a hand-run repair is not a build, so the live map has to be named — and
+   since #241 it can be named without looking an id up. Running it with no flag
+   refuses without touching anything and lists the versions there are.
 
    Nothing here is new behaviour — it is the same free re-check the worker
    performs on every trace — but it is the first time it has been run
@@ -492,7 +492,8 @@ report and it is not a regression in the map: those stamps genuinely are not
 re-checkable, which is what 015 says. The remedy is free and is the two live-data
 steps of the 015 procedure above, **in that order** — `extract_text.py` with no
 `--force` first, then per map `snapshot_map.py`, `stage_b_extract.py --reground`
-and `stage_e_ground.py`. Settle which state the database is in **before**
+and `stage_e_ground.py --current` (the live map is named, since #241 a bare Stage
+E on a concept that has one refuses). Settle which state the database is in **before**
 deploying the page rather than discovering it on the page:
 
 ```
@@ -761,7 +762,11 @@ them:
 - **Clause 6 is read against the threads the map already has**, so a Stage E run
   BY HAND after a re-cluster sees the *previous* threads over the new
   concept-states, and a paper that has left the map's membership refuses the
-  publish. The repair is to run `stage_g_threads.py` and then Stage E again.
+  publish. The repair is to run `stage_g_threads.py` and then Stage E again,
+  **naming the map**: `--current` for the live one, `--genealogy-id <id>` for a
+  version being built. A bare Stage E on a concept that has a live map refuses
+  since #241, because publishing a row it resolved by rule is how an abandoned
+  build gets published over what readers are seeing.
   **A worker build no longer meets this** (#192): it composes threads immediately
   before the one publishing Stage E, and Stage G's population is now the map
   rather than the definitions table, so it cannot put a paper in a thread that

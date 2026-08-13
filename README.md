@@ -108,11 +108,18 @@ python pipeline/stage_d_edges.py "attention" --dry-run             # links, and 
 python pipeline/stage_d_edges.py "attention"
 
 # Stage E: grounding check + assemble genealogy JSON, and publish the map
-python pipeline/stage_e_ground.py "attention"
+python pipeline/stage_e_ground.py "attention"                # publishes the version a
+                                                             # build owns. Refused when
+                                                             # the concept already has a
+                                                             # live map: superseding one
+                                                             # is named, never inferred
 python pipeline/stage_e_ground.py "attention" --no-publish   # assemble, leave it
                                                              # unpublished and unasked
                                                              # (a two-stage build's
                                                              # intermediate assemblies)
+python pipeline/stage_e_ground.py "attention" --current      # re-ground and re-publish
+                                                             # the live map, after
+                                                             # curating it
 python pipeline/stage_e_ground.py "attention" --genealogy-id 42  # ground and publish a
                                                                  # named version (also
                                                                  # the rollback)
@@ -172,9 +179,10 @@ python pipeline/workbench.py "attention" list
 python pipeline/workbench.py "attention" merge n6 --into n4
 python pipeline/workbench.py "attention" delete-node n5
 python pipeline/workbench.py "attention" rename n4 "Self-attention as the whole architecture"
-python pipeline/stage_e_ground.py "attention" --genealogy-id 42   # re-ground + re-export
-                                                       # after edits; the live map is named
-                                                       # (a run with no id says which)
+python pipeline/stage_e_ground.py "attention" --current   # re-ground + re-export after
+                                                       # edits; --current is the live map
+                                                       # (a run with no flag refuses and
+                                                       # says which versions there are)
 
 # Export: related-work skeleton (Markdown) + BibTeX
 python pipeline/enrich_authors.py --concept "attention"   # real authors (arXiv first)
@@ -334,8 +342,8 @@ python pipeline/extract_text.py --concept "attention" --force  # scoped: the pap
                                                                # re-extract every map
 python pipeline/stage_b_extract.py "attention" --refresh       # fresh quotes, ids kept
 python pipeline/stage_c_cluster.py "attention" --embed-only    # vectors, no re-clustering
-python pipeline/stage_e_ground.py "attention" --genealogy-id 42  # re-ground the live map,
-                                                                 # honestly
+python pipeline/stage_e_ground.py "attention" --current         # re-ground the live map,
+                                                               # honestly
 python pipeline/stage_h_claims.py "attention" --recheck        # re-ground stored claim
                                                                # quotes, free; without
                                                                # --recheck it rewrites the
