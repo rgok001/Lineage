@@ -397,7 +397,12 @@ minutes at 17877b8, ending "0 fetched, 150 failed" and exiting 0, against a
 definition of done of ~15 minutes for a whole trace; it now stops at the tenth
 consecutive failure — 50 requests, not 750 — naming the paper it stopped at, the
 last failure's class and message, what is already on disk and that a re-run
-resumes.
+resumes. **What it says about what it wrote is read from its own counts** (#236):
+under `--force` it names how many existing raw files it replaced and that their
+`papers` rows were updated with them, because "nothing has been deleted or
+overwritten" was false whenever that flag was given — measured, two files
+replaced and two rows upserted before the abort printed it. Nothing is deleted on
+any path, so that half stands alone.
 **What that bound costs depends on how the transport dies**, exactly as the
 sweep's does (#232, and #235 for missing it here): ten papers refused instantly
 is 50 requests and **337s, about 5.6 minutes**, and ten papers that accept and
@@ -1020,7 +1025,13 @@ the live version is unaffected and this build's version has never been published
 The read has its own try/except, because there is no handler behind an abort, and
 since #232 its connection carries `connect_timeout=DB_CONNECT_TIMEOUT_S` (ten
 seconds) — as does the cap's status write, the other connection this stage opens
-while stopping. Both are opened at
+while stopping. **Since #236 the cap's status write has the try/except as well**,
+and returns its own clause rather than a boolean: it ran unguarded on the line
+before the abort, so a cap hit during a network fault raised `OperationalError`
+first and the run ended in a traceback with none of the three parts, including
+the standing sentence written for exactly that moment. A write that could not
+happen is a third outcome and says so, distinct from a row that was not
+mid-build. Both are opened at
 the moment a network fault is the likeliest reason the stage is stopping, and
 without the timeout the abort's own explanation is what hangs: measured against a
 listener that accepts and never speaks Postgres, the read now returns its "could

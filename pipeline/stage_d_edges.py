@@ -292,8 +292,8 @@ def fetch_references(arxiv_id: str) -> "list[dict] | None":
 DB_CONNECT_TIMEOUT_S = 10
 
 
-def mark_aborted_spend_cap(gen_id: int) -> bool:
-    """Record a cap abort on the genealogy row, on a fresh connection.
+def mark_aborted_spend_cap(gen_id: int) -> str:
+    """Record a cap abort on the genealogy row. Returns the clause the abort adds.
 
     Guarded to the mid-build state: only a 'running' row takes the mark, which
     is the first thing ever to write this status (it has been a legal value
@@ -301,16 +301,34 @@ def mark_aborted_spend_cap(gen_id: int) -> bool:
     keeps its status — its edges were not touched, so 'complete' is still the
     truth about it, and migration 025's CHECK would refuse the write on a
     current row anyway.
+
+    **Its own try/except, and it returns a sentence rather than a boolean, for
+    the reason `map_standing` below has both** (#236): there is no handler
+    behind an abort. This ran unguarded on the line before `abort_after_buying`,
+    so a cap hit during the network fault that is the likeliest reason a run is
+    stopping ended in a psycopg traceback with none of #228's three parts —
+    including the standing sentence, which exists for exactly that moment
+    (measured: `OperationalError` on a refused DSN in 0.0s, while `map_standing`
+    on the same DSN degraded to its own sentence). A failed write is a third
+    outcome and says so; it is not the same as a row that was not mid-build.
+    `DatabaseAccessRefused` is a BaseException and is deliberately not caught.
     """
-    c = psycopg.connect(env("DATABASE_URL"), autocommit=True,
-                        connect_timeout=DB_CONNECT_TIMEOUT_S)
     try:
-        cur = c.execute(
-            "UPDATE genealogies SET status='aborted_spend_cap', updated_at=now() "
-            "WHERE id=%s AND status='running'", (gen_id,))
-        return cur.rowcount == 1
-    finally:
-        c.close()
+        c = psycopg.connect(env("DATABASE_URL"), autocommit=True,
+                            connect_timeout=DB_CONNECT_TIMEOUT_S)
+        try:
+            cur = c.execute(
+                "UPDATE genealogies SET status='aborted_spend_cap', updated_at=now() "
+                "WHERE id=%s AND status='running'", (gen_id,))
+            marked = cur.rowcount == 1
+        finally:
+            c.close()
+    except Exception as exc:
+        return (f"; this run could not record that on the row "
+                f"({type(exc).__name__}: {str(exc)[:200]}), so its status is whatever "
+                f"it was before this run.")
+    return (", and the row is marked aborted_spend_cap." if marked else
+            "; the row was not mid-build, so its status was left alone.")
 
 
 # What this stage did, said apart from what is true of the map (#223). The old
@@ -848,18 +866,17 @@ def main() -> None:
             # for is already cached, so the money is kept even though the run is
             # not.
             print(f"\n⚠ SPEND CAP HIT (${spend:.2f} > ${cap:g}) — aborting with nothing swapped.")
-            marked = mark_aborted_spend_cap(gen_id)
             # The status write happens BEFORE the standing read, so the sentence
-            # the operator reads describes the row as this abort leaves it.
+            # the operator reads describes the row as this abort leaves it. It
+            # cannot stop the abort from speaking: since #236 it returns its own
+            # clause, including the one for a write that could not happen.
+            marked = mark_aborted_spend_cap(gen_id)
             abort_after_buying(
                 # Four decimals, as the end-of-run summary prints: at the cap's
                 # own scale two decimals render a real spend as $0.00.
                 f"the spend cap of ${cap:g} was reached at candidate {done} of "
                 f"{len(candidates)}, with ${spend:.4f} spent",
-                gen_id,
-                tail=(", and the row is marked aborted_spend_cap."
-                      if marked else
-                      "; the row was not mid-build, so its status was left alone."))
+                gen_id, tail=marked)
 
     # THE SWAP, guarded by an accounting identity rather than a proportion: it
     # happens only if the run consumed its whole candidate list. Nobody can say

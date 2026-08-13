@@ -171,7 +171,7 @@ def main() -> None:
     raw_root.mkdir(parents=True, exist_ok=True)
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
 
-    fetched = skipped = failed = 0
+    fetched = skipped = failed = replaced = 0
     # #231's bound on an outage, the same one and the same reason as the
     # reference sweep's. A total arXiv outage used to cost 150 papers x 10
     # requests: measured at 17877b8, 750 requests and about 82 minutes of
@@ -239,11 +239,23 @@ def main() -> None:
                     f"paper — resets the counter, so only a call that got no answer at "
                     f"all can produce {CONSECUTIVE_FAILURE_LIMIT} in a row. The last "
                     f"failure was {last_failure}.\n\n"
+                    # The counts this run kept, not a sentence about the run it
+                    # was expected to be (#236). `--force` re-downloads over
+                    # files that are already there, so "nothing has been deleted
+                    # or overwritten" was false whenever it was used: measured,
+                    # 2 raw files replaced and 2 `papers` rows upserted before
+                    # this printed. Nothing is deleted on any path, so that half
+                    # of the sentence stands on its own.
                     f"What this run did: {fetched} paper(s) were downloaded and recorded "
-                    f"before it stopped and are on disk, {skipped} were already there, and "
-                    f"nothing has been deleted or overwritten. A re-run after the cause is "
-                    f"fixed skips everything already downloaded and starts at the papers "
-                    f"this one did not reach.")
+                    f"before it stopped and are on disk, {skipped} were already there, "
+                    + (f"and {replaced} existing raw file(s) were replaced by --force "
+                       f"(their papers rows were updated to match). Nothing has been "
+                       f"deleted. A re-run starts at the papers this one did not reach "
+                       f"and, with --force, downloads the earlier ones again."
+                       if replaced else
+                       "and nothing has been deleted or overwritten. A re-run after the "
+                       "cause is fixed skips everything already downloaded and starts at "
+                       "the papers this one did not reach."))
             continue
         if result is None:
             print(f"    ✗ no source or PDF available")
@@ -254,6 +266,12 @@ def main() -> None:
 
         content, source_format, ext = result
         out = raw_root / f"{stem}.{ext}"
+        # Counted before the write, because after it there is nothing left to
+        # ask: this is what the abort's "nothing has been deleted or
+        # overwritten" is allowed to say (#236). Only --force can reach here
+        # over an existing file; without it the loop skipped above.
+        if out.exists():
+            replaced += 1
         out.write_bytes(content)
         # Store paths relative to DATA_DIR, not the repo: on a deployed worker
         # DATA_DIR is a separate mounted disk (e.g. /data) outside the repo, so
