@@ -596,6 +596,14 @@ def publish_swap(conn, concept: str, gen_id: int) -> list[int]:
     # every re-publish. The invariant's falsifier moved with the fix: delete the
     # clause AND the promote's `superseded_at = NULL` and the CHECK fires again.
     #
+    # **The clause's own falsifier is the RETURN value** (#238). With #229's
+    # clear in place, deleting `AND id <> %(gid)s` alone raises nothing and
+    # changes no row, so a constraint can no longer tell the two files apart —
+    # but this function then returns the row it has just published, and both
+    # restore scripts render that list as "superseding genealogy <itself>".
+    # Nothing asserted it for one commit, which made "the falsifier moved" a
+    # claim rather than a check. Re-publishing the live map must return `[]`.
+    #
     # **The promote clears `superseded_at`, and that is not tidiness** (issue
     # #229). A row demoted by an earlier publish carries the timestamp for ever;
     # publishing it again — a rollback to the previous version, or re-grounding

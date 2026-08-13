@@ -338,7 +338,13 @@ silently and left the live map recorded as replaced. Latent while a concept has
 one publishable row, routine from #207b. `AND id <> %(gid)s` on the demote is
 what keeps re-publishing the *current* map a no-op; since the promote clears the
 column the two statements now cancel even without it, so the falsifier for the
-invariant is deleting both, not either.
+invariant is deleting both, not either. **The clause has a falsifier of its own,
+and it is the return value** (#238): with the clause deleted, `publish_swap`
+returns the row it has just published — which both restore scripts render as
+"superseding genealogy <itself>" — while raising nothing and changing no row.
+The harness asserts that re-publishing the live map demotes nothing, measured
+`[]` on the shipped file and `[<id>]` with the clause deleted; without that
+assertion the deletion is invisible to every check there is.
 
 `superseded_at` is that swap's record, and it is never inferred from
 `is_current`, because a row that was never current was never replaced either: it
