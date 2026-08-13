@@ -22,16 +22,22 @@ Design:
   short transaction at the very end, entered only when the run has consumed its
   whole candidate list. A spend-cap hit aborts with nothing swapped and marks a
   mid-build row aborted_spend_cap; ten consecutive call failures abort with
-  nothing swapped; a swept source none of whose reference fetches got an answer
-  of any kind aborts before anything is bought (#217: the floor measures call
-  success, not corpus shape — a 404 is an answer, and failures are never
-  cached); and ANY paper whose reference fetch failed aborts the run at the end
-  of the sweep, before a single classification is bought (#219: the same
-  accounting identity that guards the swap, carried back to the sweep — a
-  candidate list built without every paper's references is not a smaller map,
-  it is an unknown one). Under --dry-run the floors report instead of aborting:
-  the dry run's exit code never depends on corpus data. The slow, failure-prone
-  half — S2 fetches and LLM calls — happens on no database connection at all.
+  nothing swapped, in the classification loop and — since #223 — in the
+  reference sweep as well, which is what bounds a total outage at ten papers of
+  backoff instead of the whole corpus; a swept source none of whose reference
+  fetches got an answer of any kind aborts before anything is bought (#217: the
+  floor measures call success, not corpus shape — a 404 is an answer, and
+  failures are never cached); and ANY paper whose reference fetch failed aborts
+  the run at the end of the sweep, before a single classification is bought
+  (#219: the same accounting identity that guards the swap, carried back to the
+  sweep — a candidate list built without every paper's references is not a
+  smaller map, it is an unknown one). Under --dry-run the floors report instead
+  of aborting: the dry run's exit code never depends on corpus data. The slow,
+  failure-prone half — S2 fetches and LLM calls — happens on no database
+  connection at all.
+- Every sweep abort READS the map's standing from its own row rather than
+  asserting it (#223), and says the two truths apart: what this stage did, and
+  what is true of the map.
 
 Usage:
   python pipeline/stage_d_edges.py "attention"
@@ -191,6 +197,18 @@ def store_classification(key: str, ec: "EdgeClass", model: str) -> None:
         print(f"    (could not cache classification: {exc})", file=sys.stderr)
 
 
+# The last reference fetch that failed, as "<paper> (<Class>: <message>)".
+#
+# #223's accepted consequence: a zero-failure floor over a retried call means one
+# paper that fails persistently makes its map unbuildable until the cause is
+# fixed, so the abort owes an operator the instrument to tell "S2 is down" from
+# "S2 will never answer for this id". `fetch_references` reports three outcomes
+# through one return value and the comment above it pins that contract, so the
+# detail rides beside the return rather than widening it. The sweep is
+# single-threaded and reads this immediately after the call that set it.
+last_fetch_failure = ""
+
+
 def s2_cache_file(arxiv_id: str) -> Path:
     """Where this paper's reference answer is kept, if it has one.
 
@@ -210,8 +228,9 @@ def fetch_references(arxiv_id: str) -> "list[dict] | None":
     a list of references; an HONEST EMPTY `[]` — HTTP 200 with no data, or a
     404, because Semantic Scholar does not hold every arXiv paper and "no
     citation data for this one" is an answer, not a broken run; or None for a
-    transport FAILURE — retries exhausted, a connection error, any non-404 HTTP
-    error. Only answers are cached. The old code cached `[]` on every
+    transport FAILURE — retries exhausted (since #223 those retries include the
+    connection class, so one reset socket is no longer a failure at all), any
+    non-404 HTTP error. Only answers are cached. The old code cached `[]` on every
     exception, which was the entire cache-poisoning mechanism: an outage's
     failures replayed from disk forever, indistinguishable from honest data,
     and the abort text taught operators to delete entries that may have been
@@ -223,6 +242,7 @@ def fetch_references(arxiv_id: str) -> "list[dict] | None":
     entry to chase a suspicion would cost a full re-sweep per map; an operator
     who suspects one deletes that file and the re-fetch answers honestly.
     """
+    global last_fetch_failure
     f = s2_cache_file(arxiv_id)
     f.parent.mkdir(parents=True, exist_ok=True)
     if f.exists():
@@ -241,8 +261,17 @@ def fetch_references(arxiv_id: str) -> "list[dict] | None":
         if resp is not None and getattr(resp, "status_code", None) == 404:
             refs = []
         else:
+            # 240 and not the 120 this used to slice at, measured on #223's
+            # harness: `get_json`'s exhaustion message spends its first ~120
+            # characters on "Gave up after 5 attempts" and the URL, so a
+            # 120-char slice cut off the cause — every real outage read
+            # "RuntimeError: Gave up after…" with the ConnectionError behind it
+            # invisible, which is the one thing the line exists to say. One
+            # spelling, used by both the log line and the abort.
+            note = f"{type(e).__name__}: {str(e)[:240]}"
+            last_fetch_failure = f"{arxiv_id} ({note})"
             print(f"    ⚠ reference fetch failed for {arxiv_id} "
-                  f"({type(e).__name__}: {str(e)[:120]}); not cached, a re-run retries it")
+                  f"({note}); not cached, a re-run retries it")
             return None
     f.write_text(json.dumps(refs), encoding="utf-8")
     return refs
@@ -266,6 +295,73 @@ def mark_aborted_spend_cap(gen_id: int) -> bool:
         return cur.rowcount == 1
     finally:
         c.close()
+
+
+# What this stage did, said apart from what is true of the map (#223). The old
+# sweep aborts said "The map's edges have NOT been touched", which is a claim
+# about the artefact made by code that can only speak for its own writes: Stage C
+# has already re-clustered the map and cleared the edges whose concept-states
+# moved by the time this stage runs, so the sentence was true of the stage and
+# false of the map, and it was the reassurance a reader acted on.
+#
+# It says "the replacement of the edge set" and not "the DELETE and the INSERT"
+# because #217 retired an abort that told operators to delete cache entries, and
+# verify_219's control refuses the word `delete` anywhere in an abort — a rule
+# worth keeping even where this file would mean a different deletion by it.
+STAGE_SWAPPED_NOTHING = ("What this stage did: it swapped no edges. The "
+                         "replacement of the edge set never ran, and no "
+                         "classification was bought.")
+
+
+def map_standing(gen_id: int) -> str:
+    """What is true of the MAP now, read from its row on a fresh connection.
+
+    The precedent is `mark_aborted_spend_cap` above: the stage closed its
+    connection before the slow half on purpose, and an abort is worth one short
+    reconnection. Read, never asserted — after #207b a build writes its own
+    version row and an abort here cannot take anything off the site, and this
+    sentence starts printing that on its own because it is resolved from
+    `is_current` rather than from what this file believes about publication.
+
+    Its own try/except, because there is no handler behind an abort: a stage that
+    crashed while explaining why it stopped would replace the explanation with a
+    traceback. `DatabaseAccessRefused` is a BaseException and is deliberately not
+    caught here.
+    """
+    try:
+        c = psycopg.connect(env("DATABASE_URL"), autocommit=True)
+        try:
+            row = c.execute(
+                "SELECT g.status, g.is_current, g.version, "
+                "       (SELECT c.version FROM genealogies c "
+                "         WHERE c.concept = g.concept AND c.is_current) "
+                "FROM genealogies g WHERE g.id = %s", (gen_id,)).fetchone()
+        finally:
+            c.close()
+    except Exception as exc:
+        return (f"What is true of the map: this run could not read its row to say "
+                f"({type(exc).__name__}: {str(exc)[:200]}). Check the map itself "
+                f"before assuming it is on the site.")
+    if row is None:
+        return ("What is true of the map: its row is gone from the database, so "
+                "there is nothing this run can say about what readers can see.")
+    status, is_current, version, live_version = row
+    if is_current:
+        return (f"What is true of the map: the map on the site is version {version} "
+                f"and this run left it exactly as it found it.")
+    if live_version is not None:
+        return (f"What is true of the map: the map on the site is version "
+                f"{live_version} and is unaffected; this build's version {version} "
+                f"has never been published and no reader can see it.")
+    if status == "running":
+        return ("What is true of the map: it is running and not published, so it "
+                "is off the site now. It went off when Stage C re-clustered it, "
+                "before this stage ran, and it comes back when a run of Stage E "
+                "publishes it. To put the previous version back before then, "
+                "RUNBOOK section 8, 'Restoring a map a re-trace destroyed'.")
+    return (f"What is true of the map: its row reads status {status} at version "
+            f"{version} and it is not published, so no reader can see it. It comes "
+            f"back when a run of Stage E publishes it.")
 
 
 def main() -> None:
@@ -339,7 +435,21 @@ def main() -> None:
     honest_by_source: dict[str, int] = {}
     sources_with_refs: set[str] = set()
     failed_fetches = answered_live = answered_cache = 0
-    for citing in corpus_ids:
+    # #223's bound on an outage. Retrying the transport (common.py) is what makes
+    # a reset socket survivable, and it is also what makes a real outage slow:
+    # five attempts at 2/4/8/16s is up to 30s per paper, and 150 of those is over
+    # an hour of backoff before the per-source floor can fire. The bound is the
+    # limit already in this file, twenty lines up, for the reason already written
+    # beside it — enough failures to prove it is the call and not the edge — and
+    # the claim holds one loop up unchanged. Consecutive failures are a property
+    # of the transport rather than of the corpus: the counter resets on ANY
+    # answer, an honest 404 included, so a corpus S2 holds nothing for cannot
+    # trip it. It fires on nothing scattered, which is correct — scattered
+    # failures still reach #219's zero-failure floor and get #219's message, in
+    # the scenario it was written for.
+    consecutive_fetch_failures = 0
+    stopped_after: int | None = None
+    for swept, citing in enumerate(corpus_ids, 1):
         # Probed before the call, never inferred after it: the file is written
         # by the fetch itself, so asking afterwards would call every fresh
         # answer a cache hit.
@@ -356,8 +466,13 @@ def main() -> None:
         papers_by_source[src] = papers_by_source.get(src, 0) + 1
         if refs is None:
             failed_fetches += 1
+            consecutive_fetch_failures += 1
+            if consecutive_fetch_failures == CONSECUTIVE_FAILURE_LIMIT:
+                stopped_after = swept
+                break
             time.sleep(S2_PAUSE_S)
             continue
+        consecutive_fetch_failures = 0
         if from_cache:
             answered_cache += 1
         else:
@@ -399,72 +514,105 @@ def main() -> None:
         # the engineering rule's contract is "estimates cost without calling
         # the LLM", and the estimate's answer may be "nothing — the real run
         # would abort". A dry run's exit code must not depend on corpus data.
+        #
+        # A real abort ends in three parts, kept apart on purpose (#223): why
+        # the sweep stopped, what this stage did, and what is true of the map —
+        # the last one READ from the row, because this stage cannot see what
+        # Stage C did to the map before it started. The standing read happens
+        # only on the abort: under --dry-run nothing stopped, so there is
+        # nothing about the map's standing to answer for, and the dry run's
+        # promise that it touches nothing after the sweep is kept.
         if args.dry_run:
             would_abort.append(sentence)
         else:
-            sys.exit("\nAborting: " + sentence)
+            sys.exit("\nAborting: " + sentence + "\n\n" + STAGE_SWAPPED_NOTHING
+                     + "\n\n" + map_standing(gen_id))
 
-    # A source that got no honest answer at all has its own message below,
-    # which names the source; it is the total case of the same fault the
-    # partial abort catches, said better, so the partial arm stands down for it
-    # rather than saying it twice. Computed rather than inferred from `floor`
-    # having exited, because under --dry-run nothing exits.
-    all_failed_sources = [s for s in papers_by_source
-                          if honest_by_source.get(s, 0) == 0]
-    for src in sorted(papers_by_source):
-        if honest_by_source.get(src, 0) == 0:
-            # The transport floor: at least one paper and not one honest
-            # answer of any kind — every fetch failed. Degenerate zero,
-            # nothing to calibrate. This is the incident-12 shape the floor
-            # was built for, and it can never fire on a corpus of honest
-            # 404s, because those are answers.
-            floor(f"all {papers_by_source[src]} reference fetches for the swept "
-                  f"{src} paper(s) failed — not one answered, not even with an "
-                  f"empty list. That is the reference "
-                  f"call failing for the whole source, not the corpus. The map's "
-                  f"edges have NOT been touched, and failures are never cached, "
-                  f"so a re-run after the cause is fixed retries exactly these "
-                  f"papers.")
-        elif src not in sources_with_refs and sources_with_refs:
-            # The differential arm, for F7's actual failure: every honest
-            # answer for this source empty while another source proved the
-            # call works is an id scheme S2 rejects wholesale, not that many
-            # papers' bad luck. Dormant today — one source, no comparator —
-            # live the moment papers.source exists.
-            floor(f"every honest answer for the {papers_by_source[src]} swept "
-                  f"{src} paper(s) was empty ({honest_by_source[src]} answered, "
-                  f"0 with references) while another source returned references. "
-                  f"That looks like an id scheme the reference call rejects for "
-                  f"every {src} paper. The map's edges have NOT been touched.")
-    if failed_fetches and not all_failed_sources:
-        # #219: the accounting identity that guards the swap, carried back to
-        # the sweep. The swap replaces the WHOLE edge set, so a candidate list
-        # assembled without one paper's references does not build a smaller
-        # map, it builds an unknown one: the edges those papers would have
-        # contributed are indistinguishable from edges that do not exist, and
-        # the map ends up asserting their absence. Zero failures is the only
-        # number that permits proceeding — there is no ratio here to calibrate,
-        # for the reason decisions 24 and 25 give.
-        #
-        # Aborting here, before the classification loop, is free precisely
-        # because of #217: failures are never cached, so a re-run retries
-        # exactly these papers and reads the rest from disk. Measured on the
-        # ticket: the same corpus previously paid for two classifications and
-        # swapped two edges over a map that had thirty.
-        attempted = failed_fetches + answered_live
-        floor(f"{failed_fetches} of the {attempted} reference fetch(es) this run "
-              f"attempted failed, so the sweep is incomplete. Of the swept "
-              f"papers, {answered_live + answered_cache} answered "
-              f"({answered_live} from the reference call, {answered_cache} "
-              f"already on disk from an earlier run) and {failed_fetches} did "
-              f"not answer at all. A map built from a partial sweep cannot be "
-              f"told from a map that genuinely has fewer edges, and this swap "
-              f"replaces every edge, so the run stops before buying anything. "
-              f"The map's edges have NOT been touched. The failed fetches were "
-              f"not cached, so a re-run retries exactly those {failed_fetches} "
-              f"paper(s) and reads the rest from cache; anything classified by "
-              f"an earlier run is still cached, so the retry re-buys none of "
-              f"it.")
+    if stopped_after is not None:
+        # The transport floor's message, adapted to say where it stopped. It
+        # runs BEFORE the floors below and stands them down: after an early
+        # stop every count is over a sweep that was cut short, and a floor
+        # reading a truncated sample would report a second finding about the
+        # same outage — under --dry-run, where nothing exits, it would print
+        # both.
+        floor(f"{CONSECUTIVE_FAILURE_LIMIT} reference fetches in a row failed, so "
+              f"the sweep stopped at paper {stopped_after} of {len(corpus_ids)} "
+              f"instead of spending the rest of the corpus proving the same thing. "
+              f"That is the reference call failing, not the corpus: the counter "
+              f"resets on any answer, an honest empty included, so only the call "
+              f"can produce ten in a row. The last failure was "
+              f"{last_fetch_failure or 'not recorded'}. Failures are never cached, "
+              f"so a re-run after the cause is fixed retries exactly these papers "
+              f"and reads the rest from cache; anything classified by an earlier "
+              f"run is still cached, so the retry re-buys none of it.")
+
+    # Everything below reads books kept over the WHOLE sweep, so it runs only
+    # when the whole sweep ran. After an early stop the guard above has named
+    # the outage and every count here is over a corpus that was cut short: a
+    # second floor over that sample says the same thing again, worse, and under
+    # --dry-run — where nothing exits — it would print both.
+    if stopped_after is None:
+        # A source that got no honest answer at all has its own message below,
+        # which names the source; it is the total case of the same fault the
+        # partial abort catches, said better, so the partial arm stands down
+        # for it rather than saying it twice. Computed rather than inferred
+        # from `floor` having exited, because under --dry-run nothing exits.
+        all_failed_sources = [s for s in papers_by_source
+                              if honest_by_source.get(s, 0) == 0]
+        for src in sorted(papers_by_source):
+            if honest_by_source.get(src, 0) == 0:
+                # The transport floor: at least one paper and not one honest
+                # answer of any kind — every fetch failed. Degenerate zero,
+                # nothing to calibrate. This is the incident-12 shape the floor
+                # was built for, and it can never fire on a corpus of honest
+                # 404s, because those are answers.
+                floor(f"all {papers_by_source[src]} reference fetches for the "
+                      f"swept {src} paper(s) failed — not one answered, not even "
+                      f"with an empty list. That is the reference "
+                      f"call failing for the whole source, not the corpus. "
+                      f"Failures are never cached, "
+                      f"so a re-run after the cause is fixed retries exactly "
+                      f"these papers.")
+            elif src not in sources_with_refs and sources_with_refs:
+                # The differential arm, for F7's actual failure: every honest
+                # answer for this source empty while another source proved the
+                # call works is an id scheme S2 rejects wholesale, not that many
+                # papers' bad luck. Dormant today — one source, no comparator —
+                # live the moment papers.source exists.
+                floor(f"every honest answer for the {papers_by_source[src]} swept "
+                      f"{src} paper(s) was empty ({honest_by_source[src]} "
+                      f"answered, 0 with references) while another source "
+                      f"returned references. That looks like an id scheme the "
+                      f"reference call rejects for every {src} paper.")
+        if failed_fetches and not all_failed_sources:
+            # #219: the accounting identity that guards the swap, carried back
+            # to the sweep. The swap replaces the WHOLE edge set, so a candidate
+            # list assembled without one paper's references does not build a
+            # smaller map, it builds an unknown one: the edges those papers would
+            # have contributed are indistinguishable from edges that do not
+            # exist, and the map ends up asserting their absence. Zero failures
+            # is the only number that permits proceeding — there is no ratio here
+            # to calibrate, for the reason decisions 24 and 25 give.
+            #
+            # Aborting here, before the classification loop, is free precisely
+            # because of #217: failures are never cached, so a re-run retries
+            # exactly these papers and reads the rest from disk. Measured on the
+            # ticket: the same corpus previously paid for two classifications and
+            # swapped two edges over a map that had thirty.
+            attempted = failed_fetches + answered_live
+            floor(f"{failed_fetches} of the {attempted} reference fetch(es) this "
+                  f"run attempted failed, so the sweep is incomplete. Of the "
+                  f"swept papers, {answered_live + answered_cache} answered "
+                  f"({answered_live} from the reference call, {answered_cache} "
+                  f"already on disk from an earlier run) and {failed_fetches} did "
+                  f"not answer at all. A map built from a partial sweep cannot be "
+                  f"told from a map that genuinely has fewer edges, and this swap "
+                  f"replaces every edge, so the run stops before buying anything. "
+                  f"The failed fetches were "
+                  f"not cached, so a re-run retries exactly those {failed_fetches} "
+                  f"paper(s) and reads the rest from cache; anything classified by "
+                  f"an earlier run is still cached, so the retry re-buys none of "
+                  f"it.")
     if papers_by_source and not sources_with_refs and not failed_fetches and not would_abort:
         # Everything empty, everything honest: the corpus S2 holds no
         # references for. The honest edge-less map this corpus produced

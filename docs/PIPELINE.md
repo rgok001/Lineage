@@ -377,6 +377,9 @@ exact and the ordering within the top-3R is not Voyage's.
 
 **Acquisition** (`fetch_papers.py <corpus.json>`, `extract_text.py`).
 LaTeX source preferred, PDF fallback, 1 request per 3 seconds against arXiv.
+`get_bytes` backs off on 429/5xx and, since #223, on the transport class below
+HTTP as well (see the retry contract under Stage D): a reset socket in the middle
+of a 150-paper fetch used to end that paper's attempt on the first try.
 Gotcha: some arXiv "LaTeX" source is really a PDF inside an `\includepdf`
 stub; the extractor detects and unwraps this. Citation and cross-reference
 macros are normalised before parsing: pylatexenc knows `\cite` but not natbib,
@@ -804,7 +807,25 @@ upsert and the edge decision are one transaction.
 Pulls references and citation contexts from Semantic Scholar (public endpoint,
 disk-cached in `data/s2_cache` — answers only, failed fetches are never written
 (#217); the shared anonymous pool throttles hard on
-repeat runs and the client backs off through 429s). Finds citations that cross
+repeat runs and the client backs off through 429s).
+**The retry contract, in `common.py` and shared by `get_json` and `get_bytes`**
+(#223): 429, 500, 502, 503, 504 **and** the transport class below HTTP —
+`requests.ConnectionError` (reset socket, SSL, proxy), `requests.Timeout`
+(connect and read) and `ChunkedEncodingError` (a body that ended early) — on
+**one** budget of five attempts with a doubling delay, 2/4/8/16s, and no sleep
+after the last attempt, so a URL that never answers costs 30s rather than the
+62s it cost while the loop slept before giving up. Deterministic errors
+(`MissingSchema`, `InvalidURL`, `TooManyRedirects`) are not retried: retrying a
+bad URL five times is a slower way to be wrong. The retry line names the
+exception class **and** its message, truncated, and exhaustion raises
+`RuntimeError(...) from exc` — the chaining is load-bearing, because
+`fetch_references` tells a 404 (an answer) from a failure by asking
+`getattr(e, "response", None)`, and a `RuntimeError` has none, so a run of
+retries that gave up lands in the failure branch and never in the 404 one.
+Before this, only status codes were retried and a reset socket got exactly one
+attempt: measured on #223, a 150-paper sweep with one reset socket made 150
+attempts, bought nothing and aborted.
+Finds citations that cross
 node boundaries, then Claude classifies each into the six-type taxonomy with a
 confidence score. The LLM classifies only: edge quotes are the two papers'
 Stage B definition quotes, never the S2 citation context, because S2's text
@@ -873,7 +894,9 @@ abort message prescribing deletion of cache entries that were honest data).
 `fetch_references` now distinguishes an answer with references, an honest empty
 (HTTP 200 with none, or a 404 — S2 does not hold every arXiv paper, and "no
 citation data for this one" is an answer), and a transport failure (retries
-exhausted, any non-404 error), and **failures are never cached**: only answers
+exhausted — including the connection-class retries above, so a single reset
+socket is no longer a failure at all — or any non-404 error), and **failures are
+never cached**: only answers
 reach `data/s2_cache`, so an outage cannot replay from disk, a re-run retries
 exactly the failed papers and hits cache for the rest, and the old
 delete-the-cache instruction is retired. Legacy `[]` entries written by the old
@@ -881,7 +904,9 @@ code stand — they cannot be told from honest empties, and invalidating every
 honest entry to chase a suspicion would cost a full re-sweep per map; an
 operator who suspects one deletes that file. The transport floor aborts when a
 source with at least one paper got not one honest answer of any kind — every
-fetch failed, the incident-12 shape the floor was built for. **Any transport
+fetch failed, the incident-12 shape the floor was built for; since #223 it is
+reached only by a source of fewer than ten papers, because the consecutive guard
+below stops the sweep first on anything larger. **Any transport
 failure at all aborts the sweep** (#219, breaking #217's first cut, which
 printed one summary count line and continued): the floor was fed from
 `fetch_references`, which answers from `data/s2_cache` when it can and calls the
@@ -911,6 +936,33 @@ report and the run exits 0: the dry-run contract is "estimates cost without
 calling the LLM", and its exit code never depends on corpus data. Every abort
 leaves the previous edges exactly as the run found them, and costs no dollars
 to retry: everything classified before it is in the #172 cache.
+**The sweep also carries the consecutive-failure guard the classification loop
+has** (#223), on the same `CONSECUTIVE_FAILURE_LIMIT = 10` and for the same
+stated reason — enough failures to prove it is the call and not the edge. Ten
+failed fetches in a row stop the sweep where they happened; the counter resets on
+**any** answer, an honest 404 included, so a corpus S2 holds nothing for can
+never trip it, and scattered failures never reach it and still get #219's message
+in the scenario it was written for. It exists because retrying the transport
+costs time: 30s of backoff per dead paper, so 150 of them is over an hour before
+the per-source floor could fire, and the guard bounds a total outage at ten
+papers — verified at 40 papers, all failing: 50 attempts, not 200, nothing
+cached, nothing swapped. After an early stop the other sweep floors stand down,
+because every count they read is over a corpus that was cut short.
+**Every sweep abort reads the map's standing rather than asserting it** (#223).
+The aborts used to end "The map's edges have NOT been touched", which is true of
+the stage and can be false of the map: Stage C has already re-clustered it and
+cleared the edges whose concept-states moved, so a build that dies here leaves
+the map `running` and off the site while the sentence reassures the reader. The
+abort now says two things separately — what the stage did ("it swapped no
+edges"), and what is true of the map, read on a fresh connection (the
+`mark_aborted_spend_cap` precedent) from `status`, `is_current` and `version` on
+the row it was working on. A current row prints "the map on the site is version N
+and this run left it exactly as it found it"; a `running` row prints that it is
+off the site, that it went off when Stage C re-clustered it, that a run of Stage E
+puts it back, and where the restore procedure is (RUNBOOK section 8); a
+non-current row with a current sibling — the state #207b creates — prints that
+the live version is unaffected and this build's version has never been published.
+The read has its own try/except, because there is no handler behind an abort.
 
 **Stage E: grounding and assembly** (`stage_e_ground.py <concept>`).
 First sweeps out any edge naming a concept-state `genealogies.nodes` no longer

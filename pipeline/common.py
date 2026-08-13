@@ -257,22 +257,91 @@ def session() -> requests.Session:
     return _session
 
 
+# ── what an idempotent GET is allowed to retry ──────────────────────────────
+#
+# Issue #223. These two helpers retried HTTP 429 and 5xx and nothing else, so a
+# failure BELOW HTTP — a reset socket, a read that timed out, a response cut off
+# mid-body — escaped the loop on the first attempt and was handed to the caller
+# as a whole-run failure. Stage D's sweep makes 150 sequential calls to a shared
+# unauthenticated pool and #219 (correctly) turns any one of them failing into an
+# abort, so one reset socket aborted a build in which 149 papers had answered.
+# A reset socket is strictly more transient than the 500 this already retried.
+#
+# ONE budget for both classes, not two: the same `max_retries` and the same
+# doubling delay carry a status retry and a transport retry, so there is no
+# second number to keep in agreement with the first.
+#
+# What is deliberately NOT here is every other requests exception. MissingSchema,
+# InvalidURL and TooManyRedirects are deterministic: retrying a bad URL five
+# times is a slower way to be wrong. ChunkedEncodingError is in, and is not a
+# subclass of the other two — a truncated response body is the same accident as
+# a reset socket, one layer up.
+TRANSPORT_ERRORS = (
+    requests.ConnectionError,       # includes SSL, proxy and connection reset
+    requests.Timeout,               # connect AND read timeouts
+    requests.exceptions.ChunkedEncodingError,
+)
+
+
+def _backoff(note: str, wait: float, attempt: int, max_retries: int) -> None:
+    """Say what failed and wait for the next attempt — and do neither after the
+    last one, because there is no next attempt to announce or wait for.
+
+    Measured while verifying #223: the loop printed "retrying in 32s" and slept
+    for it immediately before giving up, so five attempts cost 2+4+8+16+32 = 62s
+    per URL rather than the 30s the budget reads as, and the log's last line
+    promised a retry that never happened. Both matter beyond tidiness — Stage D's
+    sweep guard bounds a total outage at ten papers of backoff, and a trailing
+    sleep makes that bound twice what it says. The status retries go through here
+    too: one budget, one shape, and the caller's raise is what reports the last
+    failure.
+    """
+    if attempt + 1 >= max_retries:
+        return
+    print(f"  [{note}] retrying in {wait:.0f}s…", file=sys.stderr)
+    time.sleep(wait)
+
+
+def transport_note(exc: BaseException) -> str:
+    """`Class: message`, truncated. Hundreds of log lines reading
+    `ConnectionError` say nothing that one line of the message would not, so the
+    class alone is never enough to tell "S2 is down" from "this URL is wrong"."""
+    return f"{type(exc).__name__}: {str(exc)[:200]}"
+
+
 def get_json(url: str, params: dict | None = None, max_retries: int = 5) -> dict:
-    """GET with exponential backoff on 429/5xx. Raises on persistent failure."""
+    """GET with exponential backoff on 429/5xx and on the transport failures
+    above, on one shared budget. Raises on persistent failure.
+
+    On exhaustion this raises RuntimeError `from` the last transport exception.
+    The chaining matters to callers that discriminate on the exception: Stage D's
+    `fetch_references` asks `getattr(e, "response", None)` to tell a 404 (an
+    answer) from a failure, a RuntimeError has no `response`, so a run of
+    retries that gave up lands in the failure branch and never in the 404 one.
+    """
     delay = 2.0
+    last_exc: BaseException | None = None
+    last_failure = "no attempt was made"
     for attempt in range(max_retries):
-        resp = session().get(url, params=params, timeout=60)
+        try:
+            resp = session().get(url, params=params, timeout=60)
+        except TRANSPORT_ERRORS as exc:
+            last_exc, last_failure = exc, transport_note(exc)
+            _backoff(last_failure, delay, attempt, max_retries)
+            delay *= 2
+            continue
         if resp.status_code == 200:
             return resp.json()
         if resp.status_code in (429, 500, 502, 503, 504):
+            last_failure = f"HTTP {resp.status_code}"
             retry_after = resp.headers.get("Retry-After")
             wait = float(retry_after) if retry_after else delay
-            print(f"  [http {resp.status_code}] retrying in {wait:.0f}s…", file=sys.stderr)
-            time.sleep(wait)
+            _backoff(f"http {resp.status_code}", wait, attempt, max_retries)
             delay *= 2
             continue
         resp.raise_for_status()
-    raise RuntimeError(f"Gave up after {max_retries} retries: {url}")
+    raise RuntimeError(f"Gave up after {max_retries} attempts: {url} — "
+                       f"last failure {last_failure}") from last_exc
 
 
 def get_bytes(url: str, max_retries: int = 5) -> tuple[bytes, str] | None:
@@ -283,23 +352,38 @@ def get_bytes(url: str, max_retries: int = 5) -> tuple[bytes, str] | None:
     for some papers (withheld or licence-restricted). Raising there killed a
     whole 150-paper fetch over one paper; the caller treats None as "no source",
     falls back to the PDF, and moves on.
+
+    Retries the transport class on the same budget as `get_json`, for the same
+    reason (#223): a fetch of 150 papers at one request per three seconds is a
+    long time to be one reset socket away from a dead run. A transport failure is
+    never "unavailable" — None means the server answered and said no, so a socket
+    that never got an answer must not be able to spell it.
     """
     delay = 2.0
+    last_exc: BaseException | None = None
+    last_failure = "no attempt was made"
     for attempt in range(max_retries):
-        resp = session().get(url, timeout=120)
+        try:
+            resp = session().get(url, timeout=120)
+        except TRANSPORT_ERRORS as exc:
+            last_exc, last_failure = exc, transport_note(exc)
+            _backoff(last_failure, delay, attempt, max_retries)
+            delay *= 2
+            continue
         if resp.status_code == 200:
             return resp.content, resp.headers.get("Content-Type", "")
         if resp.status_code in (403, 404, 410):
             return None
         if resp.status_code in (429, 500, 502, 503, 504):
+            last_failure = f"HTTP {resp.status_code}"
             retry_after = resp.headers.get("Retry-After")
             wait = float(retry_after) if retry_after else delay
-            print(f"  [http {resp.status_code}] retrying in {wait:.0f}s…", file=sys.stderr)
-            time.sleep(wait)
+            _backoff(f"http {resp.status_code}", wait, attempt, max_retries)
             delay *= 2
             continue
         resp.raise_for_status()
-    raise RuntimeError(f"Gave up after {max_retries} retries: {url}")
+    raise RuntimeError(f"Gave up after {max_retries} attempts: {url} — "
+                       f"last failure {last_failure}") from last_exc
 
 
 VOYAGE_URL = "https://api.voyageai.com/v1/embeddings"
