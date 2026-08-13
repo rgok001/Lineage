@@ -506,6 +506,42 @@ or confirm #207's backfill has covered it. The partial index will refuse the
 promotion if the concept already has a current map, which is the right answer:
 that is two published maps for one concept and it is the case above.
 
+**After the #215 deploy: re-ground the claims, once per live map.** There is no
+migration to apply — `genealogies.streams` is JSONB and #215 added no column —
+but there is a live-data step, and until it runs the thread pages under-claim.
+A claim stamp now carries `checked_against`, the digest of the exact bytes its
+check read, and resolves through the same three-state rule as every other stamp;
+every claim stored before this deploy has no such digest, so `/g/13/river/*` and
+every sibling thread page renders its claims as not checked against the paper's
+text as it now stands, rather than as the paper's own words. That is the safe
+direction and it is the feature working: those stamps genuinely are not
+re-checkable, and filling the field from `papers.extracted_text_digest` would be
+the silent re-anchoring incident 10 forbids. As with migration 015, the only way
+a stamp becomes re-checkable is by being re-checked. The live maps are
+`attention` and `embedding` (AS-BUILT section 1), so from a terminal holding
+`DATABASE_URL` and the worker's `DATA_DIR` — the Render shell, because both the
+extracted text and the #202 claims cache live on that disk:
+
+```
+python pipeline/stage_h_claims.py "attention"
+python pipeline/stage_h_claims.py "embedding"
+```
+
+This costs ~$0: the cache hands back the same claims that were bought when the
+map was built, and only the grounding runs again. The stage says so before it
+buys anything, in a line printed ahead of the first paper — `N of M paper(s)
+already have claims and will cost nothing; K to buy` — and on both maps `K`
+should read 0. If it does not, something the cache key is made of has moved
+since those claims were bought: the paper's extracted text, `PROMPT_VERSION`,
+the stage's own prompt, or `--model`, which defaults to a literal in the stage
+and not to `LLM_MODEL`. `--recheck` re-grounds the passages already stored and
+writes the same `checked_against` for nothing, and is the answer whenever you do
+not want to buy. Success is the per-paper lines reading `v/n claims carry a
+checked quote`, a closing `spend $0.0000`, and a summary whose only skips are the
+papers named as having no text to check — their claims stay stale, correctly, and
+the run prints their arXiv ids. Then open a thread page: the claims that carried
+it before show the green "✓ the paper's own words" again.
+
 **Reading a cost cell.** The figure is scraped by the worker from the `spend $X`
 lines the stages print, kept in `trace_requests.progress`, and published only
 when that key holds a JSON number. There are three things a cost cell can say and
