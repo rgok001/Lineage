@@ -395,12 +395,24 @@ arXiv's and holds no rate limit of its own. Same measurement after: 3.0s.
 disagree). A total arXiv outage over 150 papers cost 750 requests and about 82
 minutes at 17877b8, ending "0 fetched, 150 failed" and exiting 0, against a
 definition of done of ~15 minutes for a whole trace; it now stops at the tenth
-consecutive failure, in about 5.7 minutes, naming the paper it stopped at, the
+consecutive failure — 50 requests, not 750 — naming the paper it stopped at, the
 last failure's class and message, what is already on disk and that a re-run
-resumes. Only transport failures count: a paper arXiv answers about — a withheld
-source, an id it does not have, a body that is neither LaTeX nor PDF — resets the
-counter, so a corpus of 404s runs to the end and exits 0, and a skipped paper
-makes no request so it neither counts nor resets.
+resumes.
+**What that bound costs depends on how the transport dies**, exactly as the
+sweep's does (#232, and #235 for missing it here): ten papers refused instantly
+is 50 requests and **337s, about 5.6 minutes**, and ten papers that accept and
+never reply is ten times `get_bytes`'s 630s — **50 requests and 6300s, 105
+minutes** — both measured on a virtual clock that advances by every sleep and
+every timeout. The guard is still what makes it a bound: the same fault over 150
+papers is over 26 hours.
+**Any status arXiv answers with resets the counter** (#235). It counts calls that
+ended with no answer about the paper: a withheld source, an id it does not have,
+a body that is neither LaTeX nor PDF, or any other status — measured with ten
+451s, which used to abort the stage and send the operator to the network after
+arXiv had answered ten times. So a corpus of 404s runs to the end and exits 0, a
+skipped paper makes no request and neither counts nor resets, and a real outage
+is still caught: 429 and 5xx never arrive as a status here, because `get_bytes`
+retries them five times and then raises the transport-class `RuntimeError`.
 Gotcha: some arXiv "LaTeX" source is really a PDF inside an `\includepdf`
 stub; the extractor detects and unwraps this. Citation and cross-reference
 macros are normalised before parsing: pylatexenc knows `\cite` but not natbib,

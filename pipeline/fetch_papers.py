@@ -176,12 +176,21 @@ def main() -> None:
     # reference sweep's. A total arXiv outage used to cost 150 papers x 10
     # requests: measured at 17877b8, 750 requests and about 82 minutes of
     # waiting, ending "0 fetched, 150 failed" and exiting 0, against a
-    # definition of done of fifteen minutes for a whole trace. The counter
-    # counts consecutive TRANSPORT failures and nothing else: a paper arXiv
-    # answers about — 403, 404, or a body that is neither LaTeX nor PDF — is an
-    # answer and resets it, exactly as an honest 404 resets the sweep's, because
-    # a corpus of withheld sources must never look like an outage. A skipped
-    # paper makes no request, so it neither counts nor resets.
+    # definition of done of fifteen minutes for a whole trace.
+    #
+    # **The counter counts calls that ended without an answer about the paper,
+    # and any status arXiv answers with resets it** (#235). It said "transport
+    # failures and nothing else" and was not: `get_bytes` classifies 200,
+    # 403/404/410 and the retryable 429/5xx, and everything else reaches
+    # `raise_for_status`, so ten papers arXiv answered 451 about aborted the
+    # stage telling the operator the download was failing — measured. A status
+    # is arXiv speaking about that paper, exactly as a 404 is, and a corpus of
+    # withheld sources must never look like an outage; this is the sweep's own
+    # discipline, that the counter resets on any answer. It cannot hide a real
+    # outage: 429 and 5xx never arrive here as a status, because `get_bytes`
+    # retries them five times and then raises the transport-class RuntimeError,
+    # which is a service that failed rather than a paper that was answered
+    # about. A skipped paper makes no request, so it neither counts nor resets.
     consecutive_failures = 0
     last_failure = None
     for i, p in enumerate(papers, 1):
@@ -205,8 +214,18 @@ def main() -> None:
             # off inside the URL, so every outage printed the wrapper and hid the
             # cause (the same measurement that resized Stage D's slice).
             note = f"{type(e).__name__}: {str(e)[:240]}"
-            print(f"    ✗ fetch failed ({note}), skipping")
             failed += 1
+            # `.response` rather than an isinstance test, as fetch_references
+            # does it: what matters is whether a response came back, and the
+            # RuntimeError `get_bytes` raises when its retries run out carries
+            # none. A status here is one `get_bytes` does not classify — 451,
+            # 400, a stray 3xx — and it is an answer about this paper (#235).
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status is not None:
+                print(f"    ✗ arXiv answered HTTP {status} for this paper, skipping")
+                consecutive_failures = 0
+                continue
+            print(f"    ✗ fetch failed ({note}), skipping")
             consecutive_failures += 1
             last_failure = f"{aid} ({note})"
             if consecutive_failures == CONSECUTIVE_FAILURE_LIMIT:
@@ -215,10 +234,11 @@ def main() -> None:
                     f"\nAborting: {consecutive_failures} arXiv fetches in a row failed, so "
                     f"the run stopped at paper {i} of {len(papers)} instead of spending the "
                     f"rest of the corpus proving the same thing. That is the download "
-                    f"failing, not the papers: a paper arXiv answers about — withheld "
-                    f"source, no such id — resets the counter, so only the call can produce "
-                    f"{CONSECUTIVE_FAILURE_LIMIT} in a row. The last failure was "
-                    f"{last_failure}.\n\n"
+                    f"failing, not the papers: any status arXiv answers with — a withheld "
+                    f"source, an id it does not have, anything else it says about a "
+                    f"paper — resets the counter, so only a call that got no answer at "
+                    f"all can produce {CONSECUTIVE_FAILURE_LIMIT} in a row. The last "
+                    f"failure was {last_failure}.\n\n"
                     f"What this run did: {fetched} paper(s) were downloaded and recorded "
                     f"before it stopped and are on disk, {skipped} were already there, and "
                     f"nothing has been deleted or overwritten. A re-run after the cause is "
