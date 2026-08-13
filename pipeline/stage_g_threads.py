@@ -47,7 +47,7 @@ import psycopg
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import env  # noqa: E402
+from common import build_row, env, version_note  # noqa: E402
 from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
 # A dated snapshot, pinned so that a rebuild months later composes threads with
@@ -77,6 +77,9 @@ def main() -> None:
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--threads", type=int, default=None,
                     help="roughly how many threads to look for; default scales with corpus size")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="act on this exact version of the map instead of the "
+                         "one the build in flight owns")
     args = ap.parse_args()
     concept, pv = args.concept, args.prompt_version
 
@@ -86,10 +89,15 @@ def main() -> None:
     pricing_key(args.model)
 
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
-    gen = conn.execute("SELECT id, nodes, streams FROM genealogies WHERE concept = %s AND prompt_version = %s",
-                       (concept, pv)).fetchone()
+    # The version this build owns (#207b): threads are composed for the map about
+    # to be published, not for the one already up.
+    gen = build_row(conn, concept, pv, "id, nodes, streams",
+                    genealogy_id=args.genealogy_id)
     if not gen:
-        sys.exit(f'No map for "{concept}" at prompt {pv}. Run Stage C and E first.')
+        sys.exit(f'No unpublished version of "{concept}" at prompt {pv} to compose '
+                 f"threads for, so no build is in flight. Run Stage C and E first, or "
+                 f"name a version with --genealogy-id.\n"
+                 f"  {version_note(conn, concept, pv)}")
     gen_id, nodes, prev_river = gen
 
     rows = conn.execute("""

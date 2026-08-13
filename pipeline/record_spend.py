@@ -52,7 +52,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import env  # noqa: E402
+from common import build_row, current_row, env, version_note  # noqa: E402
 
 INSERT_STAGE = """
 INSERT INTO map_build_stages (genealogy_id, stage_no, stage, build_pass,
@@ -74,17 +74,30 @@ FROM map_report_stages WHERE genealogy_id = %s
 """
 
 
-def map_id(conn, concept: str, prompt_version: str) -> int:
-    row = conn.execute(
-        "SELECT id FROM genealogies WHERE concept = %s AND prompt_version = %s",
-        (concept, prompt_version)).fetchone()
+def map_id(conn, concept: str, prompt_version: str,
+           genealogy_id: int | None = None, *, live: bool = False) -> int:
+    """The version this record attaches to.
+
+    Two questions, not one (#207b). A record WRITE belongs to the build in
+    flight, which owns the newest unpublished version — recording onto the live
+    map would attach this build's figures to the map a reader is looking at,
+    which is the previous version. `--show` is a reader and asks the other
+    question: the live map, the one whose record the operator means when they
+    name a concept. `--genealogy-id` answers both by naming a row.
+    """
+    resolve = current_row if live else build_row
+    row = resolve(conn, concept, prompt_version, "id", genealogy_id=genealogy_id)
     if not row:
+        if live:
+            sys.exit(f'No live map for "{concept}" at prompt {prompt_version}.\n'
+                     f"  {version_note(conn, concept, prompt_version)}")
         # Stage C creates the genealogy row, so this means the build has not
-        # clustered yet: recording a build's steps before there is a map to attach
-        # them to is a caller ordering error, not a missing map.
-        sys.exit(f'No map for "{concept}" at prompt {prompt_version}. The step record '
-                 f"attaches to a genealogy row, which Stage C creates; record a build's "
-                 f"steps after the clustering they fed, not before it.")
+        # clustered yet: recording a build's steps before there is a map to
+        # attach them to is a caller ordering error, not a missing map.
+        sys.exit(f'No unpublished version of "{concept}" at prompt {prompt_version}. '
+                 f"The step record attaches to a genealogy row, which Stage C creates; "
+                 f"record a build's steps after the clustering they fed, not before it.\n"
+                 f"  {version_note(conn, concept, prompt_version)}")
     return row[0]
 
 
@@ -264,6 +277,9 @@ def main() -> None:
                     help="default: PROMPT_VERSION from the environment, or v1")
     ap.add_argument("--stages", metavar="JSON",
                     help="the ledger the worker wrote while it ran the build")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="the exact version to record onto (or, with --show, to read\n"
+                         "back) instead of the one the build in flight owns")
     ap.add_argument("--show", action="store_true",
                     help="print what is recorded for this map and write nothing")
     args = ap.parse_args()
@@ -275,7 +291,8 @@ def main() -> None:
     # Not autocommit: the clear and the write below are one act.
     conn = psycopg.connect(env("DATABASE_URL"))
     try:
-        gid = map_id(conn, args.concept, prompt_version)
+        gid = map_id(conn, args.concept, prompt_version, args.genealogy_id,
+                     live=args.show)
         if args.show:
             show(conn, gid)
             return

@@ -82,24 +82,26 @@ FINISH    record how this build's second pass ended, fill author metadata,
           ground & publish (E)
 ```
 
-**Nothing is destroyed before the old map is saved** (issue #173). Decision 12
-refuses a second map for a concept, so a trace against a term that already has
-one is a rebuild, and Stage C's `UPSERT_GENEALOGY` is where the old one starts
-disappearing: it overwrites `nodes`, sets `status` back to `running`, and
-`CLEAR_STALE_EDGES` takes the relationships whose meaning moved. The build's first
-act is therefore `snapshot_map.py --allow-missing --result-json`, which writes the
-whole row and everything hanging off it to a timestamped file under
-`DATA_DIR/snapshots/`. It runs ahead of corpus selection rather than beside Stage
+**Nothing is destroyed before the old map is saved** (issue #173), and since
+#207b a rebuild destroys nothing at all. A trace against a term that already has
+a map is a rebuild, and Stage C used to be where the old one started
+disappearing: `UPSERT_GENEALOGY` overwrote `nodes`, set `status` back to
+`running`, and `CLEAR_STALE_EDGES` took the relationships whose meaning moved. It
+now INSERTS a new version and writes to nothing a reader can see. The build's
+first act is still `snapshot_map.py --allow-missing --result-json`, which writes
+the LIVE map's row and everything hanging off it to a timestamped file under
+`DATA_DIR/snapshots/`, because what a build still puts at risk is the extracted
+text on disk that the live map's quotes were checked against. It runs ahead of corpus selection rather than beside Stage
 C for two reasons: `fetch_papers.py` and `extract_text.py` rewrite the extracted
 text on disk that the live map's verified quotes were checked against, so a step
 before Stage C already erodes what a snapshot is worth; and a snapshot that cannot
 be taken should cost the build nothing, which here means no arXiv politeness and
-no money. Once per job, not once per pass — by the time pass two re-clusters, pass
-one has already overwritten the map, and there is nothing left that this snapshot
-does not hold. **A failure, or a success that leaves no readable record of itself,
+no money. Once per job, not once per pass — pass two re-clusters this build's own version,
+which the snapshot was never about. **A failure, or a success that leaves no readable record of itself,
 fails the job while the map is still untouched.** The step's own path and counts
-go into the requester's progress feed. `data/genealogy_<concept>_<pv>.json` is
-therefore a deliverable again rather than incident 4's improvised backup;
+go into the requester's progress feed, and a concept with no live map is told
+apart from a concept with no map at all. `data/genealogy_<concept>_<pv>_v<N>.json`
+is therefore a deliverable again rather than incident 4's improvised backup;
 `docs/RUNBOOK.md` holds the restore procedure.
 
 **Publication is one act, at the end.** Every assembly before it runs
@@ -111,6 +113,21 @@ residue): a gate that ran before Stage G would judge the previous build's thread
 over this build's concept-states and refuse a re-trace after every paid step.
 Grounding again costs nothing, so the last Stage E is a free re-check plus the
 publish.
+
+**The worker names the version this build owns, from pass one on** (#207b).
+Pass one's Stage C is given `--result-json`, and the worker reads
+`{genealogy_id, version}` back and appends `--genealogy-id <id>` to every step of
+every phase that runs after it — pass two, the fallback and the finishing stages,
+which is where `enrich_authors.py` and the publish live. Pass one's own later
+steps are not bound, because the id does not exist when that phase's commands are
+built; they resolve by predicate, which is deterministic since this build's row
+is the highest version for the concept. A result file that is missing,
+unparseable or without an id **fails the build**, for the reason a missing
+snapshot record does: "we cannot say which row this build owns" is not a state to
+carry on from, and carrying on would mean every later stage resolving one for
+itself. `trace_requests.genealogy_id` is then written from that same id rather
+than from `ORDER BY id DESC`, so a request names the version its job built for
+ever.
 
 **Pass two is bounded and abandonable, and every way out of it is recorded.**
 Its seat count is `PASS_TWO_SEATS` or `corpus_limit // 10`; `0` disables it and
@@ -181,7 +198,7 @@ each, so provenance survives in the artefact; `record_anchors.py` reads that key
 and nothing else in the pipeline reads it at all, which is what makes "an anchor
 bypasses selection and nothing else" a property of the code rather than a promise.
 
-**Recording who named them** (`record_anchors.py <concept> --corpus PATH
+**Recording who named them** (`record_anchors.py <concept> --corpus PATH [--genealogy-id ID]
 [--named-by LOGIN]`). Runs on every build, anchored or not, because it also
 clears what a previous build of the same map recorded: a map anchored once and
 rebuilt with the field left empty must come back saying nobody named a paper.
@@ -771,7 +788,30 @@ holding only the standard pair is what it was doing.
 build claimed, and [AS-BUILT.md](AS-BUILT.md) section 3 says which stored figures
 to distrust and by how much.
 
-**Stage C: clustering** (`stage_c_cluster.py <concept> [--corpus JSON]`).
+**Stage C: clustering** (`stage_c_cluster.py <concept> [--corpus JSON]
+[--genealogy-id ID] [--result-json PATH]`).
+**It INSERTS a new version of the map** (#207b, closing #214). `INSERT_GENEALOGY`
+mints `version = max(version) + 1` for the concept — across prompt versions, so
+one concept's versions are one sequence — with `status = 'running'` and
+`is_current` false, and returns the id. It replaced `UPSERT_GENEALOGY`, an
+`INSERT ... ON CONFLICT (concept, prompt_version) DO UPDATE` that wrote over the
+concept's one row: after migration 025 that set the LIVE map's status back to
+`running` and died on `genealogies_current_is_published` at step 6 of 24, with
+everything Stage B spent already spent; before 025 it did not die, it overwrote
+the live map's concept-states in place. Migration 027 drops 007's `UNIQUE
+(concept, prompt_version)` in this same commit, because Postgres resolves an
+`ON CONFLICT` arbiter when it plans the statement: the old Stage C against a
+database with the constraint gone raises `InvalidColumnReference` on every build,
+first builds included (measured).
+`--genealogy-id` writes into a row this build already started, which is what the
+worker passes to pass two's re-cluster and to the fallback's, and it is **refused
+on a `complete` row** — a published map is never re-clustered in place, and the
+refusal names the version and says that a run with no flag builds a new one.
+`--result-json` writes `{genealogy_id, version, concept, prompt_version}` after
+the commit, and is how the worker names this build's row on every later step
+instead of inferring one; there is no "reuse the newest running row" rule
+anywhere, so no build can adopt a corpse (verified: a `failed` version 2 in the
+table, a build run, version 3 minted and not one column of version 2 written).
 **`--corpus` scopes which papers the map may hold**, the same flag and the same
 semantics as Stage B's, and the worker now passes the same file to both (issue
 #190). Without it a map's membership is whatever is in `definitions` for this
@@ -802,7 +842,7 @@ Embeds definitions via the Voyage hosted API (1024-dim, cached in
 `definitions.embedding`), then agglomerative clustering with cosine distance
 and no fixed k. `DEFAULT_THRESHOLD = 0.28`, recalibrated for Voyage vectors on
 the 134-definition `embedding` corpus; clustering granularity is a curatable
-draft either way. `--embed-only` fills missing vectors and stops before clustering: Stage C writes `nodes` wholesale on conflict, so a re-run costs a curated map its labels and merges. It is the second step of the repair path after `stage_b_extract.py --refresh`, and the reason that path does not simply re-run the pipeline.
+draft either way. `--embed-only` fills missing vectors and stops before clustering: a re-cluster writes `nodes` wholesale, so on a resumed row it costs that row's labels and merges, and on a published map it is refused outright. It is the second step of the repair path after `stage_b_extract.py --refresh`, and the reason that path does not simply re-run the pipeline.
 The calibration it runs at, measured on that corpus: Voyage pairwise distances
 sit at p5 0.205, p25 0.273, median 0.318, and the cluster count falls 41 at
 0.25, 27 at 0.28, 20 at 0.30, 8 at 0.35. 0.28 is the loosest value that still
@@ -843,8 +883,13 @@ locally; against Voyage it sits at the 1st percentile of the pairwise
 distribution and almost nothing merges (105 clusters, 87 of them singletons).
 Decision 29 corrects decision 5, which still records the old number as a claim
 about its own moment.
-**Stage C no longer clears the map's edges unconditionally** (decision 20). Per
-edge endpoint, it compares what each node id denoted before against what it
+**Stage C no longer clears the map's edges unconditionally** (decision 20), and
+since #207b the case it serves is a RESUMED row and never a fresh one: a new
+version has no edges, so the block does not run at all on it. It is doing its
+original job for pass two's re-cluster over the union corpus and for the
+fallback's re-cluster over pass one alone, both of which write into the row pass
+one created and can meet edges Stage D classified against a previous clustering.
+Per edge endpoint, it compares what each node id denoted before against what it
 denotes now, and removes only the edges whose concept-states have changed
 underneath them; the rest are left for Stage D to replace when its swap commits.
 When nothing about the previous concept-states could be read, every edge clears
@@ -852,8 +897,8 @@ and it says *that* rather than reporting a clustering change it cannot support.
 A re-run at the same threshold on an unchanged corpus **with cached embeddings**
 reproduces the same clustering and so keeps every edge. Not with `--force`,
 which re-embeds: vectors are stored at six decimal places, so a pair sitting on
-the threshold can cross it and the clustering can move. The read, the node
-upsert and the edge decision are one transaction.
+the threshold can cross it and the clustering can move. The read, the insert
+(or the resumed row's update) and the edge decision are one transaction.
 
 **Stage D: edge classification** (`stage_d_edges.py <concept>`).
 Pulls references and citation contexts from Semantic Scholar (public endpoint,
@@ -1067,7 +1112,19 @@ one abort still left saying only what the stage did is the accounting identity
 ("this run cannot account for its own candidates"), which reports a bug in this
 stage rather than a fault in the world; it asserts nothing about the map.
 
-**Stage E: grounding and assembly** (`stage_e_ground.py <concept>`).
+**Stage E: grounding and assembly** (`stage_e_ground.py <concept>
+[--no-publish] [--genealogy-id ID]`).
+**It grounds the version this build owns, and publishing is what makes that
+version the live map** (#207b). It resolves through `build_row` and never
+through `is_current`: resolving the live map here would re-ground and re-publish
+the map that is already up while the new one waited. `--genealogy-id` re-grounds
+a named version instead, which is also the rollback — the publish swap demotes
+whatever is current and promotes the row named. With no build in flight it
+refuses, names the live version and **prints the command to re-ground it**, id
+included, because the commonest way to meet that refusal is the documented repair
+path (curate, or refresh a definition, then re-ground) and that map is published.
+Verified by running the command the refusal offers: it re-grounds and
+re-publishes the live map, moving no flag and stamping no supersession.
 First sweeps out any edge naming a concept-state `genealogies.nodes` no longer
 contains (decision 20), before the quote re-sync and before anything is judged,
 so nothing is repaired, stamped or assembled for an edge that is about to go and
@@ -1102,8 +1159,15 @@ good quotes on where a line happened to break, and a rejection renders as
 "inferred", which tells a reader the tool cannot stand behind a passage it
 copied correctly; otherwise it renders
 dotted and is labelled inferred, never upgraded, never hidden. Writes the
-genealogy JSON export to `data/genealogy_<concept>_<pv>.json` and marks the
-genealogy complete. These exports **were** the de-facto backups (section 10,
+genealogy JSON export to `data/genealogy_<concept>_<pv>_v<N>.json` and marks the
+genealogy complete. **The version is in that path** (#207b) because pass one's
+`--no-publish` assembly, at step 9 of 24 on a map nobody may see, otherwise wrote
+over the live map's export — the design whose point is that a rebuild does not
+destroy the live map must not destroy its backup on the way. There is no
+unversioned alias: an alias is a derived pointer with nothing recomputing it, and
+the pointer that says which version is live is `is_current` in the database.
+Measured: two versions produce two files, and version 1's file did not move at
+any of the four points in version 2's build. These exports **were** the de-facto backups (section 10,
 incident 4) and stopped being so with #173: the worker now snapshots a map before
 it rebuilds it, and a snapshot holds the threads, the curatorial audit trail and
 the definitions an export does not. An export is a deliverable, and a partial one
@@ -1168,7 +1232,7 @@ commit still cannot land without the export having been written successfully, an
 only the atomic `os.replace` and the summary prose happen after the commit
 returns. Putting the real file and the "Genealogy complete" line inside the
 transaction meant a failing `COMMIT` destroyed
-`data/genealogy_<concept>_<pv>.json` — the de-facto backup (incident 4) —
+`data/genealogy_<concept>_<pv>_v<N>.json` — the de-facto backup (incident 4) —
 replacing it with a description of a map the database does not hold, and printed
 a full success report for a run that wrote nothing. **A backup must never
 describe a state the database did not reach.** A crash between commit and rename
@@ -1269,7 +1333,13 @@ the union would re-order a re-run's extraction for nothing. It exists as a file
 and a command rather than a set the worker holds in memory because since #190 a
 map's membership IS the corpus file, and an Operator repairing a build has to be
 able to reproduce it rather than reconstruct it with `jq`.
-`record_pass.py <concept> [--pass N --corpus PATH | --build … | --show]`: writes
+**The three recorders ask two different questions about which row they mean**
+(#207b). A record WRITE attaches to the row the build in flight owns, because
+attaching this build's figures to the live map would attach them to the previous
+version; `--show` is a reader and resolves the live map, which is what an
+operator naming a concept means. `--genealogy-id` names a version on either path.
+`record_pass.py <concept> [--pass N --corpus PATH | --build … | --show]
+[--genealogy-id ID]`: writes
 which pass read which papers and how the second pass ended, into
 `map_build_pass_papers` and `map_build_passes` (migration 022), which is what
 #193's report figures read through the `map_pass_papers` and `map_pass_build`
@@ -1280,7 +1350,7 @@ and the map cannot disagree about the membership. **`--pass 1` clears the map's
 whole pass record first**, so a requeued or re-run build re-states what it read
 instead of adding to it — that is what makes #178's requeue converge. `--show`
 reads it back through the same views the report reads.
-`record_spend.py <concept> [--stages JSON | --show]`: writes what each step of
+`record_spend.py <concept> [--stages JSON | --show] [--genealogy-id ID]`: writes what each step of
 the build spent, how long it took and which pass it ran in, into
 `map_build_stages` (migration 024), which is what #47's report figures read
 through `map_report_stages`. **It records and does not measure**: every figure
@@ -1429,6 +1499,14 @@ re-grounds every quote against the text that is actually there.
 `restore_genealogy.py`: the inverse of Stage E's export; re-inserts a
 genealogies row and its edges from a JSON export and records the restoration
 in the audit trail. Written during incident 4 and kept as the recovery path.
+**Since #207b it restores as a NEW version**, minting `max(version) + 1` for the
+concept exactly as Stage C does, which makes it the rollback path: restore an
+older export and the publish swap demotes whatever was live. It used to refuse
+outright when the concept had a row at all — "delete it first if you mean to
+replace it", which is decision 12's destroy-before-replace on the only copy, in
+the recovery script — and there is now nothing to refuse, because nothing is
+deleted to make room. Its closing sentence under `--no-publish` reads
+`is_current` and names the version readers are still on.
 Since #230 the new row is published through the same `publish_swap`, because it
 was inserting `status = 'complete'` and letting `is_current` default false: the
 recovered map was reachable at `/g/<id>` and absent from the concepts list, from
@@ -1790,7 +1868,13 @@ by-product of a check, and no check ran), and the run prints the skipped
 papers' ids so an operator knows which claims will render stale. No migration:
 `genealogies.streams` is JSONB, and blobs without digests are simply stale.
 `--recheck` re-grounds the stored quotes without asking the model for new ones,
-and costs nothing; re-extracting a corpus now leaves every claim stamp rendering
+and costs nothing. **It is the one flag in this stage that changes which row the
+stage means** (#207b): buying accounts belongs to the build in flight, which owns
+the newest unpublished version and whose threads Stage G has just written, while
+`--recheck` is the repair an operator runs on the LIVE map after its papers were
+re-extracted — the procedure in RUNBOOK section 8 for #215 — and resolving the
+build's row there would refuse the one map that procedure is about.
+`--genealogy-id` names a version on either path. re-extracting a corpus now leaves every claim stamp rendering
 stale until a Stage H pass re-checks it, rather than silently asserting a check
 that ran against a document no longer on disk. A claim that stops checking
 out keeps its text and loses its stamp and its quote, which is what generation

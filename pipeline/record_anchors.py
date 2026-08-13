@@ -44,7 +44,8 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import actor, env, tidy_actor_name  # noqa: E402
+from common import (  # noqa: E402
+    actor, build_row, current_row, env, tidy_actor_name, version_note)
 
 INSERT_ANCHOR = """
 INSERT INTO map_anchor_papers (genealogy_id, arxiv_id, named_by, named_by_asserted,
@@ -58,16 +59,29 @@ ON CONFLICT (genealogy_id, arxiv_id) DO UPDATE
 """
 
 
-def map_id(conn, concept: str, prompt_version: str) -> int:
-    row = conn.execute(
-        "SELECT id FROM genealogies WHERE concept = %s AND prompt_version = %s",
-        (concept, prompt_version)).fetchone()
+def map_id(conn, concept: str, prompt_version: str,
+           genealogy_id: int | None = None, *, live: bool = False) -> int:
+    """The version this record attaches to.
+
+    Two questions, not one (#207b). A record WRITE belongs to the build in
+    flight, which owns the newest unpublished version — recording onto the live
+    map would attach this build's figures to the map a reader is looking at,
+    which is the previous version. `--show` is a reader and asks the other
+    question: the live map, the one whose record the operator means when they
+    name a concept. `--genealogy-id` answers both by naming a row.
+    """
+    resolve = current_row if live else build_row
+    row = resolve(conn, concept, prompt_version, "id", genealogy_id=genealogy_id)
     if not row:
+        if live:
+            sys.exit(f'No live map for "{concept}" at prompt {prompt_version}.\n'
+                     f"  {version_note(conn, concept, prompt_version)}")
         # Stage C creates the genealogy row, so this means the build has not
         # clustered yet: a caller ordering error rather than a missing map.
-        sys.exit(f'No map for "{concept}" at prompt {prompt_version}. The anchor record '
-                 f"attaches to a genealogy row, which Stage C creates; record the named "
-                 f"papers after the clustering, not before it.")
+        sys.exit(f'No unpublished version of "{concept}" at prompt {prompt_version}. '
+                 f"The anchor record attaches to a genealogy row, which Stage C creates; "
+                 f"record the named papers after the clustering, not before it.\n"
+                 f"  {version_note(conn, concept, prompt_version)}")
     return row[0]
 
 
@@ -177,6 +191,9 @@ def main() -> None:
                     help="the authenticated login of the person who named them. Omit it "
                          "and the row records what this process asserts about itself "
                          "instead, which is what a command-line run can honestly claim")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="the exact version to record onto (or, with --show, to read\n"
+                         "back) instead of the one the build in flight owns")
     ap.add_argument("--show", action="store_true",
                     help="print what is recorded for this map and write nothing")
     args = ap.parse_args()
@@ -187,7 +204,8 @@ def main() -> None:
     prompt_version = args.prompt_version or env("PROMPT_VERSION", "v1")
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
     try:
-        gid = map_id(conn, args.concept, prompt_version)
+        gid = map_id(conn, args.concept, prompt_version, args.genealogy_id,
+                     live=args.show)
         if args.show:
             show(conn, gid)
             return

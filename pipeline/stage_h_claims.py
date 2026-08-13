@@ -42,7 +42,9 @@ import psycopg
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import data_dir, env, quote_is_grounded, read_grounding_text, text_digest  # noqa: E402
+from common import (  # noqa: E402
+    build_row, current_row, data_dir, env, quote_is_grounded, read_grounding_text,
+    text_digest, version_note)
 from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
 # Sonnet, not Haiku, and this one was measured rather than assumed. On thread
@@ -232,6 +234,9 @@ def main() -> None:
                          "underneath them: the stamps were computed against the old "
                          "text and a stamp must never outlive the check that made it. "
                          "Costs nothing")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="act on this exact version of the map instead of the "
+                         "one the build in flight owns")
     args = ap.parse_args()
 
     # Refuse an unpriced --model before anything is read or bought (#205). It
@@ -240,10 +245,22 @@ def main() -> None:
     pricing_key(args.model)
 
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
-    row = conn.execute("SELECT id, streams FROM genealogies WHERE concept=%s AND prompt_version=%s",
-                       (args.concept, args.prompt_version)).fetchone()
+    # Two questions, and `--recheck` asks the other one (#207b). Buying accounts
+    # belongs to the build in flight, which owns the newest unpublished version
+    # and whose threads Stage G has just written. `--recheck` re-grounds stamps
+    # that are already stored and costs nothing: it is the repair an operator
+    # runs on the LIVE map after its papers were re-extracted (the procedure in
+    # RUNBOOK section 8 for #215), and resolving the build's row there would
+    # refuse the one map the procedure is about.
+    resolve = current_row if args.recheck else build_row
+    row = resolve(conn, args.concept, args.prompt_version, "id, streams",
+                  genealogy_id=args.genealogy_id)
     if not row or not row[1]:
-        sys.exit(f'No threads for "{args.concept}" at prompt {args.prompt_version}. Run Stage G first.')
+        which = "the live map" if args.recheck else "an unpublished version"
+        sys.exit(f'No threads on {which} of "{args.concept}" at prompt '
+                 f"{args.prompt_version}. Run Stage G first, or name a version with "
+                 f"--genealogy-id.\n"
+                 f"  {version_note(conn, args.concept, args.prompt_version)}")
     gen_id, river = row
 
     paths = {r[0]: r[1] for r in conn.execute("SELECT arxiv_id, extracted_text_path FROM papers").fetchall()}

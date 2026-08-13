@@ -24,8 +24,8 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (actor_tally, curatorial_edits, data_dir,  # noqa: E402
-                    edge_stamp_state, env, stamp_state)
+from common import (actor_tally, curatorial_edits, current_row,  # noqa: E402
+                    data_dir, edge_stamp_state, env, stamp_state, version_note)
 
 STOP = {"a", "an", "the", "on", "of", "in", "for", "and", "with", "is", "are", "to", "by"}
 
@@ -187,14 +187,19 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Export related-work skeleton + BibTeX.")
     ap.add_argument("concept")
     ap.add_argument("--out-dir", help="default: DATA_DIR")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="export this exact version instead of the live map")
     args = ap.parse_args()
 
     pv = env("PROMPT_VERSION", "v1")
     conn = psycopg.connect(env("DATABASE_URL"))
-    gen = conn.execute("SELECT id, nodes, user_edits FROM genealogies "
-                       "WHERE concept=%s AND prompt_version=%s", (args.concept, pv)).fetchone()
+    # **The LIVE map** (#207b): this document goes into somebody's paper, so it
+    # describes the map the site shows and never a version still being built.
+    gen = current_row(conn, args.concept, pv, "id, nodes, user_edits",
+                      genealogy_id=args.genealogy_id)
     if not gen:
-        sys.exit(f'No genealogy for "{args.concept}" at prompt {pv}.')
+        sys.exit(f'No live map for "{args.concept}" at prompt {pv}.\n'
+                 f"  {version_note(conn, args.concept, pv)}")
     gen_id, nodes, user_edits = gen
     nodes = sorted(nodes, key=lambda n: n["year_start"])
 

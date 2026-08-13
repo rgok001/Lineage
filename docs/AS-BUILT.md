@@ -257,7 +257,7 @@ and for somebody to one day measure where matches land.
 **edges** (001, 010, 015): see below; the eight `source_`/`target_`-prefixed
 stamp columns are the same four facts twice, one per quote.
 
-**genealogies** (001, 007, 012, 025): the map itself. `nodes` is JSONB
+**genealogies** (001, 007, 012, 025, 027): the map itself. `nodes` is JSONB
 (concept-states with members and year ranges), `user_edits` is the append-only
 curatorial audit trail (each entry `{op, detail, at}` plus at most one of `by`
 and `by_asserted`; decision 18), `spend_usd` accumulates cost, `status` is one of
@@ -269,12 +269,18 @@ D's cap abort marks the row, guarded to `status = 'running'`, so only a
 mid-build map takes the mark — a by-hand run against a published map leaves
 `complete` standing, since its edges were not touched, and migration 025's
 CHECK would refuse the write on a current row anyway. Everything else about the
-column is still loose and #48 still owns tidying it. Migration 007 adds
-`UNIQUE (concept, prompt_version)`: Stage C now upserts on that key (stable id
-across re-runs, in place), where it used to DELETE then INSERT and mint a new
-id every run. That old pattern broke `/g/<id>` links on re-trace and orphaned a
-`running` row when a run crashed between Stage C and Stage E (see section 10,
-incident 4). Migration 012 adds `streams` JSONB: the generated threads (a
+column is still loose and #48 still owns tidying it. Migration 007 added
+`UNIQUE (concept, prompt_version)` and **migration 027 (#207b) drops it**: a
+concept now has one row per VERSION of its map. Stage C inserts
+(`INSERT_GENEALOGY`, `version = max + 1` per concept across prompt versions,
+`is_current` false) and never writes over a row a reader can see; the live map
+is untouched until Stage E's publish swap. 007 was itself a repair — before it,
+Stage C deleted and re-inserted and minted a new id every run, which broke
+`/g/<id>` links on re-trace and orphaned a `running` row when a run crashed
+between Stage C and Stage E (section 10, incident 4) — and it kept the id stable
+by overwriting what that id named. Versions keep every id stable by never
+writing to an old row again, so `/g/<id>` and `trace_requests.genealogy_id` now
+name a map rather than a concept's latest attempt. Migration 012 adds `streams` JSONB: the generated threads (a
 through-line, an array of threads each with its papers and a per-paper passage,
 and the cross-currents where one thread fed another). The column and the types
 in `lib/genealogy.ts` still carry the river vocabulary the interface has since
@@ -352,29 +358,56 @@ stays NULL on every row that has never been demoted, including every `running`,
 `failed` and `aborted_spend_cap` row for ever, and it returns to NULL on a row
 that is published again.
 
-**A rebuild of a published map still dies at Stage C** (#214), because
-`UPSERT_GENEALOGY` writes `status = 'running'` onto the live row and 025's
-`genealogies_current_is_published` refuses it. #207a fixed publication, not
-rebuilds; #207b is the commit that inserts a new version row instead of
-resolving the old one.
+**Migration 027 (`027_drop_concept_pv_unique.sql`, issue #207b) drops 007's
+`UNIQUE (concept, prompt_version)`, in the same commit that rewrites Stage C**,
+and the two cannot be separated: Postgres resolves an `ON CONFLICT` target's
+arbiter index when it *plans* the statement, so the old Stage C against a
+database with the constraint gone raises `InvalidColumnReference` on every build
+— including the first build of a concept nobody has mapped, where a conflict is
+impossible. Measured both ways on a throwaway Postgres (2026-08-13): the old
+Stage C at 001-026 rebuilding a published map dies on
+`genealogies_current_is_published`, which is #214; the old Stage C at 001-027
+dies on `InvalidColumnReference` before writing a row.
 
-**007's `UNIQUE (concept, prompt_version)` is still in place**, though the F4
-design retires it. It cannot go until Stage C stops upserting on it: Postgres
-resolves an `ON CONFLICT` target's arbiter index when it *plans* the statement,
-so dropping the constraint makes `stage_c_cluster.py`'s insert raise
-`InvalidColumnReference` on every build, including the first build of a concept
-nobody has mapped. The drop is #207b's, in the commit that rewrites Stage C.
+**A rebuild of a published map is now a new version, and nothing a reader can
+see is written during it** (#207b, closing #214). Stage C inserts version
+`max + 1`; Stage D, E, G, H and the recorders write to that row; Stage E's
+publish swap demotes the incumbent and promotes the new version in one
+transaction. Measured on the same throwaway Postgres, three builds of one
+concept: versions 1, 2 and 3, exactly one current, versions 1 and 2 still
+published and still holding their own edges. Polled every few milliseconds
+through a whole rebuild (467 samples), the live map was readable in every
+sample, its content never moved, there was exactly one live map in every sample,
+it was never a `running` row, and it changed from v1 to v2 exactly once and only
+forwards.
 
-**One behaviour did change, and it is the only one.** Re-clustering a *live* map
-in place — `stage_c_cluster.py <concept>` with no `--embed-only`, which sets
-`status = 'running'` on the existing row — is now refused by the CHECK, because
-the row is current. That is the destructive overwrite F4 exists to remove,
-refused a wave early and loudly, with the constraint named in the message. The
-operator path is unchanged: delete the map first, which is what decision 12
-already requires. `--embed-only` returns before the upsert (`stage_c_cluster.py`
-line 320 against line 410) so the repair path after `stage_b --refresh` is not
-affected, Stage C on a concept with no published map still works, and Stage E's
-publish still works.
+**Which row a command means is now two questions, and every command says which**
+(#207b). Fifteen call sites said `WHERE concept = %s AND prompt_version = %s`
+with a bare `fetchone()` — provably single-valued under 007, ambiguous the
+moment 027 lands. They resolve through two predicates in `pipeline/common.py`:
+
+- `build_row` — **the row this build owns**: `status <> 'complete' ORDER BY
+  version DESC LIMIT 1`. Deterministic without a lock, because a build's own row
+  carries the highest version for its concept and every corpse is older. Stage C
+  (resume), D, E, G, H, `pass_two_select.py`, the three recorders on their write
+  path, and the worker's `map_summary`.
+- `current_row` — **the live map**: `AND is_current`, single-valued by 025's
+  partial unique index. `snapshot_map.py`, `workbench.py`,
+  `export_related_work.py`, `enrich_authors.py`, `restore_genealogy.py`'s
+  closing sentence, and the three recorders under `--show`, which is a reader.
+
+Every one of them takes `--genealogy-id` to name a row instead, and the worker
+passes it on every step after pass one's Stage C, from the `--result-json` that
+stage writes. Nothing infers a resume: there is no "reuse the newest running
+row" rule, so a build cannot adopt the corpse of one that died three weeks ago —
+verified by leaving a `failed` version 2 in place, running a build, and finding
+version 3 minted, published, and not one column of version 2 written.
+
+**Re-clustering a live map in place is refused** — `stage_c_cluster.py
+--genealogy-id <a complete row>` exits naming the version and telling the
+operator that a run with no flag builds a new version. With no flag there is
+nothing to refuse: the live map is not touched. `--embed-only` still returns
+before any of this, so the repair path after `stage_b --refresh` is unaffected.
 
 **edges** (001, 010, 015): typed relationships between nodes, with FK to both papers,
 both verbatim quotes, `confidence`, and `verified` (the grounding verdict).
@@ -1185,13 +1218,16 @@ heartbeat, which also sweeps). Full walkthrough knowledge condensed:
   threads, its curatorial audit trail, its status, every edge and every definition
   the quotes come from, to `DATA_DIR/snapshots/<concept>_<pv>_<stamp>.json`. It is
   the first stage rather than the one before Stage C — which is where the
-  destruction actually happens — because fetching and extraction rewrite the text
+  destruction used to happen — because fetching and extraction rewrite the text
   on disk the live map's quotes were checked against, and because a snapshot that
-  cannot be taken should cost the build nothing. Once per job: pass two re-clusters
-  a map pass one has already overwritten. The worker reads the step's result file
+  cannot be taken should cost the build nothing. Since #207b it saves the LIVE
+  map and the build no longer writes over any row, so what it still covers is
+  that text on disk rather than the row; a concept whose only versions all failed
+  has no live map to save, which the step now tells apart from a first build.
+  Once per job. The worker reads the step's result file
   rather than its prose, prints the path and the counts into the progress feed, and
   **fails the job on either a non-zero exit or an unreadable result**, both of which
-  happen while the map is untouched. **`data/genealogy_<concept>_<pv>.json` is
+  happen while the map is untouched. **`data/genealogy_<concept>_<pv>_v<N>.json` is
   therefore no longer the backup of record**; it is a deliverable, and it never held
   `streams`, `user_edits` or the definitions (incident 4 was recovered from it with
   the audit trail lost). `restore_snapshot.py` is the way back and since #173 it
@@ -1511,12 +1547,12 @@ version 1, version 2 or the current version 3**; `embedding`'s report names
 unpublished map and an id nobody minted all 404. `kernel` prints "n=4", which is
 correct: it has no current version, so it is nobody's reference point and it
 compares against the three terms that do. Because migration 007's `UNIQUE
-(concept, prompt_version)` is still in place and forbids two versions of one term
-at one prompt version, the fixture was run twice — once with the constraint kept
-and the versions differing by prompt version, which is the only multi-version
-state today's schema can reach, and once with the constraint dropped, which is
-the statement #207 will carry. Both give the same comparison set and the same
-`n`. A third run against the schema at migration **024** — no version columns and
+(concept, prompt_version)` was still in place then and forbade two versions of
+one term at one prompt version, the fixture was run twice — once with the
+constraint kept and the versions differing by prompt version, which was the only
+multi-version state that schema could reach, and once with the constraint
+dropped, which is the statement migration 027 now carries. Both give the same
+comparison set and the same `n`. A third run against the schema at migration **024** — no version columns and
 no view, which is what the app is live against for the minutes between the Vercel
 deploy and Render's pre-deploy — renders every page printing "n=3" and says in
 words that which version you are reading is not counted, rather than claiming

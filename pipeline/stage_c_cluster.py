@@ -15,13 +15,17 @@ Design choices:
   stage runs fully offline. A label is CACHED ON ITS CLUSTER'S MEMBERSHIP, so an
   unchanged cluster keeps the words it was given (issue #189).
 
-Writes one genealogies row per (concept, prompt_version) with nodes as JSON.
+Writes a NEW genealogies row — a new version of the map — with nodes as JSON,
+and leaves every earlier version exactly as it was (#207b). `--genealogy-id`
+writes into a row this build already started instead, which is how the second
+pass of a two-pass build re-clusters its own map.
 
 Usage:
   python pipeline/stage_c_cluster.py "attention"
   python pipeline/stage_c_cluster.py "attention" --corpus data/corpus_attention.json
   python pipeline/stage_c_cluster.py "attention" --distance-threshold 0.30
   python pipeline/stage_c_cluster.py "attention" --no-label
+  python pipeline/stage_c_cluster.py "attention" --genealogy-id 42
 """
 
 import argparse
@@ -34,7 +38,8 @@ import numpy as np
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import data_dir, env, node_denotation, text_digest  # noqa: E402
+from common import (  # noqa: E402
+    build_row, data_dir, env, node_denotation, text_digest, version_note)
 from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
 # Embeddings come from the Voyage hosted API (see common.voyage_embed), which
@@ -238,12 +243,48 @@ def label_cluster_llm(client, concept, member_defs) -> str | None:
         return None, 0.0
 
 
-UPSERT_GENEALOGY = """
-INSERT INTO genealogies (concept, prompt_version, status, nodes, updated_at)
-VALUES (%(concept)s, %(prompt_version)s, 'running', %(nodes)s, now())
-ON CONFLICT (concept, prompt_version) DO UPDATE
-    SET nodes = EXCLUDED.nodes, status = 'running', updated_at = now()
-RETURNING id
+# ── a build writes a new version, and never over the live map ───────────────
+#
+# Issue #207b, and #214 is the crash it closes. This was `INSERT ... ON CONFLICT
+# (concept, prompt_version) DO UPDATE SET nodes = EXCLUDED.nodes, status =
+# 'running'`, which is three defects wearing one statement's clothes. It set the
+# LIVE map's status back to `running` — after migration 025 that violates
+# `genealogies_current_is_published`, so a rebuild of any published map died here
+# with a constraint error, at step 6 of 24, after corpus selection, fetching,
+# extraction and every dollar Stage B spent. Before 025 it did not die: it
+# overwrote the live map's concept-states in place, so a reader watching a
+# rebuild saw a half-built map, and a build that failed afterwards left the only
+# copy destroyed. And it made the map's identity `(concept, prompt_version)`, so
+# there was nowhere to put a second version of a concept's map.
+#
+# The version is minted per CONCEPT across prompt versions, not per (concept,
+# prompt_version), matching 025's `genealogies_one_current_per_concept`: one
+# concept has one live map and its versions are numbered in one sequence, so a
+# map rebuilt at a new prompt version does not restart at v1 beside a v3 that is
+# still on the site. `genealogies_concept_pv_version_key` (025) is what makes a
+# lost race a refusal rather than two rows both calling themselves version 2.
+#
+# `is_current` is written false and stays false until Stage E publishes: the row
+# exists from here on, and a map is not a map until it is published (#168).
+INSERT_GENEALOGY = """
+INSERT INTO genealogies (concept, prompt_version, status, nodes, version,
+                         is_current, updated_at)
+VALUES (%(concept)s, %(prompt_version)s, 'running', %(nodes)s,
+        (SELECT coalesce(max(version), 0) + 1 FROM genealogies
+          WHERE concept = %(concept)s),
+        false, now())
+RETURNING id, version
+"""
+
+# The resumed row: pass two re-clustering over the union corpus, or the fallback
+# re-clustering over pass one's, both writing into the row pass one created. The
+# id comes from `--genealogy-id` and therefore from Stage C's own result file —
+# never from "the newest running row", which would adopt the corpse of a build
+# that died three weeks ago (design on #214).
+RESUME_GENEALOGY = """
+UPDATE genealogies SET nodes = %(nodes)s, status = 'running', updated_at = now()
+WHERE id = %(gid)s
+RETURNING version
 """
 
 COUNT_EDGES = "SELECT count(*) FROM edges WHERE genealogy_id = %s"
@@ -262,6 +303,54 @@ WHERE genealogy_id = %(gid)s
 """
 
 
+def refuse_unless_resumable(conn, genealogy_id: int, concept: str,
+                            prompt_version: str) -> tuple:
+    """The row `--genealogy-id` names, refused unless this build may write it.
+
+    Returns `(id, status, version, nodes)`. `build_row` does the identity half —
+    a row that does not exist, or one belonging to another concept or prompt
+    version, exits there, which is what keeps a mistyped id from re-clustering
+    somebody else's map.
+
+    The half that lives here is `complete`. A complete row is a published version
+    (or one waiting to be), and re-clustering it in place is the exact act #207b
+    removed: it would take the concept-states out from under the edges, threads
+    and curatorial edits a reader is looking at, and — since migration 025 — die
+    on `genealogies_current_is_published` for the live one. There is no flag to
+    force it, because the thing an operator wants there is a new version, and
+    that is what this stage does with no flag at all.
+    """
+    row = build_row(conn, concept, prompt_version, "id, status, version, nodes",
+                    genealogy_id=genealogy_id)
+    if row[1] == "complete":
+        sys.exit(
+            f"\nRefusing to re-cluster genealogy {genealogy_id}: it is version "
+            f"{row[2]} of \"{concept}\" and its status is complete.\n"
+            f"  A published map is never re-clustered in place — that is what "
+            f"takes the concept-states\n"
+            f"  out from under the relationships and curatorial edits a reader is "
+            f"looking at.\n"
+            f"  Run this stage without --genealogy-id to build a new version, "
+            f"which leaves this one\n"
+            f"  exactly as it is until Stage E publishes the new one.\n"
+            f"  {version_note(conn, concept, prompt_version)}")
+    return row
+
+
+def write_result(path: str | None, payload: dict) -> None:
+    """The pointer file a caller resumes this build from (#207b).
+
+    Same shape and same posture as `snapshot_map.py`'s: its own failure is fatal,
+    because the worker treats an unreadable result as a reason to stop rather
+    than as permission to guess which row this stage wrote.
+    """
+    if not path:
+        return
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Stage C: cluster definitions into concept-states.")
     ap.add_argument("concept")
@@ -278,6 +367,15 @@ def main() -> None:
                     help="fill missing embeddings and stop, WITHOUT re-clustering. "
                          "The repair path after stage_b_extract.py --refresh: "
                          "clustering would overwrite curated nodes")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="re-cluster into this existing version instead of minting a "
+                         "new one (what the worker passes to pass two and to the "
+                         "fallback, from this stage's own --result-json). Refused if "
+                         "that row is complete: a published map is never re-clustered "
+                         "in place")
+    ap.add_argument("--result-json", metavar="PATH",
+                    help="write {genealogy_id, version, concept, prompt_version} here, "
+                         "so a caller resumes by naming the row rather than guessing it")
     args = ap.parse_args()
 
     # Refuse an unpriced label model before anything is clustered or bought
@@ -298,6 +396,15 @@ def main() -> None:
         corpus_filter = CORPUS_FILTER
 
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
+
+    # Asked before the embeddings are bought, not at the write. `--genealogy-id`
+    # naming a complete row is an operator error (a published map is never
+    # re-clustered in place, which is the whole of #207b), and finding that out
+    # after Voyage and the labeller have been paid is finding it out too late.
+    # It is asked again inside the write transaction, where it is authoritative.
+    if args.genealogy_id is not None:
+        refuse_unless_resumable(conn, args.genealogy_id, args.concept, prompt_version)
+
     rows = conn.execute(SELECT_DEFS.format(corpus_filter=corpus_filter), params).fetchall()
     if len(rows) < 2:
         # The advice has to name the scope, or an operator who passed the wrong
@@ -314,9 +421,11 @@ def main() -> None:
         print(f"Scoped to the {len(params['arxiv_ids'])} paper(s) named by {args.corpus}: "
               f"{len(rows)} of them define this concept at prompt {prompt_version}.")
 
-    # Clustering writes genealogies.nodes wholesale (ON CONFLICT DO UPDATE), so a
-    # curated map does not survive a re-run. --embed-only exists so a refreshed
-    # definition can get its vector back without that cost.
+    # Clustering writes a whole new version's `nodes`, and on a resumed row it
+    # writes them wholesale, so curation made against that row does not survive a
+    # re-cluster of it. --embed-only exists so a refreshed definition can get its
+    # vector back without that cost — and it is still the repair path for a
+    # PUBLISHED map, which this stage will not re-cluster at all (#207b).
     if args.embed_only:
         embed_definitions(conn, rows, args.force)
         print(f'Embeddings filled for "{args.concept}" (prompt {prompt_version}). '
@@ -397,21 +506,38 @@ def main() -> None:
     # had to own it. Reached in practice by pointing restore_genealogy.py at a
     # truncated JSON, which validates no shape, and then re-clustering.
     with conn.transaction():
-        # What this map means NOW, read before the upsert overwrites it.
-        prior = conn.execute(
-            "SELECT id, nodes FROM genealogies WHERE concept = %s AND prompt_version = %s",
-            (args.concept, prompt_version)).fetchone()
+        resumed = args.genealogy_id is not None
+        if resumed:
+            # The row this build already owns, re-read here because the early
+            # refusal was outside this transaction and a status can move between
+            # the two. Its nodes are what the map meant a moment ago, read before
+            # the UPDATE overwrites them.
+            _gid, _status, _version, prior_nodes = refuse_unless_resumable(
+                conn, args.genealogy_id, args.concept, prompt_version)
+            gen_id = args.genealogy_id
+            version = conn.execute(RESUME_GENEALOGY, {
+                "gid": gen_id, "nodes": psycopg.types.json.Json(nodes),
+            }).fetchone()[0]
+        else:
+            # A new version, and every earlier one keeps its id, its nodes, its
+            # edges, its threads, its curatorial audit trail and its address. The
+            # old upsert kept ONE id stable by overwriting what it named; this
+            # keeps every id stable by never writing to it again, which is what
+            # makes `/g/<id>` and `trace_requests.genealogy_id` name a map rather
+            # than a concept's latest attempt (#207b, #208).
+            gen_id, version = conn.execute(INSERT_GENEALOGY, {
+                "concept": args.concept, "prompt_version": prompt_version,
+                "nodes": psycopg.types.json.Json(nodes),
+            }).fetchone()
+            prior_nodes = None
 
-        # Persist in place: upsert on (concept, prompt_version) keeps the
-        # genealogy's id stable across re-runs, so /g/<id> links and
-        # trace_requests.genealogy_id survive a re-trace, and a requeued run
-        # reuses its row instead of orphaning a new one. user_edits is
-        # intentionally left untouched (the audit trail outlives a re-cluster).
-        gen_id = conn.execute(UPSERT_GENEALOGY, {
-            "concept": args.concept, "prompt_version": prompt_version,
-            "nodes": psycopg.types.json.Json(nodes),
-        }).fetchone()[0]
-
+        # **Which of the two cases this now serves: a RESUMED row, never a fresh
+        # one** (#207b). A new version row has no edges, so `edges_now` is 0 and
+        # none of this runs. It is doing its original job for pass two's
+        # re-cluster over the union corpus and for the fallback's re-cluster over
+        # pass one alone, which write into the row pass one created and can
+        # therefore meet edges Stage D classified against a previous clustering.
+        #
         # This DELETE used to be unconditional, with the reasoning that
         # re-clustering invalidates the old edges and Stage D rebuilds them
         # anyway. That is the reasoning Stage D itself held before incident 12:
@@ -431,8 +557,8 @@ def main() -> None:
         # so those clear — and what is destroyed there is already invalid, which
         # is what makes it not a repeat of incident 12.
         edges_now = conn.execute(COUNT_EDGES, (gen_id,)).fetchone()[0]
-        if prior is not None and edges_now:
-            prior_d = node_denotation(prior[1])
+        if resumed and edges_now:
+            prior_d = node_denotation(prior_nodes)
             new_d = node_denotation(nodes)
             safe = sorted(nid for nid, d in new_d.items()
                           if nid in prior_d and prior_d[nid] == d)
@@ -457,7 +583,7 @@ def main() -> None:
                 # The cost of that was an operator re-running Stage D, which
                 # spends, on a diagnosis nobody made, while the corruption that
                 # caused it went unread.
-                if not prior[1]:
+                if not prior_nodes:
                     why = "were not recorded at all"
                 elif not prior_d:
                     why = "could not be read"
@@ -479,7 +605,19 @@ def main() -> None:
                 print("  Run Stage D to rebuild the rest.")
     conn.close()
 
-    print(f"Wrote genealogy: {len(nodes)} nodes for \"{args.concept}\" (prompt {prompt_version}).")
+    # Written after the commit, never inside it: this file is what the worker
+    # resumes from, and a pointer to a row a rolled-back transaction never
+    # created is worse than no pointer at all.
+    write_result(args.result_json, {"genealogy_id": gen_id, "version": version,
+                                    "concept": args.concept,
+                                    "prompt_version": prompt_version})
+
+    print(f"Wrote genealogy: {len(nodes)} nodes for \"{args.concept}\" "
+          f"(prompt {prompt_version}), "
+          + (f"version {version} (genealogy {gen_id}), re-clustered in place."
+             if resumed else
+             f"as version {version} (genealogy {gen_id}). Earlier versions are "
+             f"untouched and the live map is unchanged until Stage E publishes."))
     # Printed even when it is zero, and both counts are printed beside it: a run
     # that bought nothing is a measurement (#189's whole point), and a missing
     # line reads as a run nobody costed.

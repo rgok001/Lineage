@@ -32,20 +32,26 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import actor, env  # noqa: E402
+from common import actor, current_row, env, version_note  # noqa: E402
 
 EDGE_TYPES = ("extends", "contests", "narrows", "renames", "merges", "migrates")
 
 
-def load(conn, concept, pv):
+def load(conn, concept, pv, genealogy_id=None):
     # user_edits is deliberately not read: record() appends in the database, so
     # holding a stale copy of the array in this process is what let a concurrent
     # web edit be overwritten.
-    row = conn.execute(
-        "SELECT id, nodes FROM genealogies WHERE concept=%s AND prompt_version=%s",
-        (concept, pv)).fetchone()
+    #
+    # **The LIVE map** (#207b): the workbench edits what a reader is looking at.
+    # Resolving the build in flight instead would put a curator's split or merge
+    # onto a half-built version nobody can see, and lose it the moment that
+    # version is re-clustered. `--genealogy-id` is how an older version is edited
+    # on purpose.
+    row = current_row(conn, concept, pv, "id, nodes", genealogy_id=genealogy_id)
     if not row:
-        sys.exit(f'No genealogy for "{concept}" at prompt {pv}. Run Stage C first.')
+        sys.exit(f'No live map for "{concept}" at prompt {pv}. Run Stage C first, or '
+                 f"name a version with --genealogy-id.\n"
+                 f"  {version_note(conn, concept, pv)}")
     return row
 
 
@@ -159,6 +165,8 @@ def cmd_delete_node(conn, gen_id, nodes, node_id):
 def main() -> None:
     ap = argparse.ArgumentParser(description="Curate a genealogy (workbench).")
     ap.add_argument("concept")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="curate this exact version instead of the live map")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")
     m = sub.add_parser("merge"); m.add_argument("node"); m.add_argument("--into", required=True)
@@ -171,7 +179,7 @@ def main() -> None:
 
     pv = env("PROMPT_VERSION", "v1")
     conn = psycopg.connect(env("DATABASE_URL"))
-    gen_id, nodes = load(conn, args.concept, pv)
+    gen_id, nodes = load(conn, args.concept, pv, args.genealogy_id)
 
     # Resolved before anything is mutated. It used to be resolved after, which
     # meant a failure here rolled the transaction back while the command had

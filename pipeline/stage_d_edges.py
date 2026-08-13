@@ -57,7 +57,8 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (  # noqa: E402
-    CONSECUTIVE_FAILURE_LIMIT, env, get_json, data_dir, text_digest)
+    CONSECUTIVE_FAILURE_LIMIT, build_row, env, get_json, data_dir, text_digest,
+    version_note)
 from stage_b_extract import cost_usd, pricing_key  # noqa: E402
 
 # CONSECUTIVE_FAILURE_LIMIT ("enough failures to prove it is the call and not the
@@ -429,6 +430,9 @@ def main() -> None:
     ap.add_argument("concept")
     ap.add_argument("--model", default=env("LLM_MODEL", "claude-sonnet-5"))
     ap.add_argument("--dry-run", action="store_true", help="find candidate edges; classify none")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="classify into this exact version of the map instead of the "
+                         "one the build in flight owns")
     args = ap.parse_args()
 
     # An unpriced --model (or LLM_MODEL) is refused before a candidate is fetched
@@ -441,10 +445,15 @@ def main() -> None:
     cap = float(env("TRACE_SPEND_CAP_USD", "10"))
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
 
-    gen = conn.execute("SELECT id, nodes FROM genealogies WHERE concept=%s AND prompt_version=%s",
-                       (args.concept, prompt_version)).fetchone()
+    # The version this build owns, not "the row for this concept": a concept can
+    # have three versions and only one of them is being built (#207b).
+    gen = build_row(conn, args.concept, prompt_version, "id, nodes",
+                    genealogy_id=args.genealogy_id)
     if not gen:
-        sys.exit(f'No genealogy for "{args.concept}" at prompt {prompt_version}. Run Stage C first.')
+        sys.exit(f'No unpublished version of "{args.concept}" at prompt {prompt_version} '
+                 f"to classify into, so no build is in flight. Run Stage C first, or "
+                 f"name a version with --genealogy-id.\n"
+                 f"  {version_note(conn, args.concept, prompt_version)}")
     gen_id, nodes = gen
 
     # arxiv_id -> node_id, and per-paper facts

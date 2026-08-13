@@ -27,7 +27,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import env, get_json, mailto, session  # noqa: E402
+from common import current_row, env, get_json, mailto, session, version_note  # noqa: E402
 
 OPENALEX = "https://api.openalex.org"
 ARXIV_API = "https://export.arxiv.org/api/query"
@@ -76,16 +76,26 @@ def main() -> None:
     ap.add_argument("--force", action="store_true", help="refetch even if authors present")
     ap.add_argument("--concept", help="only papers in this concept's genealogy — the ones "
                                       "an export will actually cite (far fewer requests)")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="scope to this exact version instead of the live map. The "
+                         "worker passes it, because during a build the papers worth "
+                         "enriching are the new version's and it is not live yet")
     args = ap.parse_args()
 
     conn = psycopg.connect(env("DATABASE_URL"))
     clauses = [] if args.force else ["jsonb_array_length(authors) = 0"]
     params: list = []
     if args.concept:
-        gen = conn.execute("SELECT nodes FROM genealogies WHERE concept=%s AND prompt_version=%s",
-                           (args.concept, env("PROMPT_VERSION", "v1"))).fetchone()
+        # **The LIVE map by default** (#207b), because by hand this is scoped to
+        # the papers the site's export will cite. The worker never takes that
+        # default: it passes --genealogy-id for the version it is building, which
+        # on a first build is the only map there is and is not current yet.
+        pv = env("PROMPT_VERSION", "v1")
+        gen = current_row(conn, args.concept, pv, "nodes",
+                          genealogy_id=args.genealogy_id)
         if not gen:
-            sys.exit(f'No genealogy for "{args.concept}".')
+            sys.exit(f'No live map for "{args.concept}" at prompt {pv}.\n'
+                     f"  {version_note(conn, args.concept, pv)}")
         cited = [m["arxiv_id"] for n in gen[0] for m in n["members"]]
         clauses.append("arxiv_id = ANY(%s)")
         params.append(cited)

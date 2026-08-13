@@ -42,7 +42,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import env  # noqa: E402
+from common import build_row, env, version_note  # noqa: E402
 from corpus_select import (  # noqa: E402
     FORWARD_MIN_SEEDS_CITED, FORWARD_SORTS, RECENT_TIEBREAK_PRECISION, RECENT_YEARS,
     arxiv_id_of, cites_per_year, expand_forward, relevance_scores,
@@ -88,7 +88,8 @@ CANDIDATE_TABLE_ROWS = 40
 NOMINATION_COVERAGE_WARN = 0.5
 
 
-def read_map(conn, concept: str, prompt_version: str) -> dict:
+def read_map(conn, concept: str, prompt_version: str,
+             genealogy_id: int | None = None) -> dict:
     """The pass-one map: its concept-states, their members, and its edges.
 
     Read the way Stage G reads a map and the way Stage D was corrected to read
@@ -97,12 +98,16 @@ def read_map(conn, concept: str, prompt_version: str) -> dict:
     concept can exist and sit outside this map, and nominating from the table
     would aim pass two at papers the map does not contain.
     """
-    gen = conn.execute(
-        "SELECT id, status, nodes FROM genealogies WHERE concept = %s AND prompt_version = %s",
-        (concept, prompt_version)).fetchone()
+    # The version this build owns (#207b). Pass two nominates from the map pass
+    # ONE built, which is this build's own unpublished row — never the live map,
+    # which is the previous version and is what a nomination from `is_current`
+    # would aim the second pass at.
+    gen = build_row(conn, concept, prompt_version, "id, status, nodes",
+                    genealogy_id=genealogy_id)
     if not gen:
-        sys.exit(f'No map for "{concept}" at prompt {prompt_version}. '
-                 f"Pass two reads a map pass one has already built.")
+        sys.exit(f'No unpublished version of "{concept}" at prompt {prompt_version}. '
+                 f"Pass two reads a map pass one has already built.\n"
+                 f"  {version_note(conn, concept, prompt_version)}")
     gen_id, status, nodes = gen
 
     states = []
@@ -228,6 +233,9 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true",
                     help="select and print, write no file. Nothing in this stage calls "
                          "an LLM either way; the dry run also skips writing the corpus")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="nominate from this exact version of the map instead of the "
+                         "one the build in flight owns")
     args = ap.parse_args()
 
     prompt_version = args.prompt_version or env("PROMPT_VERSION", "v1")
@@ -249,7 +257,7 @@ def main() -> None:
     # quota finding out.
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
     try:
-        m = read_map(conn, args.concept, prompt_version)
+        m = read_map(conn, args.concept, prompt_version, args.genealogy_id)
     finally:
         conn.close()
 

@@ -88,12 +88,19 @@ python pipeline/stage_b_extract.py "attention" --dry-run   # cost estimate, no A
 python pipeline/stage_b_extract.py "attention" --limit 5   # model from LLM_MODEL / .env
 python pipeline/stage_b_extract.py "attention" --model claude-haiku-4-5
 
-# Stage C: embed definitions + cluster into concept-states (nodes)
+# Stage C: embed definitions + cluster into concept-states (nodes).
+# Each run INSERTS a new version of the map and leaves the live one alone; the
+# publish at the end of Stage E is what swaps readers onto it.
 python pipeline/stage_c_cluster.py "attention"                     # LLM-labelled nodes
 python pipeline/stage_c_cluster.py "attention" --corpus corpus.json  # only these papers
                                                                    # may be in the map
 python pipeline/stage_c_cluster.py "attention" --no-label          # no LLM labels; still
                                                                    # embeds via Voyage
+python pipeline/stage_c_cluster.py "attention" --genealogy-id 42   # re-cluster a version
+                                                                   # this build started;
+                                                                   # refused if published
+python pipeline/stage_c_cluster.py "attention" --result-json r.json  # {genealogy_id,
+                                                                     #  version, ...}
 
 # Stage D: classify edges from cross-node citations (Semantic Scholar, no key)
 python pipeline/stage_d_edges.py "attention" --dry-run             # links, and how many
@@ -106,6 +113,10 @@ python pipeline/stage_e_ground.py "attention" --no-publish   # assemble, leave i
                                                              # unpublished and unasked
                                                              # (a two-stage build's
                                                              # intermediate assemblies)
+python pipeline/stage_e_ground.py "attention" --genealogy-id 42  # ground and publish a
+                                                                 # named version (also
+                                                                 # the rollback)
+# The export is data/genealogy_<concept>_<pv>_v<N>.json, one file per version.
 
 # The two passes' corpora, joined into the file the union re-cluster is scoped by
 python pipeline/corpus_union.py --json corpus_union.json corpus.json corpus_pass2.json
@@ -161,7 +172,9 @@ python pipeline/workbench.py "attention" list
 python pipeline/workbench.py "attention" merge n6 --into n4
 python pipeline/workbench.py "attention" delete-node n5
 python pipeline/workbench.py "attention" rename n4 "Self-attention as the whole architecture"
-python pipeline/stage_e_ground.py "attention"          # re-ground + re-export after edits
+python pipeline/stage_e_ground.py "attention" --genealogy-id 42   # re-ground + re-export
+                                                       # after edits; the live map is named
+                                                       # (a run with no id says which)
 
 # Export: related-work skeleton (Markdown) + BibTeX
 python pipeline/enrich_authors.py --concept "attention"   # real authors (arXiv first)
@@ -321,7 +334,8 @@ python pipeline/extract_text.py --concept "attention" --force  # scoped: the pap
                                                                # re-extract every map
 python pipeline/stage_b_extract.py "attention" --refresh       # fresh quotes, ids kept
 python pipeline/stage_c_cluster.py "attention" --embed-only    # vectors, no re-clustering
-python pipeline/stage_e_ground.py "attention"                  # re-ground, honestly
+python pipeline/stage_e_ground.py "attention" --genealogy-id 42  # re-ground the live map,
+                                                                 # honestly
 python pipeline/stage_h_claims.py "attention" --recheck        # re-ground stored claim
                                                                # quotes, free; without
                                                                # --recheck it rewrites the

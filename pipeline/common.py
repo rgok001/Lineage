@@ -683,6 +683,107 @@ def edge_stamp_state(verified: object,
     return STAMP_VERIFIED if verified else STAMP_INFERRED
 
 
+# ── which genealogy row a command means ─────────────────────────────────────
+#
+# Issue #207b. A concept used to have exactly one genealogy row per prompt
+# version — migration 007's UNIQUE (concept, prompt_version) — so fifteen
+# commands could say `WHERE concept = %s AND prompt_version = %s` with a bare
+# `fetchone()` and be provably single-valued. 027 drops that constraint, because
+# a rebuild now inserts a new version row instead of overwriting the live map,
+# and the moment a concept has two rows every one of those fifteen reads becomes
+# "whichever row Postgres happened to return".
+#
+# Each of those commands means one of exactly two things and knows which:
+#
+#   `build_row`   — the row THIS BUILD owns. Not complete, highest version.
+#                   Deterministic without a lock, because a build's own row
+#                   always carries the highest version number for its concept:
+#                   version is minted as max + 1, and a corpse from a build that
+#                   died three weeks ago is by construction older. This is what
+#                   every stage of a build in flight, and every recorder that
+#                   attaches a row to it, is asking about.
+#   `current_row` — the LIVE map, the one a reader sees. `AND is_current`, which
+#                   025's partial unique index makes single-valued per concept.
+#                   This is what an export, a backup, the workbench and an
+#                   enrichment are asking about, and answering any of them with
+#                   a half-built version would put a running map in front of a
+#                   reader or edit one nobody can see.
+#
+# **`genealogy_id` overrides both**, on every caller, and it is how the worker
+# names the row it started rather than inferring it (design on #214): resume is
+# explicit or it is not resume. The override still checks the row belongs to the
+# concept and prompt version the command was given, in the same statement that
+# reads it — a mistyped id that silently rewrote another concept's map is the
+# accident the check exists for, and a separate probe would be a second
+# transaction with no snapshot between them (#92).
+#
+# Neither helper refuses on its own. The callers' refusals differ (a stage says
+# "run Stage C first", a recorder says "this attaches to a genealogy row"), and
+# `version_note` gives all of them the same true second sentence about what the
+# concept does have.
+
+
+def _fetch_by_id(conn, columns: str, genealogy_id: int,
+                 concept: str, prompt_version: str) -> tuple | None:
+    """One row by id, refusing it if it is not this concept's at this version."""
+    row = conn.execute(
+        f"SELECT {columns}, concept, prompt_version FROM genealogies WHERE id = %s",
+        (genealogy_id,)).fetchone()
+    if row is None:
+        sys.exit(f"No genealogy with id {genealogy_id}. --genealogy-id names a row "
+                 f"that does not exist; nothing was read or written.")
+    got_concept, got_pv = row[-2], row[-1]
+    if (got_concept, got_pv) != (concept, prompt_version):
+        sys.exit(f"Genealogy {genealogy_id} is \"{got_concept}\" at prompt {got_pv}, "
+                 f"not \"{concept}\" at prompt {prompt_version}. Refusing to act on "
+                 f"another map's row; nothing was read or written.")
+    return row[:-2]
+
+
+def build_row(conn, concept: str, prompt_version: str, columns: str = "id",
+              genealogy_id: int | None = None) -> tuple | None:
+    """The row a build in flight owns, or None if no build is in flight."""
+    if genealogy_id is not None:
+        return _fetch_by_id(conn, columns, genealogy_id, concept, prompt_version)
+    return conn.execute(
+        f"""SELECT {columns} FROM genealogies
+             WHERE concept = %s AND prompt_version = %s AND status <> 'complete'
+             ORDER BY version DESC LIMIT 1""",
+        (concept, prompt_version)).fetchone()
+
+
+def current_row(conn, concept: str, prompt_version: str, columns: str = "id",
+                genealogy_id: int | None = None) -> tuple | None:
+    """The live map for this concept, or None if it has no published version."""
+    if genealogy_id is not None:
+        return _fetch_by_id(conn, columns, genealogy_id, concept, prompt_version)
+    return conn.execute(
+        f"""SELECT {columns} FROM genealogies
+             WHERE concept = %s AND prompt_version = %s AND is_current""",
+        (concept, prompt_version)).fetchone()
+
+
+def version_note(conn, concept: str, prompt_version: str) -> str:
+    """What this concept DOES have, for a refusal that could not find a row.
+
+    "No genealogy for X" is the same sentence whether the concept has never been
+    mapped or has three finished versions and no build running, and those want
+    opposite next actions from the operator. Read after the failure, so it costs
+    a query only on the path that is already ending.
+    """
+    rows = conn.execute(
+        """SELECT version, status, is_current FROM genealogies
+            WHERE concept = %s AND prompt_version = %s ORDER BY version""",
+        (concept, prompt_version)).fetchall()
+    if not rows:
+        return "This concept has no map at all at this prompt version."
+    live = [v for v, _s, cur in rows if cur]
+    versions = ", ".join(f"v{v} ({s})" for v, s, _c in rows)
+    return (f"This concept has {len(rows)} version(s) at this prompt version: "
+            f"{versions}. " + (f"The live one is v{live[0]}."
+                               if live else "None of them is the live map."))
+
+
 # ── reading genealogies.nodes ───────────────────────────────────────────────
 #
 # `nodes` is JSONB written by Stage C and rewritten by the workbench, the two

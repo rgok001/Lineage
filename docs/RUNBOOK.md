@@ -254,13 +254,16 @@ python pipeline/restore_snapshot.py /data/snapshots/<file>.json --dry-run
 python pipeline/restore_snapshot.py /data/snapshots/<file>.json --confirm --no-publish
 
 # 4. re-ground, free, because the restore cannot restore the extracted text.
-python pipeline/stage_e_ground.py "<concept>" --no-publish
+#    Name the row you restored into: since #207b Stage E works on the version the
+#    build in flight owns, and this map is published. Run it without the flag and
+#    the refusal prints this command with the right id in it.
+python pipeline/stage_e_ground.py "<concept>" --genealogy-id <id> --no-publish
 
 # 5. confirm the map satisfies the rules that built it — BEFORE anyone sees it.
 python pipeline/check_map.py "<concept>"
 
 # 6. publish it: this re-grounds and, if the six clauses hold, makes it current.
-python pipeline/stage_e_ground.py "<concept>"
+python pipeline/stage_e_ground.py "<concept>" --genealogy-id <id>
 ```
 
 **Steps 3 to 6 are in that order because the check belongs before the publish**
@@ -278,7 +281,10 @@ same findings.
 
 Five things about it that are not obvious from the commands. It restores **into
 an existing row** by id; if the row itself is gone, `restore_genealogy.py` from an
-export is the only path and it recreates a row with a new id. It restores the
+export is the only path, and since #207b it inserts a NEW version of the map
+(`max(version) + 1`) rather than refusing because the concept already has a row.
+Restoring an older export is therefore the rollback: the new version is published
+and whatever was live is demoted, keeping its id, its edges and its address. It restores the
 snapshot's `status`, so a map that was `complete` comes back published and a map
 that was already mid-build comes back mid-build, and the run prints which.
 **Since #230 it also restores currency, which is what makes a restored map
@@ -317,7 +323,7 @@ superseded once — migration 026 refuses that, correctly, and re-running the st
 is the path that does not need an operator to know it.
 
 Verified end to end on fixtures rather than on a live map (#173): snapshot a
-curated map, destroy it with Stage C's own `UPSERT_GENEALOGY` plus Stage D's edge
+curated map, damage it with a re-cluster of that row plus Stage D's edge
 delete plus a definition refresh, restore, and the concept-states, threads,
 status, all edge columns and all definition columns come back identical, with one
 `restore` entry appended to the audit trail.
@@ -325,7 +331,8 @@ status, all edge columns and all definition columns come back identical, with on
 If Stage E ends with "Publishing the export then FAILED" (on **stderr**, like
 every other refusal the stage makes), the database has the new map and the file
 does not: the run committed, and only the rename of
-`genealogy_<concept>_<pv>.json.tmp` over `genealogy_<concept>_<pv>.json` did not
+`genealogy_<concept>_<pv>_v<N>.json.tmp` over `genealogy_<concept>_<pv>_v<N>.json`
+did not
 happen (a locked path, a read-only mount, a full disk). Do not read the export as
 the current map until it is repaired, and repair it by renaming the `.tmp` over
 it or by re-running Stage E, which is free and writes the same result. **If the
@@ -400,8 +407,13 @@ step 1 and re-run step 2; nothing is damaged, but nothing is published either.
    python pipeline/snapshot_map.py "attention"
    python pipeline/stage_b_extract.py "attention" --reground --dry-run
    python pipeline/stage_b_extract.py "attention" --reground
-   python pipeline/stage_e_ground.py "attention"
+   python pipeline/stage_e_ground.py "attention" --genealogy-id <the live map's id>
    ```
+
+   The `--genealogy-id` is #207b: Stage E grounds the version a build owns, and a
+   hand-run repair is not a build, so the live map is named. Running it without
+   the flag refuses without touching anything and prints the command with the
+   right id already in it.
 
    Nothing here is new behaviour — it is the same free re-check the worker
    performs on every trace — but it is the first time it has been run
@@ -516,13 +528,14 @@ concept. That is deliberate: two published maps for one term is a state somebody
 has to decide about, and a migration that picked a winner would decide it
 unwatched. Resolve it by deleting or un-publishing one, then re-run the migration.
 
-**Re-clustering a live map in place is now refused.** `stage_c_cluster.py
-"<concept>"` sets `status = 'running'` on the row it finds, and a *current* row
-cannot leave `complete` — the CHECK `genealogies_current_is_published` refuses
-it, naming itself. That is the destructive overwrite F4 exists to remove,
-arriving with the shape rather than with the swap. The path is unchanged from
-what decision 12 already requires: **delete the map first, then re-trace.**
-Unaffected: `--embed-only` (it returns before the upsert, so the repair after
+**Re-clustering a live map in place does not happen any more** (#207b).
+`stage_c_cluster.py "<concept>"` inserts a NEW version and leaves the live map
+alone, so a rebuild no longer needs the map deleted first: run the trace and the
+publish at the end of it swaps readers onto the new version. Re-clustering an
+existing row is only reachable with `--genealogy-id`, and that is refused on a
+`complete` row, naming the version. Between #207a and #207b this same command
+died on `genealogies_current_is_published` half way through a paid build.
+Unaffected: `--embed-only` (it returns before any of this, so the repair after
 `stage_b_extract.py --refresh` still works), Stage C on a concept with no
 published map, Stage E's publish, the workbench, the threads job and the claims
 job. One thing `--embed-only` deliberately cannot see, and the refresh now says
@@ -587,14 +600,21 @@ The partial index refuses the promotion if the concept already has a current map
 which is the right answer: that is two published maps for one concept and it is
 the case above.
 
-**Rebuilds still crash at Stage C, and this warning comes off with #207b**
-(#214). #207a moved publication and nothing else, so a re-trace of a published
-map still dies at "cluster concept-states" on `genealogies_current_is_published`
-— after corpus selection, fetching, extraction and Stage B have run and been paid
-for. The refusal and the path around it are the section above: delete the map
-first, then re-trace, which is what decision 12 already requires. #207b is the
-commit that inserts a new version row instead of overwriting the live one, and it
-is the one that makes a rebuild survivable.
+**Rebuilds no longer crash at Stage C** (#207b closes #214). The warning that
+stood here — a re-trace of a published map dying at "cluster concept-states"
+after everything Stage B had been paid for — is retired by the commit that makes
+Stage C insert a version instead of overwriting the live row. What a rebuild does
+now: it builds version N+1 invisibly, and the publish at the end demotes the
+version readers were on, which keeps its id, its edges, its threads, its
+curatorial audit trail and its address at `/g/<id>`. Roll back by restoring that
+version's export (`restore_genealogy.py data/genealogy_<concept>_<pv>_v<N>.json`),
+which comes back as a further version and takes currency back.
+**One thing to do before rebuilding a live map**: #213 is still owed.
+`map_report`'s definition-side CTEs key on `(concept, prompt_version)`, so the
+moment a concept has two versions both reports name the same papers read,
+including papers only the later version read. That is a wrong measurement on the
+page whose whole purpose is honesty, so land #213 before rebuilding `attention`
+or any other published map.
 
 **After the #215 deploy: re-ground the claims, once per live map.** There is no
 migration to apply — `genealogies.streams` is JSONB and #215 added no column —

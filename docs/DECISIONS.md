@@ -975,6 +975,38 @@ The why behind the load-bearing choices, in one place:
     025 there is one published row per concept, so the old query returns the same
     set as the view.
 
+43. **A build writes a new version and resolves rows by asking which of two
+    questions it means; a resume is named, never inferred** (2026-08-13, issues
+    #207b and #214, implementing the Architect's design on #214). Three separate
+    choices, recorded together because each is the reason the next one is
+    survivable.
+    **A rebuild INSERTs.** Stage C mints `version = max + 1` per concept and
+    writes nothing a reader can see; Stage E's swap is what moves readers on.
+    Migration 007's `UNIQUE (concept, prompt_version)` goes in migration 027, in
+    this same commit, for decision 41's reason executed a second time: the old
+    `ON CONFLICT` Stage C against a database with the constraint gone raises
+    `InvalidColumnReference` on the first build of a concept nobody has mapped,
+    measured on a throwaway Postgres before this commit was written.
+    **Two predicates, not a rule per script.** The fifteen sites that resolved a
+    map by `(concept, prompt_version)` each mean either "the row this build owns"
+    (`status <> 'complete' ORDER BY version DESC LIMIT 1`) or "the live map"
+    (`AND is_current`), and now say which. The alternative — passing a genealogy
+    id through every CLI as a required argument — is honest and a week; the two
+    predicates plus an optional `--genealogy-id` are a day and give the same
+    determinism, because a build's own row always carries the highest version and
+    every corpse is older.
+    **Resume is explicit.** Stage C writes `{genealogy_id, version}` to
+    `--result-json`; the worker binds `--genealogy-id` onto every step after pass
+    one. There is deliberately no "reuse the newest running row" rule and no
+    timestamp threshold, so no build can adopt the corpse of one that died three
+    weeks ago, and an unreadable result file fails the build rather than letting
+    each later stage resolve one for itself.
+    **What this retires**: decision 12's "delete the map first, then re-trace" is
+    no longer the rebuild path — a rebuild is now non-destructive, and rolling
+    back is restoring a version's export, which comes back as a further version.
+    Decision 41's accepted regression (a re-cluster of a live map dying on a
+    CHECK) is retired with it: there is nothing to re-cluster in place.
+
 ## Shipped since the first draft
 
 Moved here from as-built section 11 on 2026-08-02. It is a progression record

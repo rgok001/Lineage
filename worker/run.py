@@ -97,7 +97,7 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
-from common import REPO_ROOT, data_dir, env  # noqa: E402
+from common import REPO_ROOT, build_row, data_dir, env  # noqa: E402
 # The seat count's divisor has one home, in the stage that owns the flag, and the
 # worker reads it rather than restating it: a constant restated in a second file
 # is a constant with two values as soon as one of them moves.
@@ -262,6 +262,12 @@ def trace_paths(concept: str) -> dict[str, str]:
         # DATA_DIR/snapshots/. This is the note saying where the last one went,
         # and it is overwritten every build on purpose.
         "snapshot_result": str(d / f"snapshot_{slug}.json"),
+        # Which genealogy row Stage C created for this build, and its version
+        # (#207b). The worker reads it after pass one and NAMES that row on every
+        # later step, so a resume is explicit: there is no "reuse the newest
+        # running row" rule anywhere, and therefore no way to adopt the corpse of
+        # a build that died three weeks ago. Overwritten every build.
+        "genealogy_result": str(d / f"genealogy_row_{slug}.json"),
         # What each step of this build spent and how long it took (#47). Written
         # by the worker after every step rather than once at the end, so a build
         # that dies mid-run leaves on disk what it had spent by then — the file is
@@ -308,15 +314,18 @@ def plan_for(concept: str, corpus_limit: int, field: str, gloss: str | None,
     # starts (#173).
     #
     # **Why first rather than immediately before Stage C**, which is where the
-    # design put it and which is the actual moment of destruction (`UPSERT_GENEALOGY`
-    # rewrites `nodes` and sets `status = 'running'`; `CLEAR_STALE_EDGES` takes the
-    # relationships whose meaning moved). Two reasons, and neither is tidiness.
-    # Between here and Stage C sit `fetch_papers.py` and `extract_text.py`, which
-    # rewrite the extracted text on disk that the live map's verified quotes were
-    # checked against — so a step of this build damages the snapshot's usefulness
-    # before Stage C is reached. And a snapshot that fails should cost the build
-    # nothing: here it costs no arXiv politeness and no money, and the refusal is
-    # unambiguously upstream of every write, which is the property this step is for.
+    # design put it and which was the actual moment of destruction: Stage C used
+    # to overwrite the live row's `nodes` and set `status = 'running'`. Since
+    # #207b it does not — a build inserts its own version and the live map is
+    # untouched until Stage E publishes — so this step is no longer standing
+    # between a rebuild and the loss of the map. It stays, for what it still
+    # covers: the extracted text on disk. Between here and Stage C sit
+    # `fetch_papers.py` and `extract_text.py`, which rewrite the text the live
+    # map's verified quotes were checked against, so a step of this build damages
+    # what the previous version's stamps mean even though its row is safe. And a
+    # snapshot that fails should cost the build nothing: here it costs no arXiv
+    # politeness and no money, and the refusal is unambiguously upstream of every
+    # write, which is the property this step is for.
     #
     # Once per job, not once per pass. Pass two re-clusters the same map, and by
     # then pass one has already overwritten it: there is nothing left to save that
@@ -349,8 +358,13 @@ def plan_for(concept: str, corpus_limit: int, field: str, gloss: str | None,
         # concept, so any row arriving by any other route joins the map at the
         # next clustering (#190). Stage B's flag stops a past trace's corpus
         # being re-billed; this one stops it being clustered in.
+        # --result-json: Stage C now INSERTS a new version rather than writing
+        # over the concept's one row (#207b), so which row this build owns is
+        # something only Stage C knows. It writes it here and the worker binds it
+        # onto every later step; nothing infers it from the table.
         ("cluster concept-states", py + ["pipeline/stage_c_cluster.py", concept,
-                                         "--corpus", corpus_json]),
+                                         "--corpus", corpus_json,
+                                         "--result-json", paths["genealogy_result"]]),
         ("classify edges", py + ["pipeline/stage_d_edges.py", concept]),
         # Free, and it runs immediately before grounding for the same reason
         # Stage E re-copies the edge quotes there: a stamp must not be older than
@@ -881,25 +895,31 @@ class StageRunner:
             self.run(name, cmd)
 
 
-def map_summary(conn: psycopg.Connection, concept: str, pv: str) -> tuple | None:
+SUMMARY_COLUMNS = """id,
+    (SELECT count(*) FROM definitions d
+      WHERE d.concept = genealogies.concept
+        AND d.prompt_version = genealogies.prompt_version),
+    CASE WHEN jsonb_typeof(nodes) = 'array'
+         THEN jsonb_array_length(nodes) ELSE 0 END,
+    (SELECT count(*) FROM edges e WHERE e.genealogy_id = genealogies.id)"""
+
+
+def map_summary(conn: psycopg.Connection, concept: str, pv: str,
+                genealogy_id: int | None = None) -> tuple | None:
     """(genealogy_id, papers, meanings, relationships) for the map being built.
 
     Read from the database rather than scraped off Stage E's summary line,
     because the feed's pass-one sentence is the requester's only view of a map
     nobody may look at yet, and a count taken from prose is a count that moves
     when the prose does (#85 is the standing example).
+
+    **The row this build owns, named rather than guessed** (#207b). This was
+    `ORDER BY g.id DESC LIMIT 1`, which was the newest row for the concept —
+    right while a concept had one row, and a guess the moment it has three. The
+    caller passes the id Stage C wrote to its result file; the `build_row`
+    fallback is for a by-hand call that has no such file.
     """
-    row = conn.execute(
-        """SELECT g.id,
-                  (SELECT count(*) FROM definitions d
-                    WHERE d.concept = g.concept AND d.prompt_version = g.prompt_version),
-                  CASE WHEN jsonb_typeof(g.nodes) = 'array'
-                       THEN jsonb_array_length(g.nodes) ELSE 0 END,
-                  (SELECT count(*) FROM edges e WHERE e.genealogy_id = g.id)
-             FROM genealogies g
-            WHERE g.concept = %s AND g.prompt_version = %s
-            ORDER BY g.id DESC LIMIT 1""", (concept, pv)).fetchone()
-    return row
+    return build_row(conn, concept, pv, SUMMARY_COLUMNS, genealogy_id=genealogy_id)
 
 
 def run_pass_two(conn: psycopg.Connection, job_id: int, runner: "StageRunner",
@@ -1001,6 +1021,57 @@ def run_pass_two(conn: psycopg.Connection, job_id: int, runner: "StageRunner",
                                         cleared=stats.get("cleared")), counts
 
 
+# The scripts that take `--genealogy-id`. Named rather than detected, so a stage
+# added to the plan without the flag fails on an unrecognised argument in a test
+# rather than silently resolving its own row on production (#207b).
+VERSIONED_STEPS = ("stage_c_cluster.py", "stage_d_edges.py", "stage_e_ground.py",
+                   "stage_g_threads.py", "stage_h_claims.py", "pass_two_select.py",
+                   "record_pass.py", "record_anchors.py", "record_spend.py",
+                   "enrich_authors.py")
+
+# Every phase that runs after pass one's Stage C. Pass one itself is deliberately
+# absent: its later steps run inside the same `run_all` as the clustering, so the
+# id does not exist when that phase's argv is built. They resolve by predicate
+# instead, which is deterministic — this build's row is the highest version for
+# the concept, because that is how the version was minted.
+BINDABLE_PHASES = ("pass_two_select", "pass_two_fetch", "pass_two_read",
+                   "pass_two_fallback", "finish")
+
+
+def bind_genealogy_id(runner: "StageRunner", plan: dict) -> int:
+    """Read the row Stage C created and name it on every later step.
+
+    Issue #207b. Before this, every stage after Stage C found "the row for this
+    concept and prompt version" — provably one row under migration 007's UNIQUE,
+    and provably ambiguous the moment 027 drops it. The worker is the one caller
+    that knows exactly which row it started, so it says so, and the two
+    predicates in `common.py` are for callers that do not.
+
+    A missing or unreadable result file fails the build, for `run_snapshot`'s
+    reason: "we cannot say which row this build owns" is not a state to carry on
+    from, and carrying on would mean each later stage resolving one for itself.
+    """
+    result = read_json_file(plan["paths"]["genealogy_result"],
+                            "record of the version this build created")
+    gid = (result or {}).get("genealogy_id")
+    if not isinstance(gid, int):
+        raise StageFailed(
+            "the clustering step left no readable record of which version of the map "
+            "it created, so nothing here can say which row the rest of this build "
+            "should write to. Stopping: every earlier version of this map is exactly "
+            "as it was, and this build's own row is unpublished and invisible.",
+            runner.tail)
+    for phase in BINDABLE_PHASES:
+        for _name, argv in plan[phase]:
+            if any(a.endswith(VERSIONED_STEPS) for a in argv):
+                argv.extend(["--genealogy-id", str(gid)])
+    version = (result or {}).get("version")
+    runner.prog.note(f"this build is version {version} of the map for this term"
+                     if isinstance(version, int) else
+                     "this build has its own version of the map")
+    return gid
+
+
 def run_snapshot(runner: "StageRunner", plan: dict, concept: str) -> None:
     """Save whatever map this concept already has, before the build replaces it.
 
@@ -1028,9 +1099,12 @@ def run_snapshot(runner: "StageRunner", plan: dict, concept: str) -> None:
             "back to. Stopping before the build overwrites anything; the map is "
             "exactly as it was.", runner.tail)
     if not result.get("existed"):
-        # A first build of a term. Said out loud rather than passed over, because
-        # "no snapshot was taken" has two causes and only one of them is fine.
-        runner.prog.note("no existing map for this term to save: this is its first build.")
+        # Said out loud rather than passed over, because "no snapshot was taken"
+        # has two causes and only one of them is fine. It no longer says "this is
+        # its first build": since #207b the snapshot saves the LIVE map, and a
+        # term whose only versions all failed has no live map and is not on its
+        # first build. Which of the two it is, is in the step's own output.
+        runner.prog.note("no map is live for this term, so there was nothing to save.")
         return
     runner.prog.note(
         f"saved the current map before rebuilding it: {result.get('nodes')} meaning(s), "
@@ -1065,7 +1139,11 @@ def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: i
         with runner.in_pass(1):
             runner.run_all(plan["pass_one"])
 
-        summary = map_summary(conn, concept, pv)
+        # From here on every step is told which version it is working on, so no
+        # later stage has to work it out from the table (#207b).
+        genealogy_id = bind_genealogy_id(runner, plan)
+
+        summary = map_summary(conn, concept, pv, genealogy_id)
         if summary:
             _gid, papers, meanings, rels = summary
             prog.note(f"pass one complete: {papers} paper(s) read, {meanings} meaning(s), "
@@ -1107,11 +1185,12 @@ def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: i
         prog.set_total(runner.no + len(plan["finish"]))
         runner.run_all(plan["finish"])
 
-    # Stage E created/updated the genealogy row for (concept, prompt_version).
-    row = conn.execute(
-        "SELECT id FROM genealogies WHERE concept = %s AND prompt_version = %s "
-        "ORDER BY id DESC LIMIT 1", (concept, pv)).fetchone()
-    genealogy_id = row[0] if row else None
+    # The row this build created, from the file Stage C wrote (#207b). It was
+    # `ORDER BY id DESC LIMIT 1` on (concept, prompt_version), which named the
+    # newest row for the concept rather than this build's — the same answer while
+    # a concept had one row, and a guess as soon as it has three. What
+    # `trace_requests.genealogy_id` now records is the version this job built, for
+    # ever, which is what #208's permanent addresses promise.
 
     prog.state["message"] = "complete"
     conn.execute(

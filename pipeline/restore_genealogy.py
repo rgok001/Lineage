@@ -4,11 +4,15 @@ The inverse of stage_e_ground.py's --json output: reads an exported genealogy
 and re-inserts the genealogies row and its edges. Papers and definitions are
 never touched by deletion, so a restore only has to rebuild the map itself.
 
+It restores as a NEW version of the concept's map (#207b) and publishes it,
+which is also the rollback path: restore an older export and the swap demotes
+whatever was live. Nothing existing is deleted or written over.
+
 This makes the exports real backups. Deleting a genealogy in the app is
 permanent from the app's point of view; this is the recovery path.
 
 Usage:
-    python pipeline/restore_genealogy.py data/genealogy_attention_v2.json
+    python pipeline/restore_genealogy.py data/genealogy_attention_v1_v2.json
 """
 
 import argparse
@@ -21,7 +25,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import actor, env  # noqa: E402
+from common import actor, current_row, env  # noqa: E402
 # The publication rule lives in the stage that owns it, and a restore performs
 # the same swap rather than its own version of it (#230) — behind the same gate,
 # because the pair is the rule and half of it is not (#233).
@@ -30,7 +34,8 @@ from stage_e_ground import publish_swap, refuse_unless_publishable  # noqa: E402
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Restore a genealogy from an exported JSON.")
-    ap.add_argument("json_path", help="a genealogy_<concept>_<pv>.json written by stage E")
+    ap.add_argument("json_path",
+                    help="a genealogy_<concept>_<pv>_v<N>.json written by stage E")
     ap.add_argument("--no-publish", action="store_true",
                     help="restore the map without making it the current one for its "
                          "concept (it will be reachable at /g/<id> and absent from the "
@@ -42,13 +47,21 @@ def main() -> None:
     nodes, edges = doc["nodes"], doc["edges"]
 
     with psycopg.connect(env("DATABASE_URL")) as conn:
-        existing = conn.execute(
-            "SELECT id FROM genealogies WHERE concept = %s AND prompt_version = %s",
-            (concept, pv)).fetchone()
-        if existing:
-            sys.exit(f'A genealogy for "{concept}" ({pv}) already exists (id {existing[0]}). '
-                     "Delete it first if you mean to replace it.")
-
+        # There was a refusal here: "a genealogy for this concept already exists,
+        # delete it first if you mean to replace it." That was migration 007's
+        # world, where a concept had exactly one row and restoring over it meant
+        # destroying it — decision 12's destroy-before-replace, on the only copy,
+        # in the recovery script. #207b removes both halves: this restores as a
+        # NEW version beside whatever is there, and the publish swap below is
+        # what moves readers onto it. Nothing is deleted to make room, so there
+        # is nothing left to refuse.
+        #
+        # The version is minted per CONCEPT across prompt versions, the same
+        # expression Stage C uses and for the same reason. Letting the column's
+        # DEFAULT of 1 stand would collide with the existing v1 on
+        # `genealogies_concept_pv_version_key` (025) — a raw constraint error at
+        # the end of a recovery, which is the worst moment to meet one.
+        #
         # The restoration is itself a curatorial event — record it. The actor
         # goes in `by_asserted`: this used to write {"by": "cli"} into the same
         # key that holds authenticated GitHub logins, so the audit trail
@@ -56,10 +69,15 @@ def main() -> None:
         audit = [{"op": "restore", "detail": {"from": Path(args.json_path).name},
                   "at": datetime.now(timezone.utc).isoformat(),
                   "by_asserted": actor()}]
-        gid = conn.execute(
-            """INSERT INTO genealogies (concept, prompt_version, status, nodes, user_edits)
-               VALUES (%s, %s, 'complete', %s, %s) RETURNING id""",
-            (concept, pv, Jsonb(nodes), Jsonb(audit))).fetchone()[0]
+        gid, version = conn.execute(
+            """INSERT INTO genealogies (concept, prompt_version, status, nodes,
+                                        user_edits, version, is_current)
+               VALUES (%s, %s, 'complete', %s, %s,
+                       (SELECT coalesce(max(version), 0) + 1 FROM genealogies
+                         WHERE concept = %s),
+                       false)
+               RETURNING id, version""",
+            (concept, pv, Jsonb(nodes), Jsonb(audit), concept)).fetchone()
 
         paper_ids = dict(conn.execute(
             "SELECT arxiv_id, id FROM papers WHERE arxiv_id = ANY(%s)",
@@ -104,12 +122,22 @@ def main() -> None:
             refuse_unless_publishable(conn, gid)
             demoted = publish_swap(conn, concept, gid)
 
+        # Read before the commit and inside the same transaction as the swap, so
+        # the sentence below describes the row rather than the flag that was
+        # passed (#237): under --no-publish the live map is whatever it was, and
+        # naming it is the difference between "yours is not live" and telling the
+        # operator which version readers are still on.
+        live = current_row(conn, concept, pv, "id, version")
+
         conn.commit()
-        print(f'Restored "{concept}" ({pv}) as genealogy {gid}: '
+        print(f'Restored "{concept}" ({pv}) as genealogy {gid}, version {version}: '
               f"{len(nodes)} nodes, {len(edges)} edges.")
         if args.no_publish:
             print("  --no-publish: it is NOT the current map for this concept, so it is "
                   f"reachable at /g/{gid} and absent from the concepts list.")
+            print(f"  Readers are still on version {live[1]} (genealogy {live[0]})."
+                  if live else
+                  "  This concept has no live map at all at this prompt version.")
         elif demoted:
             print(f"  It is now the current map for \"{concept}\". The version that was "
                   f"live (genealogy {', '.join(str(d) for d in demoted)}) is marked "

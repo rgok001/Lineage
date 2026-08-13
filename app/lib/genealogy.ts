@@ -60,7 +60,7 @@ const ACTOR_MAX = 64;
  * app filtered on `status`: `listGenealogies` selected every row and ordered by
  * `updated_at`, `getGenealogy` and `getMapRow` selected by id with no predicate,
  * and no page added one. The row is written by Stage C, roughly halfway through
- * a build — `UPSERT_GENEALOGY` in `stage_c_cluster.py` writes `status =
+ * a build — `INSERT_GENEALOGY` in `stage_c_cluster.py` writes `status =
  * 'running'` — so a half-built map, concept-states and no relationships, was
  * publicly listed and loadable on every build, for the whole second half of it.
  * That has been true for months and nobody saw it, because the maps in this

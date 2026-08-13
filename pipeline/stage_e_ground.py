@@ -32,9 +32,10 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (_fold, edge_stamp_state, grounded_span,  # noqa: E402
-                    read_grounding_text, REPO_ROOT, STAMP_INFERRED, STAMP_STALE,
-                    STAMP_VERIFIED, data_dir, env, node_ids)
+from common import (_fold, build_row, current_row, edge_stamp_state,  # noqa: E402
+                    grounded_span, read_grounding_text, REPO_ROOT, STAMP_INFERRED,
+                    STAMP_STALE, STAMP_VERIFIED, data_dir, env, node_ids,
+                    version_note)
 
 
 # An edge whose source_node or target_node is not in genealogies.nodes has no
@@ -234,21 +235,47 @@ def sweep_orphan_edges(conn, gen_id: int, nodes) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Stage E: ground edge quotes and assemble genealogy.")
     ap.add_argument("concept")
-    ap.add_argument("--json", metavar="PATH", help="output path (default DATA_DIR/genealogy_<concept>_<pv>.json)")
+    ap.add_argument("--json", metavar="PATH",
+                    help="output path (default DATA_DIR/genealogy_<concept>_<pv>_v<N>.json)")
     ap.add_argument("--no-publish", action="store_true",
                     help="ground and assemble, but leave the map unpublished: the "
                          "status is not touched and the publish invariant is not "
                          "asked. For the assembly runs inside a two-stage build "
                          "that must not be shown to anyone (#192)")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="ground and publish this exact version instead of the one "
+                         "the build in flight owns (a re-ground of an older version, "
+                         "or a rollback)")
     args = ap.parse_args()
 
     prompt_version = env("PROMPT_VERSION", "v1")
     conn = psycopg.connect(env("DATABASE_URL"), autocommit=True)
-    gen = conn.execute("SELECT id, nodes FROM genealogies WHERE concept=%s AND prompt_version=%s",
-                       (args.concept, prompt_version)).fetchone()
+    # The version this build owns, and never the live map: this stage is what
+    # MAKES a version the live map, so resolving by `is_current` would re-ground
+    # and re-publish the map that is already up while the new one waits (#207b).
+    # `--genealogy-id` is how an operator re-grounds an older version on purpose,
+    # which is also the rollback path — the publish swap demotes whatever is
+    # current and promotes the row named here.
+    gen = build_row(conn, args.concept, prompt_version, "id, nodes, version",
+                    genealogy_id=args.genealogy_id)
     if not gen:
-        sys.exit(f'No genealogy for "{args.concept}" at prompt {prompt_version}.')
-    gen_id, nodes = gen
+        # The refusal carries the command, because the commonest way to meet it
+        # is the documented repair path — curate in the workbench, or refresh a
+        # definition, then re-ground — and that map is published, so this stage
+        # will not find it by itself and must not go looking for it (#207b). The
+        # id is read from the row rather than described: `--genealogy-id` is not
+        # something an operator can be expected to look up mid-repair.
+        live = current_row(conn, args.concept, prompt_version, "id, version")
+        sys.exit(f'\nNo unpublished version of "{args.concept}" at prompt '
+                 f"{prompt_version} to ground, so no build is in flight.\n"
+                 f"  {version_note(conn, args.concept, prompt_version)}\n"
+                 + (f"  To re-ground and re-publish the live map (v{live[1]}) — after "
+                    f"curating it, or after a\n  definition refresh — name it:\n"
+                    f'    python pipeline/stage_e_ground.py "{args.concept}" '
+                    f"--genealogy-id {live[0]}\n"
+                    if live else "")
+                 + "  To build a new version instead, run Stage C first.")
+    gen_id, nodes, version = gen
 
     # ── one transaction, because a refusal has to be able to undo everything ──
     #
@@ -293,7 +320,7 @@ def main() -> None:
     result = None
     try:
         with conn.transaction():
-            result = _ground(conn, args, gen_id, nodes, prompt_version)
+            result = _ground(conn, args, gen_id, nodes, prompt_version, version)
     except BaseException:
         if result is not None:
             result["tmp"].unlink(missing_ok=True)
@@ -316,7 +343,7 @@ def main() -> None:
     _report(result)
 
 
-def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
+def _ground(conn, args, gen_id: int, nodes, prompt_version: str, version: int) -> dict:
     """Everything this stage writes, inside the caller's transaction.
 
     Returns what the caller needs to publish the export and narrate the run once
@@ -532,7 +559,7 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
         print("  --no-publish: this map was assembled but NOT published. Its status is\n"
               "  untouched, the publish invariant was not asked, and no reader can see\n"
               "  it until a later run of this stage publishes it.\n")
-        return _assemble(args, gen_id, nodes, prompt_version, assembled_edges,
+        return _assemble(args, gen_id, nodes, prompt_version, version, assembled_edges,
                          edges, verified_count, stale_count, published=False)
 
     refuse_unless_publishable(conn, gen_id)
@@ -545,7 +572,7 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
     # imported the swap alone for one commit and published past the gate (#233).
     publish_swap(conn, args.concept, gen_id)
 
-    return _assemble(args, gen_id, nodes, prompt_version, assembled_edges,
+    return _assemble(args, gen_id, nodes, prompt_version, version, assembled_edges,
                      edges, verified_count, stale_count, published=True)
 
 
@@ -633,9 +660,9 @@ def publish_swap(conn, concept: str, gen_id: int) -> list[int]:
     return [r[0] for r in demoted]
 
 
-def _assemble(args, gen_id: int, nodes, prompt_version: str, assembled_edges: list,
-              edges: list, verified_count: int, stale_count: int,
-              published: bool) -> dict:
+def _assemble(args, gen_id: int, nodes, prompt_version: str, version: int,
+              assembled_edges: list, edges: list, verified_count: int,
+              stale_count: int, published: bool) -> dict:
     """The export and the counts, for both endings of the stage.
 
     Split out when `--no-publish` arrived (#192) rather than duplicated, because
@@ -671,7 +698,16 @@ def _assemble(args, gen_id: int, nodes, prompt_version: str, assembled_edges: li
                   "stale_edges": stale_count,
                   "both_quotes_matched_this_run": verified_count},
     }
-    out = Path(args.json) if args.json else data_dir() / f"genealogy_{args.concept}_{prompt_version}.json"
+    # **The export path carries the version** (#207b). It was
+    # `genealogy_<concept>_<pv>.json`, one path per concept, so pass one's
+    # --no-publish assembly — step 9 of 24, on a map nobody may see yet — wrote
+    # over the live map's export. That file is the de-facto backup (incident 4),
+    # and a design whose whole point is that a rebuild does not destroy the live
+    # map must not destroy its backup on the way. No unversioned alias beside it:
+    # an alias is a derived pointer with nothing recomputing it, and the pointer
+    # that says which version is live is `is_current` in the database.
+    out = (Path(args.json) if args.json else
+           data_dir() / f"genealogy_{args.concept}_{prompt_version}_v{version}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     # A sibling of the real path, so the rename after the commit is atomic: on
     # every platform os.replace is only atomic within one filesystem.

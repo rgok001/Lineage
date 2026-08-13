@@ -39,7 +39,8 @@ from pathlib import Path
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import data_dir, edit_actor, edit_op, edit_when, env  # noqa: E402
+from common import (  # noqa: E402
+    current_row, data_dir, edit_actor, edit_op, edit_when, env, version_note)
 
 
 def write_result(path: str | None, payload: dict) -> None:
@@ -68,6 +69,8 @@ def main() -> None:
     ap.add_argument("--result-json",
                     help="write {existed, path, counts} here for a caller that has to "
                          "decide on what happened rather than read this output")
+    ap.add_argument("--genealogy-id", type=int, metavar="ID",
+                    help="save this exact version instead of the live map")
     args = ap.parse_args()
 
     try:
@@ -84,19 +87,28 @@ def main() -> None:
         # held and not whether anyone could see it cannot restore the map. It is
         # written even when false, so a restore can tell "this version was not
         # the live one" from "this snapshot predates the column".
-        gen = conn.execute("""
-            SELECT id, concept, prompt_version, status, spend_usd, nodes, user_edits,
-                   streams, created_at, updated_at, is_current
-            FROM genealogies WHERE concept = %s AND prompt_version = %s
-        """, (args.concept, args.prompt_version)).fetchone()
+        #
+        # **The LIVE map** (#207b): this runs before a rebuild, and what a
+        # rebuild puts at risk is the map readers can see. The new version does
+        # not exist yet when this runs, and the previous versions are not at risk
+        # because nothing writes to them again.
+        gen = current_row(conn, args.concept, args.prompt_version,
+                          """id, concept, prompt_version, status, spend_usd, nodes,
+                             user_edits, streams, created_at, updated_at, is_current""",
+                          genealogy_id=args.genealogy_id)
         if not gen:
-            missing = f'No genealogy for "{args.concept}" at prompt {args.prompt_version}.'
+            missing = (f'No live map for "{args.concept}" at prompt '
+                       f"{args.prompt_version}.")
             if not args.allow_missing:
                 sys.exit(missing)
             # Not a failure and not silence: the caller has to be able to tell
             # "there was nothing to save" from "the save did not happen", and
             # they are the same exit code.
-            print(f"{missing} Nothing to snapshot; this is its first build.")
+            # "This is its first build" was true while a concept had one row;
+            # with versions it is one of two causes, and the other — versions
+            # exist and none of them is live — is worth telling apart (#207b).
+            print(f"{missing} Nothing live to snapshot. "
+                  f"{version_note(conn, args.concept, args.prompt_version)}")
             write_result(args.result_json,
                          {"existed": False, "path": None, "concept": args.concept,
                           "prompt_version": args.prompt_version})

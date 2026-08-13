@@ -1,0 +1,59 @@
+-- 027: a concept may have more than one map at a prompt version, because a
+-- rebuild now writes a new version instead of overwriting the live one.
+--
+-- Ticket #207b (and #214, which is the crash this closes). One statement, and it
+-- is the statement migration 025 wrote down and deliberately did not ship.
+--
+-- **Why it could not ship earlier, in 025's own words.** `stage_c_cluster.py`'s
+-- `UPSERT_GENEALOGY` was `INSERT ... ON CONFLICT (concept, prompt_version) DO
+-- UPDATE`, and Postgres resolves a conflict target's arbiter index when it PLANS
+-- the statement rather than when a conflict occurs. Drop this constraint under
+-- that Stage C and every build raises `InvalidColumnReference: there is no
+-- unique or exclusion constraint matching the ON CONFLICT specification` —
+-- including the first build of a concept nobody has ever mapped, where a
+-- conflict is impossible. `UNIQUE (concept, prompt_version, version)` does not
+-- satisfy the inference either: a conflict target must match an index's columns
+-- exactly. So the drop and Stage C's rewrite to a plain INSERT are one commit,
+-- and this file is meaningless without the other half of it.
+--
+-- **What replaces each of 007's three guarantees**, because dropping a
+-- constraint that was carrying three is where a migration quietly costs
+-- something:
+--   1. "A stable id across re-runs" — kept, and by something better. 007 kept
+--      the id stable by overwriting the row; #207b keeps every old row exactly
+--      as it was, so `/g/<id>` and `trace_requests.genealogy_id` now name a
+--      version for ever instead of naming whatever that concept last built.
+--   2. "No orphaned running row" — replaced by nothing, on purpose. An
+--      abandoned `running` row is now the normal residue of a failed build and
+--      is what `status <> 'complete' ORDER BY version DESC` reads past: it is
+--      never adopted, because the next build mints a higher version. #211 is the
+--      ticket that measures what that residue costs.
+--   3. "Stage D/E resolve by (concept, prompt_version) with a bare fetchone(),
+--      nondeterministic the moment a duplicate exists" — replaced by the two
+--      predicates in `pipeline/common.py`, `build_row` and `current_row`, which
+--      is the bulk of #207b's work: fifteen call sites now say which of the two
+--      questions they are asking.
+--
+-- **Nothing else is dropped and no row is rewritten.** 025's
+-- `genealogies_one_current_per_concept`, `genealogies_current_is_published` and
+-- `genealogies_concept_pv_version_key` all stand, and the last of those is what
+-- keeps a version number from being issued twice — it shipped in 025 precisely
+-- so that this drop would be one line against a replacement already verified.
+-- 026's `genealogies_current_not_superseded` stands. No column is added, so
+-- 025's frozen `SELECT *` warning about `genealogies_current` does not bite:
+-- the view is not recreated.
+--
+-- **The deploy window.** Render's pre-deploy applies this before the new worker
+-- starts (decision 31), so between the ALTER and the new code there is no worker
+-- running; an in-flight build is SIGTERMed and requeued (#178) and re-runs from
+-- the top on the new code. The app never names this constraint.
+--
+-- **Confirm before applying to production** that no concept has more than one
+-- `complete` row (025's backfill would have failed if one did, so this is a
+-- formality — but it is the last moment the database is asserting it for us).
+--
+-- **No threshold, no score, no grade.** Counted with comments and string
+-- literals removed, the numeric literals in this file are exactly {}: it drops a
+-- constraint and adds nothing to number.
+ALTER TABLE genealogies
+    DROP CONSTRAINT genealogies_concept_pv_key;
