@@ -410,14 +410,28 @@ never reply is ten times `get_bytes`'s 630s — **50 requests and 6300s, 105
 minutes** — both measured on a virtual clock that advances by every sleep and
 every timeout. The guard is still what makes it a bound: the same fault over 150
 papers is over 26 hours.
-**Any status arXiv answers with resets the counter** (#235). It counts calls that
-ended with no answer about the paper: a withheld source, an id it does not have,
-a body that is neither LaTeX nor PDF, or any other status — measured with ten
-451s, which used to abort the stage and send the operator to the network after
-arXiv had answered ten times. So a corpus of 404s runs to the end and exits 0, a
-skipped paper makes no request and neither counts nor resets, and a real outage
-is still caught: 429 and 5xx never arrive as a status here, because `get_bytes`
-retries them five times and then raises the transport-class `RuntimeError`.
+**Only a status in the named list `ARXIV_ANSWERS_ABOUT_PAPER` resets the
+counter** (#235, narrowed by #239). Everything else counts: a call that got no
+answer at all, and a status that came back from somewhere on the way to arXiv.
+The list holds 451 alone, because `get_bytes` already answers the rest — 403
+(withheld source), 404 (an id arXiv does not have) and 410 return `None` from it,
+which is the "no source available" branch and resets there. Ten papers arXiv
+answers 451 about therefore run to completion, exit 0 and say "arXiv answered
+HTTP 451 for this paper" (measured, 40 papers, 40 requests); before #235 they
+aborted the stage and sent the operator to the network after arXiv had answered
+ten times. **The reset was briefly "any response object at all", and that undid
+the bound**: measured at c5e0325, 150 papers each answered 407 by an
+authenticating proxy ran the whole corpus — 150 requests, 7.5 minutes, exit 0 —
+each line reading "arXiv answered HTTP 407 for this paper" about a service the
+run never reached, and a transport outage punctuated by one gateway 408 every
+tenth paper cost 690 requests and 77 minutes. With the named list both abort at
+the bound, 10 requests/0.5 min and 46 requests/5.1 min, matching the pre-#235
+control exactly, and an unnamed status now prints "HTTP 407 from something
+between us and arXiv — not a status arXiv answers about a paper with". So a
+corpus of 404s runs to the end and exits 0, a skipped paper makes no request and
+neither counts nor resets, and a real outage is still caught: 429 and 5xx never
+arrive as a status here, because `get_bytes` retries them five times and then
+raises the transport-class `RuntimeError`.
 Gotcha: some arXiv "LaTeX" source is really a PDF inside an `\includepdf`
 stub; the extractor detects and unwraps this. Citation and cross-reference
 macros are normalised before parsing: pylatexenc knows `\cite` but not natbib,

@@ -36,6 +36,28 @@ ARXIV_EPRINT = "https://arxiv.org/e-print/{id}"  # LaTeX source (usually a .tar.
 ARXIV_PDF = "https://arxiv.org/pdf/{id}"          # fallback when no source posted
 RATE_LIMIT_S = 3.0  # hard rule: 1 arXiv request / 3 s
 
+# The statuses that mean arXiv answered about THIS PAPER, named the way
+# `get_bytes` names 403/404/410 — never inferred from "a response object exists"
+# (#239). That inference cost us the whole outage bound: an authenticating proxy
+# whose credential expired answers every request 407, and 150 papers of 407 ran
+# to the end of the corpus with no abort, 7.5 minutes, exit 0, each line telling
+# the operator "arXiv answered HTTP 407 for this paper" about a service the run
+# never reached (measured at c5e0325). A response proves something answered; only
+# a named status proves who.
+#
+# 451 is the whole list, and the list is short because `get_bytes` already owns
+# the rest: 403 (withheld source), 404 (no such id) and 410 (gone) return None
+# from it, which is the "no source available" branch below and resets the counter
+# there. 451 is arXiv withholding a paper for legal reasons — an answer about a
+# paper exactly as a 404 is, and a corpus of withheld sources must never look
+# like an outage (#235, which this narrows rather than reverses).
+#
+# 400/401/407/408 and stray 3xx are deliberately out. Every one of them is
+# something a hop between us and arXiv emits about the connection rather than
+# about a paper, and a 400 arXiv itself sent would mean our request was malformed
+# for every paper alike — an abort is the right answer to that too.
+ARXIV_ANSWERS_ABOUT_PAPER = (451,)
+
 _last_request = 0.0
 
 
@@ -178,19 +200,17 @@ def main() -> None:
     # waiting, ending "0 fetched, 150 failed" and exiting 0, against a
     # definition of done of fifteen minutes for a whole trace.
     #
-    # **The counter counts calls that ended without an answer about the paper,
-    # and any status arXiv answers with resets it** (#235). It said "transport
-    # failures and nothing else" and was not: `get_bytes` classifies 200,
-    # 403/404/410 and the retryable 429/5xx, and everything else reaches
-    # `raise_for_status`, so ten papers arXiv answered 451 about aborted the
-    # stage telling the operator the download was failing — measured. A status
-    # is arXiv speaking about that paper, exactly as a 404 is, and a corpus of
-    # withheld sources must never look like an outage; this is the sweep's own
-    # discipline, that the counter resets on any answer. It cannot hide a real
-    # outage: 429 and 5xx never arrive here as a status, because `get_bytes`
-    # retries them five times and then raises the transport-class RuntimeError,
-    # which is a service that failed rather than a paper that was answered
-    # about. A skipped paper makes no request, so it neither counts nor resets.
+    # **The counter counts every call that ended without an answer about the
+    # paper, and only a status in ARXIV_ANSWERS_ABOUT_PAPER resets it** (#235,
+    # narrowed by #239). It once said "transport failures and nothing else" and
+    # was not — ten papers arXiv answered 451 about aborted the stage blaming
+    # the download — and the repair for that then reset on any status at all,
+    # which let a proxy answering 407 spend the whole corpus. A named list is
+    # the only thing that tells those two apart. It cannot hide a real outage:
+    # 429 and 5xx never arrive here as a status, because `get_bytes` retries
+    # them five times and then raises the transport-class RuntimeError, which is
+    # a service that failed rather than a paper that was answered about. A
+    # skipped paper makes no request, so it neither counts nor resets.
     consecutive_failures = 0
     last_failure = None
     for i, p in enumerate(papers, 1):
@@ -216,15 +236,22 @@ def main() -> None:
             note = f"{type(e).__name__}: {str(e)[:240]}"
             failed += 1
             # `.response` rather than an isinstance test, as fetch_references
-            # does it: what matters is whether a response came back, and the
-            # RuntimeError `get_bytes` raises when its retries run out carries
-            # none. A status here is one `get_bytes` does not classify — 451,
-            # 400, a stray 3xx — and it is an answer about this paper (#235).
+            # does it: the RuntimeError `get_bytes` raises when its retries run
+            # out carries none. But a response only says something answered, so
+            # the status has to be one we named before the run can call it arXiv
+            # answering about this paper (#239).
             status = getattr(getattr(e, "response", None), "status_code", None)
-            if status is not None:
+            if status in ARXIV_ANSWERS_ABOUT_PAPER:
                 print(f"    ✗ arXiv answered HTTP {status} for this paper, skipping")
                 consecutive_failures = 0
                 continue
+            # An unnamed status is counted, and is described as what we can
+            # actually see: a status came back from somewhere on the way to
+            # arXiv. Naming arXiv here sent an operator to arXiv's status page
+            # over an expired proxy credential (#239).
+            if status is not None:
+                note = (f"HTTP {status} from something between us and arXiv — "
+                        f"not a status arXiv answers about a paper with")
             print(f"    ✗ fetch failed ({note}), skipping")
             consecutive_failures += 1
             last_failure = f"{aid} ({note})"
@@ -233,12 +260,15 @@ def main() -> None:
                 sys.exit(
                     f"\nAborting: {consecutive_failures} arXiv fetches in a row failed, so "
                     f"the run stopped at paper {i} of {len(papers)} instead of spending the "
-                    f"rest of the corpus proving the same thing. That is the download "
-                    f"failing, not the papers: any status arXiv answers with — a withheld "
-                    f"source, an id it does not have, anything else it says about a "
-                    f"paper — resets the counter, so only a call that got no answer at "
-                    f"all can produce {CONSECUTIVE_FAILURE_LIMIT} in a row. The last "
-                    f"failure was {last_failure}.\n\n"
+                    f"rest of the corpus proving the same thing. That is the fetch "
+                    f"failing, not the papers: a paper arXiv itself answered about — a "
+                    f"source it withholds, an id it does not have — resets the counter, "
+                    f"so {CONSECUTIVE_FAILURE_LIMIT} in a row means "
+                    f"{CONSECUTIVE_FAILURE_LIMIT} calls that arXiv never answered about "
+                    f"a paper. A status from something on the way to arXiv counts here "
+                    f"rather than resetting, because it says nothing about the paper, so "
+                    f"read the last failure before assuming arXiv is down: it was "
+                    f"{last_failure}.\n\n"
                     # The counts this run kept, not a sentence about the run it
                     # was expected to be (#236). `--force` re-downloads over
                     # files that are already there, so "nothing has been deleted
