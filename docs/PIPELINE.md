@@ -1368,7 +1368,14 @@ never a raw `is_current = true` — which demotes whatever else is live and clea
 and a refusal rolls the entire restore back and leaves every row as it found it. A snapshot that recorded it false does
 not promote, a snapshot too old to have the field promotes a `complete` map (in
 that snapshot's world every published map was the live one, by 025's backfill),
-and `--no-publish` declines either way. The run prints which and why.
+and `--no-publish` declines either way. The run prints which and why, **and its
+closing line reads the row rather than the flags** (#234): declining to publish
+is not the same fact as not being current, so a restore that publishes nothing
+onto a map that is already the live one says it is still live. It printed the
+opposite for one commit, on two routine inputs — `--no-publish` on the current
+map, and a snapshot honestly recording `is_current = false` restored onto a row
+#229's rollback had made current again — while the dry-run line in the same run
+had the value right.
 `user_edits` is the one thing
 not overwritten; the restore appends itself to it with `||` in the database,
 because a restore is an event in a map's history rather than a way to un-happen

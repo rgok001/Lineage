@@ -210,12 +210,27 @@ def main() -> None:
               + (f" (superseding genealogy {', '.join(str(d) for d in demoted)})"
                  if demoted else ""))
     elif g["status"] == "complete":
-        # Said out loud rather than left to be discovered on the site.
+        # Said out loud rather than left to be discovered on the site — and read
+        # from the row rather than deduced from the flags (#234). Not publishing
+        # is not the same fact as not being current: `now_current` is the row's
+        # own standing, read above, and this run changed it only by calling
+        # `publish_swap`, which it did not. Two reachable inputs printed the
+        # opposite of the truth here, and both are routine: `--no-publish` on the
+        # live map, and a snapshot that honestly recorded `is_current = false`
+        # restored onto a row that #229's rollback made current again. The
+        # dry-run line four prints above ("on the site: yes now -> unchanged
+        # (yes)") had the value right in the same run, which is the shape #228
+        # removed from Stage D's aborts.
         why = ("--no-publish was given" if args.no_publish
                else "the snapshot recorded this version as not the live one")
-        print(f"  it is NOT the current map for this concept, because {why}. A reader "
-              f"reaches it\n  at /g/{gen_id} and does not see it on the concepts list. "
-              f"Re-running Stage E on the\n  concept publishes it.")
+        if now_current:
+            print(f"  it is STILL the current map for this concept — {why}, so nothing "
+                  f"was\n  promoted or demoted and the restored content is what a reader "
+                  f"sees now, on\n  the concepts list and at /g/{gen_id}/current.")
+        else:
+            print(f"  it is NOT the current map for this concept, because {why}. A reader "
+                  f"reaches it\n  at /g/{gen_id} and does not see it on the concepts list. "
+                  f"Re-running Stage E on the\n  concept publishes it.")
     print("\n  The quotes are back, and their verdicts are the ones the snapshot held.")
     if pre_015:
         print(f"  {pre_015} of the restored edges came from a snapshot taken before "
