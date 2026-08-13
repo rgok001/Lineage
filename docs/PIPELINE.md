@@ -813,8 +813,15 @@ repeat runs and the client backs off through 429s).
 `requests.ConnectionError` (reset socket, SSL, proxy), `requests.Timeout`
 (connect and read) and `ChunkedEncodingError` (a body that ended early) — on
 **one** budget of five attempts with a doubling delay, 2/4/8/16s, and no sleep
-after the last attempt, so a URL that never answers costs 30s rather than the
-62s it cost while the loop slept before giving up. Deterministic errors
+after the last attempt, so the **backoff** for a URL that never answers is 30s
+rather than the 62s it cost while the loop slept before giving up.
+**The backoff is not the wall clock, and the difference is large** (#232). Each
+attempt also spends its own request timeout, and `requests.Timeout` is exactly
+the class #223 newly retries: a server that refuses instantly costs about the
+30s of backoff and nothing else, but a server that accepts the connection and
+never replies costs five timeouts plus the backoff — 5x60+30 = **330s per URL in
+`get_json`** (`timeout=60`) and 5x120+30 = **630s in `get_bytes`**
+(`timeout=120`). Deterministic errors
 (`MissingSchema`, `InvalidURL`, `TooManyRedirects`) are not retried: retrying a
 bad URL five times is a slower way to be wrong. The retry line names the
 exception class **and** its message, truncated, and exhaustion raises
@@ -946,7 +953,19 @@ in the scenario it was written for. It exists because retrying the transport
 costs time: 30s of backoff per dead paper, so 150 of them is over an hour before
 the per-source floor could fire, and the guard bounds a total outage at ten
 papers — verified at 40 papers, all failing: 50 attempts, not 200, nothing
-cached, nothing swapped. After an early stop the other sweep floors stand down,
+cached, nothing swapped. **What that bound costs depends on how the transport
+dies** (#232): ten papers refused instantly is a few minutes, and ten papers that
+accept and never reply is ten times `get_json`'s 330s, which is **up to about 55
+minutes**. The guard is what makes that a bound at all — the same outage over 150
+papers is nearly 14 hours — and whether the timeouts themselves should be smaller
+is an open design call on #232, not something this file decides.
+**The sweep iterates `sorted(corpus_ids)`**, because since the guard can stop the
+sweep early the ORDER decides which abort speaks: `corpus_ids` is a set, and on
+#219's `dry_failures` shape 3 of 12 `PYTHONHASHSEED`s stopped early with the
+guard's sentence while 9 swept on to #219's floor. Everything material — exit
+code, zero writes, zero spend — held in every seed; only the identity of the
+sentence moved, which is exactly the kind of difference a reader reports as a
+bug. After an early stop the other sweep floors stand down,
 because every count they read is over a corpus that was cut short.
 **Every abort that can leave the map mid-build reads the map's standing rather
 than asserting it** — the four sweep aborts with #223, and with #228 the three
@@ -965,7 +984,17 @@ off the site, that it went off when Stage C re-clustered it, that a run of Stage
 puts it back, and where the restore procedure is (RUNBOOK section 8); a
 non-current row with a current sibling — the state #207b creates — prints that
 the live version is unaffected and this build's version has never been published.
-The read has its own try/except, because there is no handler behind an abort.
+The read has its own try/except, because there is no handler behind an abort, and
+since #232 its connection carries `connect_timeout=DB_CONNECT_TIMEOUT_S` (ten
+seconds) — as does the cap's status write, the other connection this stage opens
+while stopping. Both are opened at
+the moment a network fault is the likeliest reason the stage is stopping, and
+without the timeout the abort's own explanation is what hangs: measured against a
+listener that accepts and never speaks Postgres, the read now returns its "could
+not read its row" sentence in 10.0s with the cause named in it. They are the only
+two connects in `pipeline/` that carry a timeout, deliberately: every other one
+is opened at the start of a run, where a hang is visible and an operator can act
+on it.
 The two families differ in one clause and nothing else (#228): a sweep abort
 stops before any classification is bought and says so, while the three inside the
 loop fire after the money is spent and say instead that everything classified is

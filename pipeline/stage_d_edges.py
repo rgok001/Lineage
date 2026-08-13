@@ -277,6 +277,19 @@ def fetch_references(arxiv_id: str) -> "list[dict] | None":
     return refs
 
 
+# Both of the connections below are opened while the stage is stopping, and both
+# of them at the moment a network fault is the likeliest reason it is stopping
+# (#232). Without this, `psycopg.connect` sits in the OS connect for as long as
+# the kernel is willing — measured still inside it after 12s against a blackholed
+# address — so the abort's own explanation is what hangs. Ten seconds is longer
+# than a healthy connect by two orders of magnitude and shorter than a reader's
+# patience with a stage that has already decided to stop; `map_standing` degrades
+# to its "could not read its row" sentence when it expires, and the cap's status
+# write raises exactly as it already does on a refused DSN, having turned an
+# unbounded wait into a bounded one rather than adding a way to fail.
+DB_CONNECT_TIMEOUT_S = 10
+
+
 def mark_aborted_spend_cap(gen_id: int) -> bool:
     """Record a cap abort on the genealogy row, on a fresh connection.
 
@@ -287,7 +300,8 @@ def mark_aborted_spend_cap(gen_id: int) -> bool:
     truth about it, and migration 025's CHECK would refuse the write on a
     current row anyway.
     """
-    c = psycopg.connect(env("DATABASE_URL"), autocommit=True)
+    c = psycopg.connect(env("DATABASE_URL"), autocommit=True,
+                        connect_timeout=DB_CONNECT_TIMEOUT_S)
     try:
         cur = c.execute(
             "UPDATE genealogies SET status='aborted_spend_cap', updated_at=now() "
@@ -338,7 +352,8 @@ def map_standing(gen_id: int) -> str:
     caught here.
     """
     try:
-        c = psycopg.connect(env("DATABASE_URL"), autocommit=True)
+        c = psycopg.connect(env("DATABASE_URL"), autocommit=True,
+                            connect_timeout=DB_CONNECT_TIMEOUT_S)
         try:
             row = c.execute(
                 "SELECT g.status, g.is_current, g.version, "
@@ -474,7 +489,15 @@ def main() -> None:
     # the scenario it was written for.
     consecutive_fetch_failures = 0
     stopped_after: int | None = None
-    for swept, citing in enumerate(corpus_ids, 1):
+    # `sorted`, because the guard above can stop the sweep early and that makes
+    # the ORDER outcome-relevant for the first time (#232). `corpus_ids` is a
+    # set, so its iteration order is hash-randomised per process: on #219's
+    # dry_failures shape, 3 of 12 PYTHONHASHSEEDs stopped early with the guard's
+    # sentence and 9 swept on to #219's floor. Nothing material moved — exit
+    # code, writes and spend were identical in every seed — but which abort
+    # speaks is what an operator reads, and a message that changes between two
+    # runs of the same failure is a message nobody can act on.
+    for swept, citing in enumerate(sorted(corpus_ids), 1):
         # Probed before the call, never inferred after it: the file is written
         # by the fetch itself, so asking afterwards would call every fresh
         # answer a cache hit.
