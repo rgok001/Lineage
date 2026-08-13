@@ -365,6 +365,33 @@ def plan_for(concept: str, corpus_limit: int, field: str, gloss: str | None,
         ("cluster concept-states", py + ["pipeline/stage_c_cluster.py", concept,
                                          "--corpus", corpus_json,
                                          "--result-json", paths["genealogy_result"]]),
+    ]
+
+    # ── pass one, after the version exists ──────────────────────────────────
+    #
+    # Issue #241 (H6). These five steps were the tail of `pass_one` above, run
+    # inside the same `run_all` as the clustering, so their argv was built before
+    # Stage C had minted anything and none of them could be told which row to
+    # write. They resolved by predicate instead, and the argument for that —
+    # "this build's row is the highest version for the concept, because that is
+    # how the version was minted" — is true only until the next Stage C runs for
+    # the same concept. Measured: build A at version 2 beside build B at version
+    # 3, and `build_row` hands A's Stage D, A's `--no-publish` Stage E and both of
+    # A's recorders **B's row**. Not reachable inside one worker, whose jobs are
+    # serial (#177), and reachable today with a by-hand build beside a worker
+    # build or two by-hand builds — which is exactly how a repair gets run.
+    #
+    # So the phase is split at the clustering and the worker binds in between. The
+    # id is read from Stage C's result file, which is the same source `bind_genealogy_id`
+    # already used for everything after pass one; the side effect worth having is
+    # that an unreadable result file now fails the build BEFORE Stage D spends,
+    # rather than after it.
+    #
+    # `stage_b_extract.py --reground` sits in here and is deliberately NOT in
+    # `VERSIONED_STEPS`: it re-checks this concept's definition stamps, which are
+    # per (concept, prompt_version) and shared by every version of the map, so
+    # naming a genealogy row would be naming something it does not touch.
+    pass_one_after_c = [
         ("classify edges", py + ["pipeline/stage_d_edges.py", concept]),
         # Free, and it runs immediately before grounding for the same reason
         # Stage E re-copies the edge quotes there: a stamp must not be older than
@@ -524,7 +551,8 @@ def plan_for(concept: str, corpus_limit: int, field: str, gloss: str | None,
     ]
 
     return {"snapshot": snapshot,
-            "pass_one": pass_one, "pass_two_select": pass_two_select_phase,
+            "pass_one": pass_one, "pass_one_after_c": pass_one_after_c,
+            "pass_two_select": pass_two_select_phase,
             "pass_two_fetch": pass_two_fetch_phase, "pass_two_read": pass_two_read_phase,
             "pass_two_fallback": pass_two_fallback_phase, "finish": finish,
             "seats": seats, "paths": paths}
@@ -541,7 +569,8 @@ def stages_for(concept: str, corpus_limit: int, field: str, gloss: str | None,
     fallback.
     """
     p = plan_for(concept, corpus_limit, field, gloss, anchors, named_by)
-    return (p["snapshot"] + p["pass_one"] + p["pass_two_select"] + p["pass_two_fetch"]
+    return (p["snapshot"] + p["pass_one"] + p["pass_one_after_c"]
+            + p["pass_two_select"] + p["pass_two_fetch"]
             + p["pass_two_read"] + p["finish"])
 
 
@@ -1029,13 +1058,19 @@ VERSIONED_STEPS = ("stage_c_cluster.py", "stage_d_edges.py", "stage_e_ground.py"
                    "record_pass.py", "record_anchors.py", "record_spend.py",
                    "enrich_authors.py")
 
-# Every phase that runs after pass one's Stage C. Pass one itself is deliberately
-# absent: its later steps run inside the same `run_all` as the clustering, so the
-# id does not exist when that phase's argv is built. They resolve by predicate
-# instead, which is deterministic — this build's row is the highest version for
-# the concept, because that is how the version was minted.
-BINDABLE_PHASES = ("pass_two_select", "pass_two_fetch", "pass_two_read",
-                   "pass_two_fallback", "finish")
+# Every phase that runs after pass one's Stage C, which since #241 includes the
+# rest of pass one. `pass_one` — corpus selection through the clustering — is the
+# only phase left that cannot be bound, because the row does not exist until its
+# last step writes it, and nothing in it names a genealogy.
+#
+# What was here before was `pass_one` in full, unbound, on the argument that its
+# later steps "resolve by predicate instead, which is deterministic — this build's
+# row is the highest version for the concept, because that is how the version was
+# minted". That holds only until a second Stage C runs for the same concept, and
+# then `build_row` hands this build's Stage D, Stage E and recorders the OTHER
+# build's row (#241-H6, measured).
+BINDABLE_PHASES = ("pass_one_after_c", "pass_two_select", "pass_two_fetch",
+                   "pass_two_read", "pass_two_fallback", "finish")
 
 
 def bind_genealogy_id(runner: "StageRunner", plan: dict) -> int:
@@ -1117,13 +1152,18 @@ def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: i
             named_by: str | None = None) -> None:
     plan = plan_for(concept, corpus_limit, field, gloss, anchors, named_by)
     seats = plan["seats"]
-    nominal = (plan["snapshot"] + plan["pass_one"] + plan["pass_two_select"]
-               + plan["pass_two_fetch"] + plan["pass_two_read"] + plan["finish"])
+    nominal = (plan["snapshot"] + plan["pass_one"] + plan["pass_one_after_c"]
+               + plan["pass_two_select"] + plan["pass_two_fetch"]
+               + plan["pass_two_read"] + plan["finish"])
     one_pass_only = seats <= 0
     # Initialised from the plan that is expected to run, and corrected the moment
-    # a phase is skipped (Progress.set_total says why).
+    # a phase is skipped (Progress.set_total says why). Splitting pass one at the
+    # clustering (#241) moved no step and added none, so both totals are what they
+    # were — measured against `0483a66`'s own `stages_for`, step for step and argv
+    # for argv: 30 nominal for a two-pass build, 18 when pass two is disabled.
     prog = Progress(conn, job_id,
-                    (len(plan["snapshot"]) + len(plan["pass_one"]) + len(plan["finish"]))
+                    (len(plan["snapshot"]) + len(plan["pass_one"])
+                     + len(plan["pass_one_after_c"]) + len(plan["finish"]))
                     if one_pass_only else len(nominal))
     # `job_id` is both the log's name for this build and the request row the step
     # record is stamped with (#47), so an Operator can tell whether the recorded
@@ -1139,9 +1179,13 @@ def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: i
         with runner.in_pass(1):
             runner.run_all(plan["pass_one"])
 
-        # From here on every step is told which version it is working on, so no
-        # later stage has to work it out from the table (#207b).
-        genealogy_id = bind_genealogy_id(runner, plan)
+            # From here on every step is told which version it is working on, so
+            # no later stage has to work it out from the table (#207b, and #241
+            # for the rest of pass one). Inside `in_pass(1)`, because the steps it
+            # binds are pass-one work and the ledger has to keep saying so; the
+            # bind itself runs no stage.
+            genealogy_id = bind_genealogy_id(runner, plan)
+            runner.run_all(plan["pass_one_after_c"])
 
         summary = map_summary(conn, concept, pv, genealogy_id)
         if summary:
@@ -1169,8 +1213,14 @@ def run_job(conn: psycopg.Connection, job_id: int, concept: str, corpus_limit: i
                                                        concept)
 
         if outcome is not None:
+            # The one versioned step the worker builds by hand rather than in a
+            # phase, so `bind_genealogy_id` never saw it and it resolved
+            # `build_row` for itself — the same defect as #241-H6, on the step
+            # that records what this build's second pass did. Bound here, at the
+            # call site, because that is where its argv is made.
             record_cmd = [sys.executable, "-u", "pipeline/record_pass.py", concept,
-                          "--build", "--passes", str(passes), "--outcome", outcome]
+                          "--build", "--passes", str(passes), "--outcome", outcome,
+                          "--genealogy-id", str(genealogy_id)]
             # Only counts a run actually took are passed. An absent flag leaves the
             # column NULL, which `020` prints as "not recorded"; passing 0 would
             # say the citation graph was asked and answered nothing.

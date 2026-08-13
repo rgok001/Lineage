@@ -430,18 +430,26 @@ with a bare `fetchone()` — provably single-valued under 007, ambiguous the
 moment 027 lands. They resolve through two predicates in `pipeline/common.py`:
 
 - `build_row` — **the row this build owns**: `status <> 'complete' ORDER BY
-  version DESC LIMIT 1`. Deterministic without a lock, because a build's own row
-  carries the highest version for its concept and every corpse is older. Stage C
-  (resume), D, E, G, H, `pass_two_select.py`, the three recorders on their write
-  path, and the worker's `map_summary`.
+  version DESC LIMIT 1`. Stage C (resume), D, E, G, H, `pass_two_select.py`, the
+  three recorders on their write path, and the worker's `map_summary`.
+  **It is not deterministic, and #207b's claim that it is has been withdrawn**
+  (#241-H6). "A build's own row carries the highest version for its concept"
+  holds only until the next Stage C runs for that concept: measured, build A at
+  version 2 beside build B at version 3 gives A's Stage D, A's Stage E and A's
+  recorders B's row. The answer is not a better predicate but naming the row —
+  the worker now binds `--genealogy-id` from the clustering onwards rather than
+  from the end of pass one, so nothing inside a worker build resolves by this
+  predicate at all. What still does is a by-hand run with no flag, and Stage E's
+  and Stage H's by-hand runs refuse when the concept has a live map (#241, #242).
 - `current_row` — **the live map**: `AND is_current`, single-valued by 025's
   partial unique index. `snapshot_map.py`, `workbench.py`,
   `export_related_work.py`, `enrich_authors.py`, `restore_genealogy.py`'s
   closing sentence, and the three recorders under `--show`, which is a reader.
 
 Every one of them takes `--genealogy-id` to name a row instead, and the worker
-passes it on every step after pass one's Stage C, from the `--result-json` that
-stage writes. Nothing infers a resume: there is no "reuse the newest running
+passes it on every versioned step from pass one's Stage C onwards, from the
+`--result-json` that stage writes — including the build-record step it assembles
+by hand, which was the one versioned command no phase covered. Nothing infers a resume: there is no "reuse the newest running
 row" rule, so a build cannot adopt the corpse of one that died three weeks ago —
 verified by leaving a `failed` version 2 in place, running a build, and finding
 version 3 minted, published, and not one column of version 2 written.

@@ -114,20 +114,32 @@ over this build's concept-states and refuse a re-trace after every paid step.
 Grounding again costs nothing, so the last Stage E is a free re-check plus the
 publish.
 
-**The worker names the version this build owns, from pass one on** (#207b).
-Pass one's Stage C is given `--result-json`, and the worker reads
-`{genealogy_id, version}` back and appends `--genealogy-id <id>` to every step of
-every phase that runs after it — pass two, the fallback and the finishing stages,
-which is where `enrich_authors.py` and the publish live. Pass one's own later
-steps are not bound, because the id does not exist when that phase's commands are
-built; they resolve by predicate, which is deterministic since this build's row
-is the highest version for the concept. A result file that is missing,
+**The worker names the version this build owns, from the clustering on** (#207b,
+corrected by #241). Pass one's Stage C is given `--result-json`, and the worker
+reads `{genealogy_id, version}` back and appends `--genealogy-id <id>` to every
+versioned step of every phase that runs after it — the rest of pass one, pass two,
+the fallback and the finishing stages, which is where `enrich_authors.py` and the
+publish live, plus the build-record step the worker builds by hand.
+**Pass one is split at the clustering to make that possible.** Until #241 its
+later steps — Stage D, the `--no-publish` Stage E and both recorders — ran inside
+the same phase as Stage C, so their commands were built before the row existed and
+they resolved `build_row` for themselves, on the argument that this build's row is
+the highest version for its concept. That is true only until the next Stage C runs
+for the same concept: measured, build A at version 2 beside build B at version 3
+gives A's Stage D, A's Stage E and A's recorders **B's row**. The worker's own jobs
+are serial (#177), so it takes a by-hand build beside a worker build, which is what
+a repair is. `stage_b_extract.py --reground` sits in that phase and is deliberately
+not bound: definition stamps are per (concept, prompt version) and shared by every
+version of the map. A result file that is missing,
 unparseable or without an id **fails the build**, for the reason a missing
 snapshot record does: "we cannot say which row this build owns" is not a state to
 carry on from, and carrying on would mean every later stage resolving one for
-itself. `trace_requests.genealogy_id` is then written from that same id rather
-than from `ORDER BY id DESC`, so a request names the version its job built for
-ever.
+itself — and since the bind now sits before Stage D rather than after it, that
+failure lands before the classification spends anything. `trace_requests.genealogy_id`
+is then written from that same id rather than from `ORDER BY id DESC`, so a
+request names the version its job built for ever. The step count did not move:
+measured against `0483a66`'s own `stages_for`, step for step and argv for argv,
+30 nominal for a two-pass build and 18 when `PASS_TWO_SEATS` is 0.
 
 **Pass two is bounded and abandonable, and every way out of it is recorded.**
 Its seat count is `PASS_TWO_SEATS` or `corpus_limit // 10`; `0` disables it and
