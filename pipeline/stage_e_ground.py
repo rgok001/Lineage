@@ -97,6 +97,15 @@ def refuse_unless_publishable(conn, gen_id: int) -> None:
     view sees them, which is the whole reason the query is here rather than in a
     separate command run afterwards.
 
+    **Every caller of `publish_swap` calls this first** (#233): this stage, and
+    both restore scripts. For one commit the swap was importable and the gate was
+    not, and a restore published a map this function refuses on the identical row
+    — the path most likely to be carrying a damaged map, since a restore is run
+    when something is already wrong. The pair is the publication rule; either
+    half alone is not it. All three callers hold the writes in an uncommitted
+    transaction at this point, which is what makes the sentences below true for
+    all three.
+
     **It computes nothing.** Every count and the verdict come from
     `map_invariant`, which `pipeline/check_map.py` also reads, so an Operator
     checking a map by hand and this gate cannot disagree about it. A gate whose
@@ -122,7 +131,8 @@ def refuse_unless_publishable(conn, gen_id: int) -> None:
             f"  {exc}\n"
             "  That view is migration 021. Apply the migrations "
             "(python pipeline/db/migrate.py)\n"
-            "  and run this stage again. Nothing was written and every stamp stands as\n"
+            "  and run this command again. Nothing was written and every stamp stands "
+            "as\n"
             "  it was.")
     # The view selects FROM genealogies and joins everything else outward, so
     # every map has a row; no row means the genealogy is gone from under this
@@ -514,9 +524,10 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
     # over the new concept-states, and asking there would refuse a build at step 9
     # of 24 over a state the build is about to repair anyway (#171's own residue,
     # which is why the design moved the publish to the end). And a gate whose
-    # verdict changes nothing is a gate that teaches an operator to ignore it. The
-    # invariant is asked once, at the one moment it can still answer no: the
-    # publish run at the end.
+    # verdict changes nothing is a gate that teaches an operator to ignore it.
+    # The invariant is asked at every moment it can still answer no, and at no
+    # other: this stage's publish run at the end, and — since #233 — the two
+    # restore scripts, each immediately before the swap they perform.
     if args.no_publish:
         print("  --no-publish: this map was assembled but NOT published. Its status is\n"
               "  untouched, the publish invariant was not asked, and no reader can see\n"
@@ -530,7 +541,8 @@ def _ground(conn, args, gen_id: int, nodes, prompt_version: str) -> dict:
     # scripts perform it too and a second copy of it is a second publication
     # rule. This stage still owns it: the caller supplies the transaction, and
     # everything about WHEN a map may be published stays here, in the invariant
-    # this line follows.
+    # this line follows — which is why the restore scripts import the pair. They
+    # imported the swap alone for one commit and published past the gate (#233).
     publish_swap(conn, args.concept, gen_id)
 
     return _assemble(args, gen_id, nodes, prompt_version, assembled_edges,

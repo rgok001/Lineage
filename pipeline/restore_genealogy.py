@@ -23,8 +23,9 @@ from psycopg.types.json import Jsonb
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import actor, env  # noqa: E402
 # The publication rule lives in the stage that owns it, and a restore performs
-# the same swap rather than its own version of it (#230).
-from stage_e_ground import publish_swap  # noqa: E402
+# the same swap rather than its own version of it (#230) — behind the same gate,
+# because the pair is the rule and half of it is not (#233).
+from stage_e_ground import publish_swap, refuse_unless_publishable  # noqa: E402
 
 
 def main() -> None:
@@ -88,8 +89,19 @@ def main() -> None:
         # `is_current = true`, because a raw write is what migration 026 refuses
         # on a row that has been demoted once, and because the concept may
         # already have a live map that has to be demoted first.
+        # **The gate travels with the swap** (#233). #230 moved `publish_swap`
+        # out of Stage E and left `refuse_unless_publishable` behind, so this
+        # path published a map Stage E's own rules refuse — #149's case reopened
+        # on the route most likely to be carrying a damaged map, because a
+        # restore is what you run when something is already wrong. It is asked
+        # here rather than before the INSERTs because the invariant is a question
+        # about the map being published, and until the rows above exist there is
+        # no map to ask about; the view reads them uncommitted. Refusing exits
+        # before `conn.commit()` below, so the row and its edges roll back and
+        # the concept's live map is untouched.
         demoted = []
         if not args.no_publish:
+            refuse_unless_publishable(conn, gid)
             demoted = publish_swap(conn, concept, gid)
 
         conn.commit()

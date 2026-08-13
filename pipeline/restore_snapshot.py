@@ -52,8 +52,9 @@ from psycopg.types.json import Jsonb
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import actor, env  # noqa: E402
 # The publication rule lives in the stage that owns it, and a restore performs
-# the same swap rather than its own version of it (#230).
-from stage_e_ground import publish_swap  # noqa: E402
+# the same swap rather than its own version of it (#230) — behind the same gate,
+# because the pair is the rule and half of it is not (#233).
+from stage_e_ground import publish_swap, refuse_unless_publishable  # noqa: E402
 
 
 def main() -> None:
@@ -171,7 +172,19 @@ def main() -> None:
         # everything it is made of is back (#230). Before this, a map restored to
         # `complete` stayed `is_current = false` — off the concepts list and a
         # 404 at /g/<id>/current — while this script printed that it was visible.
-        demoted = publish_swap(conn, concept, gen_id) if publish else []
+        #
+        # **And gated first, because the gate is half of the rule** (#233). #230
+        # took `publish_swap` from Stage E and left `refuse_unless_publishable`
+        # there, so this script could publish a map Stage E would refuse: a
+        # snapshot restored after a `--refresh` demoted one of its definitions
+        # violates clause 1, and that is a routine event, not a contrived one.
+        # Asked after the edges and definitions are written and before the
+        # commit, so it judges the restored map rather than the damaged one, and
+        # so a refusal rolls the whole restore back and leaves the live map alone.
+        demoted = []
+        if publish:
+            refuse_unless_publishable(conn, gen_id)
+            demoted = publish_swap(conn, concept, gen_id)
 
         # The restore is itself an event in the map's history, not an erasure of
         # one. user_edits is append-only and is the one thing not overwritten —

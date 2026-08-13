@@ -1181,6 +1181,14 @@ nothing: the counts and the verdict come from the view, so an Operator checking 
 map by hand and this gate cannot disagree about it. A missing view is a refusal
 too, with the driver's own message and the name of the migration, rather than an
 `UndefinedTable` traceback nine steps into a thirteen-step run.
+**Every path that publishes asks it, and there are three** (#233): this stage and
+the two restore scripts, each immediately before the `publish_swap` it performs
+and inside its own uncommitted transaction, so a refusal rolls that whole restore
+back. `refuse_unless_publishable` and `publish_swap` travel together because the
+pair is the publication rule; for one commit the swap was importable from this
+stage and the gate was not, and a restore published a map this stage refuses on
+the identical row — on the path most likely to be carrying a damaged map, since a
+restore is what you run when something is already wrong.
 **`--no-publish` assembles without publishing** (#192): the status is not touched
 and the invariant is not asked, because publishing is what the invariant gates. A
 two-stage build grounds and assembles three times — at the end of pass one, at the
@@ -1355,7 +1363,9 @@ where the restored value is not `complete`. **And its currency, since #230**:
 `status = 'complete'` is not enough to be visible, so a restored map that the
 snapshot recorded as current is published through Stage E's own `publish_swap` —
 never a raw `is_current = true` — which demotes whatever else is live and clears
-`superseded_at` in the same transaction. A snapshot that recorded it false does
+`superseded_at` in the same transaction, **behind Stage E's own publish gate**
+(#233): the map the snapshot holds is asked the six clauses before it goes live,
+and a refusal rolls the entire restore back and leaves every row as it found it. A snapshot that recorded it false does
 not promote, a snapshot too old to have the field promotes a `complete` map (in
 that snapshot's world every published map was the live one, by 025's backfill),
 and `--no-publish` declines either way. The run prints which and why.
@@ -1373,8 +1383,12 @@ Since #230 the new row is published through the same `publish_swap`, because it
 was inserting `status = 'complete'` and letting `is_current` default false: the
 recovered map was reachable at `/g/<id>` and absent from the concepts list, from
 every report's comparison set and from `/g/<id>/current`, which is the state a
-recovery exists to leave. It names the version it superseded, if any, and takes
-`--no-publish` for a restore that must not disturb what readers see.
+recovery exists to leave. Since #233 it asks `refuse_unless_publishable` first,
+after the row and its edges are inserted and before the commit, so an export
+carrying a map today's rules would refuse fails the restore instead of landing on
+the concepts list. It names the version it superseded, if any, and takes
+`--no-publish` for a restore that must not disturb what readers see — which, as
+in Stage E, does not ask the gate, because publishing is what the gate gates.
 `recheck_stamp.py`
 (`recheck_stamp.py --concept NAME [--arxiv ID ...] [--edges] [--verbose]`): the
 independent re-checker, and the point of migration 015. The stamp columns are

@@ -250,15 +250,31 @@ ls -t /data/snapshots/ | head
 # 2. read it back before writing anything: the counts now vs the counts in the file.
 python pipeline/restore_snapshot.py /data/snapshots/<file>.json --dry-run
 
-# 3. restore.
-python pipeline/restore_snapshot.py /data/snapshots/<file>.json --confirm
+# 3. restore the content, without touching what readers see.
+python pipeline/restore_snapshot.py /data/snapshots/<file>.json --confirm --no-publish
 
 # 4. re-ground, free, because the restore cannot restore the extracted text.
-python pipeline/stage_e_ground.py "<concept>"
+python pipeline/stage_e_ground.py "<concept>" --no-publish
 
-# 5. confirm the map satisfies the rules that built it.
+# 5. confirm the map satisfies the rules that built it — BEFORE anyone sees it.
 python pipeline/check_map.py "<concept>"
+
+# 6. publish it: this re-grounds and, if the six clauses hold, makes it current.
+python pipeline/stage_e_ground.py "<concept>"
 ```
+
+**Steps 3 to 6 are in that order because the check belongs before the publish**
+(#233). Until then this procedure restored, published and then checked, so a
+snapshot carrying a map today's rules would refuse went live and was found out
+afterwards. Nothing depends on the operator getting the order right any more —
+since #233 both restore scripts ask the publish gate themselves and a restore
+that would publish an unpublishable map refuses and writes nothing — but a
+refusal in the middle of a recovery is a worse place to learn it than a
+read-only check, and `--no-publish` at steps 3 and 4 means the concept's live map
+is never replaced by one that has not been checked. If step 5 reports findings,
+repair first (#170 is the worked example) and then run step 6; the map is
+unchanged in the meantime, and if you skip the check, step 6 refuses with the
+same findings.
 
 Five things about it that are not obvious from the commands. It restores **into
 an existing row** by id; if the row itself is gone, `restore_genealogy.py` from an
@@ -511,7 +527,9 @@ embedding stays NULL — `--embed-only`'s SELECT carries `defines_concept = true
 and the map now fails the publish invariant. `--refresh` prints a DEMOTION line
 naming each such map and node and an end-of-run banner; when a refresh prints
 one, run `check_map.py "<concept>"` and repair (#170 is the procedure) before
-re-grounding. `restore_snapshot.py` restores the snapshot's own `status`, so restoring a
+re-grounding — and before restoring, because since #233 a restore that would
+publish that map asks the publish gate and refuses with the same findings, having
+written nothing. `restore_snapshot.py` restores the snapshot's own `status`, so restoring a
 mid-build snapshot **onto a current row** hits the same refusal; restore onto the
 `running` row the recovery path is written for, which is not current.
 

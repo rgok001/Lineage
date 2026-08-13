@@ -310,7 +310,10 @@ piece of code: `publish_swap` in `pipeline/stage_e_ground.py`** (#207a, issue
 #226). It has three callers since #230 — the end of Stage E, and both restore
 scripts — and no other write to the column exists: a restore that set the flag
 itself would be a second publication rule, and a raw `is_current = true` is the
-write migration 026 refuses on a row that has been demoted once.
+write migration 026 refuses on a row that has been demoted once. **All three call
+`refuse_unless_publishable` immediately before it** (#233): the gate and the swap
+are one rule, and for one commit only the swap was importable, so a restore
+published a map Stage E refuses on the identical row.
 Until #207a landed nothing wrote the column at all, so a map that
 completed published `complete` with `is_current = false` — reachable at
 `/g/<id>`, absent from the concepts list, outside every report's comparison set
