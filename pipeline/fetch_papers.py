@@ -325,6 +325,46 @@ def main() -> None:
     conn.close()
     print(f"\nDone: {fetched} fetched, {skipped} skipped, {failed} failed.")
 
+    # ── the zero floor (issue #244) ────────────────────────────────────────
+    #
+    # A run that ended with nothing on disk and nothing already there is not a
+    # corpus of unavailable papers, it is a fetch that did not work, and until
+    # now it printed "0 fetched, 150 failed" and exited 0 — so the worker went on
+    # to extraction and Stage B against an empty corpus.
+    #
+    # **It is a floor and not a fraction, and it is deliberately not a fifth
+    # calibration of the consecutive-failure bound.** That bound has been tuned at
+    # #223, #231, #235 and #239, and a fifth number would be the tell that the
+    # number was never the problem: at the transport boundary 150 honest 451s and
+    # a middlebox blocking the whole corpus are indistinguishable, so nothing here
+    # can tell them apart and this does not try. It asks the one question that has
+    # an answer — did this run produce anything at all — and 451 stays on
+    # `ARXIV_ANSWERS_ABOUT_PAPER`, because a 451 IS an answer about a paper
+    # exactly as a 404 is.
+    #
+    # What it does not fix, stated because the honest cost belongs beside the
+    # guard: a corpus answered 451 all the way through still burns the full
+    # politeness delay, ~7.5 minutes for 150 papers. What it no longer does is
+    # hand an empty corpus to the stage that spends money.
+    #
+    # `papers` non-empty is the condition that keeps this from firing on an empty
+    # corpus file, where `failed == len(papers)` is 0 == 0 and every count is
+    # zero: that is a different fault, upstream in corpus selection, and it is not
+    # this stage's to diagnose (the #93 lesson — the bug is at zero).
+    if papers and fetched == 0 and skipped == 0 and failed == len(papers):
+        sys.exit(
+            f"\nThis fetch produced nothing: all {len(papers)} paper(s) failed, none "
+            f"was already on disk, and no file was written.\n"
+            f"  The last failure was {last_failure or 'not recorded'}.\n"
+            "  Whatever the per-paper reasons say, a corpus of which not one paper "
+            "could be fetched is\n"
+            "  the download failing rather than the papers being unavailable, and "
+            "the stages after this\n"
+            "  one would read an empty corpus and buy definitions for nothing. "
+            "Nothing was deleted.\n"
+            "  A re-run after the cause is fixed starts from scratch, since there "
+            "is nothing to skip.")
+
 
 if __name__ == "__main__":
     main()

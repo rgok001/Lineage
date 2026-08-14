@@ -461,6 +461,23 @@ corpus of 404s runs to the end and exits 0, a skipped paper makes no request and
 neither counts nor resets, and a real outage is still caught: 429 and 5xx never
 arrive as a status here, because `get_bytes` retries them five times and then
 raises the transport-class `RuntimeError`.
+**A run that fetched nothing at all now exits non-zero** (#244). 451 is the one
+status on the reset list and RFC 7725 says intermediaries generate it, so a
+filter between us and arXiv answering every request 451 was indistinguishable
+from 150 papers arXiv withholds: measured, no abort, 150 requests, 7.5 minutes,
+exit 0, "0 fetched, 150 failed", and an empty corpus handed to the stages that
+spend money. The repair is deliberately **not** a fifth calibration of the
+consecutive-failure bound — it has been tuned at #223, #231, #235 and #239, and
+at the transport boundary those two cases cannot be told apart — but a floor on
+the one question that has an answer: at the end of the run, `fetched == 0 and
+skipped == 0 and failed == len(papers)` on a non-empty corpus exits non-zero
+naming what it saw and the last failure. The honest cost is unchanged and is
+stated in the code: a wholly blocked corpus still burns the full politeness
+delay, ~7.5 minutes for 150 papers. What it no longer does is exit 0. The floor
+is zero and not a fraction: measured, one paper fetched out of 150 exits 0, a
+fully cached run makes no request and exits 0, an empty corpus file is unchanged
+(that fault is upstream, in corpus selection), and a transport outage still meets
+the consecutive-failure abort first, at 50 requests and 5.6 minutes.
 Gotcha: some arXiv "LaTeX" source is really a PDF inside an `\includepdf`
 stub; the extractor detects and unwraps this. Citation and cross-reference
 macros are normalised before parsing: pylatexenc knows `\cite` but not natbib,
